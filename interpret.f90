@@ -13,6 +13,7 @@ module interpret_mod
 
   type(var_t) :: vars(max_vars)
   integer      :: n_vars = 0
+  logical, save :: eval_error = .false.
 
 contains
 
@@ -55,6 +56,9 @@ contains
     character(len=:), allocatable       :: expr, lhs, rhs
     character                           :: curr_char
 
+    ! reset error flag
+    eval_error = .false.
+
     ! initialize parser
     expr   = trim(str)
     lenstr = len_trim(expr)
@@ -67,13 +71,12 @@ contains
       lhs = adjustl(expr(1:eqpos-1))
       rhs = expr(eqpos+1:)
       res = evaluate(rhs)
-      call set_variable(lhs, res)
+      if (.not. eval_error) call set_variable(lhs, res)
       return
     end if
 
     ! otherwise parse expression
     res = parse_expression()
-
 
   contains
 
@@ -129,12 +132,17 @@ contains
       character(len=*), intent(in)       :: name
       real(kind=dp), allocatable         :: v(:)
       integer                             :: i
+
       do i = 1, n_vars
         if (trim(vars(i)%name) == trim(name)) then
           v = vars(i)%val
           return
         end if
       end do
+
+      ! not found → flag error and return zero-length array
+      print *, "Error: undefined variable '", trim(name), "'"
+      eval_error = .true.
       allocate(v(1))
       v(1) = 0.0_dp
     end function get_variable
@@ -193,7 +201,6 @@ contains
         end if
       end select
 
-      ! exponentiation (^), right-associative
       call skip_spaces()
       if (curr_char == '^') then
         call next_char()
@@ -297,10 +304,14 @@ contains
 
   end function evaluate
 
+
   subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable    :: r(:)
+
     r = evaluate(str)
+    if (eval_error) return
+
     write (*,"(/,'> ', a)") trim(str)
     if (size(r) == 1) then
       print "(f0.6)", r(1)
