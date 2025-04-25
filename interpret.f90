@@ -3,26 +3,26 @@ module interpret_mod
   private
   public :: evaluate, eval_print, set_variable
 
-  integer, parameter :: dp       = kind(1.0d0)
+  integer, parameter :: dp = kind(1.0d0)
   integer, parameter :: max_vars = 100
 
   type :: var_t
-    character(len=32)          :: name = ''
+    character(len=32) :: name = ''
     real(kind=dp), allocatable :: val(:)
   end type var_t
 
   type(var_t) :: vars(max_vars)
-  integer      :: n_vars = 0
+  integer :: n_vars = 0
   logical, save :: eval_error = .false.
-  character     :: curr_char    ! parser look-ahead
+  character :: curr_char
 
 contains
 
   subroutine set_variable(name, val)
-    character(len=*),           intent(in) :: name
-    real(kind=dp), dimension(:),intent(in) :: val
-    integer                                  :: i
-    character(len=32)                        :: nm
+    character(len=*), intent(in) :: name
+    real(kind=dp), intent(in), dimension(:) :: val
+    integer :: i
+    character(len=32) :: nm
 
     nm = adjustl(name)
     do i = 1, n_vars
@@ -45,20 +45,34 @@ contains
     end if
   end subroutine set_variable
 
+  function apply_func(fname, arr) result(res)
+    character(len=*), intent(in) :: fname
+    real(kind=dp), intent(in), dimension(:) :: arr
+    real(kind=dp) :: res
+
+    select case (trim(fname))
+    case ("sum")
+      res = sum(arr)
+    case ("minval")
+      res = minval(arr)
+    case ("maxval")
+      res = maxval(arr)
+    case default
+      print *, "Error: function '", trim(fname), "' not defined"
+      eval_error = .true.
+      res = 0.0_dp
+    end select
+  end function apply_func
 
   recursive function evaluate(str) result(res)
     implicit none
-    character(len=*), intent(in)      :: str
-    real(kind=dp), allocatable        :: res(:)
-    character(len=:), allocatable     :: expr, lhs, rhs
-    integer                             :: pos, lenstr, eqpos
-
-    expr   = trim(str)
-    lenstr = len_trim(expr)
-    pos    = 1
-    eval_error = .false.
-    call next_char()
-
+    character(len=*), intent(in) :: str
+    real(kind=dp), allocatable :: res(:)
+    character(len=:), allocatable :: expr
+    integer :: pos, lenstr
+    integer :: eqpos
+    character(len=:), allocatable :: lhs, rhs
+    call init_evaluator(trim(str), expr, lenstr, pos)
     eqpos = index(expr, '=')
     if (eqpos > 0) then
       lhs = adjustl(expr(1:eqpos-1))
@@ -77,6 +91,16 @@ contains
     res = parse_expression()
 
   contains
+    subroutine init_evaluator(str_in, expr, lenstr, pos)
+      character(len=*), intent(in) :: str_in
+      character(len=:), allocatable, intent(out) :: expr
+      integer, intent(out) :: lenstr, pos
+      expr = str_in
+      lenstr = len_trim(expr)
+      pos = 1
+      eval_error = .false.
+      call next_char()
+    end subroutine init_evaluator
 
     subroutine next_char()
       if (pos > lenstr) then
@@ -95,9 +119,10 @@ contains
 
     function parse_number() result(num)
       real(kind=dp), allocatable :: num(:)
-      character(len=64)          :: buf
-      integer                    :: i
-      real(kind=dp)              :: tmp
+      character(len=64) :: buf
+      integer :: i
+      real(kind=dp) :: tmp
+
       call skip_spaces()
       i = 0
       do while ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.')
@@ -106,19 +131,15 @@ contains
         call next_char()
       end do
       read(buf(1:i), *) tmp
-      allocate(num(1))
-      num(1) = tmp
+      allocate(num(1)); num(1) = tmp
     end function parse_number
 
     function parse_identifier() result(name_out)
       character(len=32) :: name_out
-      integer           :: i
+      integer :: i
       call skip_spaces()
       i = 0
-      do while ( &
-            (curr_char >= 'a' .and. curr_char <= 'z') .or. &
-            (curr_char >= 'A' .and. curr_char <= 'Z') .or. &
-            (curr_char >= '0' .and. curr_char <= '9') )
+      do while ((curr_char >= 'a' .and. curr_char <= 'z') .or. (curr_char >= 'A' .and. curr_char <= 'Z') .or. (curr_char >= '0' .and. curr_char <= '9'))
         i = i + 1
         name_out(i:i) = curr_char
         call next_char()
@@ -127,13 +148,12 @@ contains
     end function parse_identifier
 
     function get_variable(name) result(v)
-      character(len=*), intent(in)       :: name
-      real(kind=dp), allocatable         :: v(:)
-      integer                             :: i
+      character(len=*), intent(in) :: name
+      real(kind=dp), allocatable :: v(:)
+      integer :: i
       do i = 1, n_vars
         if (trim(vars(i)%name) == trim(name)) then
-          v = vars(i)%val
-          return
+          v = vars(i)%val; return
         end if
       end do
       print *, "Error: undefined variable '", trim(name), "'"
@@ -142,10 +162,10 @@ contains
     end function get_variable
 
     recursive function parse_array() result(arr)
-      real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
-      integer                     :: count
-      call next_char()
-      call skip_spaces()
+      real(kind=dp), allocatable :: arr(:)
+      real(kind=dp), allocatable :: tmp(:), elem(:)
+      integer :: count
+      call next_char(); call skip_spaces()
       count = 0
       do while (curr_char /= ']' .and. curr_char /= char(0))
         elem = parse_expression()
@@ -153,12 +173,8 @@ contains
         if (count == 1) then
           allocate(arr(1))
         else
-          allocate(tmp(count))
-          tmp(1:count-1) = arr
-          deallocate(arr)
-          allocate(arr(count))
-          arr = tmp
-          deallocate(tmp)
+          allocate(tmp(count)); tmp(1:count-1) = arr
+          deallocate(arr); arr = tmp; deallocate(tmp)
         end if
         arr(count) = elem(1)
         call skip_spaces()
@@ -170,58 +186,48 @@ contains
     end function parse_array
 
     recursive function parse_factor() result(f)
-      real(kind=dp), allocatable :: f(:), exponent(:), tmp(:)
-      character(len=32)          :: id
-      integer                    :: idx
-      real(kind=dp), allocatable :: arr(:)
+      real(kind=dp), allocatable :: f(:), exponent(:), tmp(:), arr(:), vvar(:)
+      character(len=32) :: id
+      integer :: idx
       call skip_spaces()
-
       select case (curr_char)
       case ('(')
-        call next_char()
-        f = parse_expression()
+        call next_char(); f = parse_expression()
         if (curr_char == ')') call next_char()
-
       case ('[')
         f = parse_array()
-
       case default
         if ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.') then
           f = parse_number()
-        else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
-                 (curr_char >= 'A' .and. curr_char <= 'Z')) then
-
-          id = parse_identifier()
-          call skip_spaces()
-
+        else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. (curr_char >= 'A' .and. curr_char <= 'Z')) then
+          id = parse_identifier(); call skip_spaces()
           if (curr_char == '(') then
-            call next_char()
-            arr = parse_expression()
+            call next_char(); arr = parse_expression()
             if (curr_char == ')') call next_char()
-            if (size(arr) /= 1) then
-              print *, "Error: invalid index for '", trim(id), "'"
-              eval_error = .true.
-              allocate(f(1)); f(1) = 0.0_dp
-            else
-              idx = int(arr(1))
-              arr = get_variable(id)
-              if (.not. eval_error) then
-                if (idx < 1 .or. idx > size(arr)) then
-                  print *, "Error: index out of bounds for '", trim(id), "': ", idx
-                  eval_error = .true.
-                  allocate(f(1)); f(1) = 0.0_dp
-                else
-                  allocate(f(1)); f(1) = arr(idx)
-                end if
+            if (.not. eval_error) then
+              if (size(arr) > 1) then
+                allocate(f(1)); f(1) = apply_func(id, arr)
               else
-                allocate(f(1)); f(1) = 0.0_dp
+                vvar = get_variable(id)
+                if (.not. eval_error .and. size(vvar) > 1) then
+                  idx = int(arr(1))
+                  if (idx >= 1 .and. idx <= size(vvar)) then
+                    allocate(f(1)); f(1) = vvar(idx)
+                  else
+                    print *, "Error: index out of bounds for '", trim(id), "'"
+                    eval_error = .true.; allocate(f(1)); f(1) = 0.0_dp
+                  end if
+                else
+                  print *, trim(id)//"(i) not defined for scalar i"
+                  eval_error = .true.; allocate(f(1)); f(1) = 0.0_dp
+                end if
               end if
+            else
+              allocate(f(1)); f(1) = 0.0_dp
             end if
-
           else
             f = get_variable(id)
           end if
-
         else
           allocate(f(1)); f(1) = 0.0_dp
         end if
@@ -229,8 +235,7 @@ contains
 
       call skip_spaces()
       if (curr_char == '^') then
-        call next_char()
-        exponent = parse_factor()
+        call next_char(); exponent = parse_factor()
         if (.not. eval_error) then
           if (size(f) == size(exponent)) then
             tmp = f ** exponent
@@ -248,9 +253,8 @@ contains
 
     recursive function parse_term() result(t)
       real(kind=dp), allocatable :: t(:), f2(:), tmp(:)
-      integer                     :: nt, nf
-      t = parse_factor()
-      call skip_spaces()
+      integer :: nt, nf
+      t = parse_factor(); call skip_spaces()
       do while (.not. eval_error .and. (curr_char == '*' .or. curr_char == '/'))
         if (curr_char == '*') then
           call next_char(); f2 = parse_factor()
@@ -277,16 +281,14 @@ contains
             print *, "Error: size mismatch in division"; stop
           end if
         end if
-        deallocate(t); t = tmp
-        call skip_spaces()
+        deallocate(t); t = tmp; call skip_spaces()
       end do
     end function parse_term
 
     recursive function parse_expression() result(e)
       real(kind=dp), allocatable :: e(:), t(:), tmp(:)
-      integer                     :: ne, nt
-      e = parse_term()
-      call skip_spaces()
+      integer :: ne, nt
+      e = parse_term(); call skip_spaces()
       do while (.not. eval_error .and. (curr_char == '+' .or. curr_char == '-'))
         if (curr_char == '+') then
           call next_char(); t = parse_term()
@@ -313,39 +315,33 @@ contains
             print *, "Error: size mismatch in subtraction"; stop
           end if
         end if
-        deallocate(e); e = tmp
-        call skip_spaces()
+        deallocate(e); e = tmp; call skip_spaces()
       end do
     end function parse_expression
 
   end function evaluate
 
-
   subroutine assign_element(lhs, rval)
-    character(len=*), intent(in)      :: lhs
+    character(len=*), intent(in) :: lhs
     real(kind=dp), allocatable, intent(in) :: rval(:)
-    character(len=32)                   :: name
-    character(len=:), allocatable       :: idxs
-    integer                              :: i1, i2, idx, vi
-    real(kind=dp), allocatable           :: tmp(:)
+    character(len=32) :: name
+    character(len=:), allocatable :: idxs
+    integer :: i1, i2, idx, vi
+    real(kind=dp), allocatable :: tmp(:)
 
-    i1 = index(lhs,'(')
-    i2 = index(lhs,')')
-    name = adjustl(lhs(1:i1-1))
-    idxs = lhs(i1+1:i2-1)
+    i1 = index(lhs,'('); i2 = index(lhs,')')
+    name = adjustl(lhs(1:i1-1)); idxs = lhs(i1+1:i2-1)
 
     tmp = evaluate(idxs)
     if (eval_error .or. size(tmp) /= 1) then
-      eval_error = .true.
-      return
+       eval_error = .true.; return
     end if
     idx = int(tmp(1))
 
     do vi = 1, n_vars
       if (trim(vars(vi)%name) == trim(name)) then
         if (idx < 1 .or. idx > size(vars(vi)%val)) then
-          print *, "Error: index out of bounds for '", trim(name), "': ", idx
-          eval_error = .true.
+          print *, "Error: index out of bounds for '", trim(name), "'"; eval_error = .true.
         else
           vars(vi)%val(idx) = rval(1)
         end if
@@ -353,23 +349,21 @@ contains
       end if
     end do
 
-    print *, "Error: undefined variable '", trim(name), "' in assignment"
-    eval_error = .true.
+    print *, "Error: undefined variable '", trim(name), "' in assignment"; eval_error = .true.
   end subroutine assign_element
-
 
   subroutine eval_print(str)
     character(len=*), intent(in) :: str
-    real(kind=dp), allocatable    :: r(:)
+    real(kind=dp), allocatable :: r(:)
 
     r = evaluate(str)
     if (eval_error) return
 
-    write (*,"(/,'> ', a)") trim(str)
+    write(*,"(/,'> ',a)") trim(str)
     if (size(r) == 1) then
       print "(f0.6)", r(1)
     else
-      write(*,'("[", *(f0.6,:,", "), "]")', advance="no") r
+      write(*,'("[",*(f0.6,:,", "),"]")',advance="no") r
       print "(']')"
     end if
   end subroutine eval_print
