@@ -408,7 +408,7 @@ contains
             tmp = f(1) ** exponent
           else
             print *, "Error: size mismatch in exponentiation"
-            stop
+            return
           end if
           deallocate(f)
           f = tmp
@@ -442,7 +442,7 @@ contains
             tmp = t(1) * f2
           else
             print *, "Error: size mismatch in multiplication"
-            stop
+            return
           end if
         else
           call next_char()
@@ -459,7 +459,7 @@ contains
             tmp = t(1) / f2
           else
             print *, "Error: size mismatch in division"
-            stop
+            return
           end if
         end if
         deallocate(t)
@@ -491,7 +491,7 @@ contains
             tmp = e(1) + t
           else
             print *, "Error: size mismatch in addition"
-            stop
+            return
           end if
         else
           call next_char()
@@ -508,7 +508,7 @@ contains
             tmp = e(1) - t
           else
             print *, "Error: size mismatch in subtraction"
-            stop
+            return
           end if
         end if
         deallocate(e)
