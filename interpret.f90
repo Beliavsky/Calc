@@ -1,7 +1,7 @@
 module interpret_mod
   implicit none
   private
-  public :: evaluate, eval_print, set_variable, runif
+  public :: evaluate, eval_print, set_variable, runif, tunit, code_transcript_file
   interface runif
     module procedure runif_scalar, runif_vec
   end interface runif
@@ -15,10 +15,10 @@ module interpret_mod
   end type var_t
 
   type(var_t) :: vars(max_vars)
-  integer :: n_vars = 0
+  integer :: n_vars = 0, tunit
   logical, save :: eval_error = .false.
   character(len=1) :: curr_char
-
+  character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
 contains
 
   !------------------------------------------------------------------------
@@ -526,7 +526,7 @@ contains
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
     integer :: i
-
+    write (tunit, "(a)") str
     if (len_trim(str) >= 2 .and. str(1:1) == '?') then
       write(*,*) 'Defined variables:'
       do i = 1, n_vars
