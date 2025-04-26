@@ -547,7 +547,7 @@ contains
     if (size(r) == 1) then
       print "(F0.6)", r(1)
     else
-      write(*,'("[",*(F0.6,:,", "),"]")', advance="no") r
+      write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
       print "(']')"
     end if
   end subroutine eval_print
