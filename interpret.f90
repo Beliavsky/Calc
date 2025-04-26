@@ -398,9 +398,11 @@ contains
           if (nt == nf) then
             tmp = t * f2
           else if (nf == 1) then
+            if (allocated(tmp)) deallocate (tmp)
             allocate(tmp(nt))
             tmp = t * f2(1)
           else if (nt == 1) then
+            if (allocated(tmp)) deallocate (tmp)
             allocate(tmp(nf))
             tmp = t(1) * f2
           else
