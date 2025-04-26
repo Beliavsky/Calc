@@ -1,8 +1,9 @@
 program xinterpret
-  use interpret_mod
+  use interpret_mod, only: eval_print, tunit, code_transcript_file
   implicit none
   integer :: iostat_err
   character (len=1000) :: line
+  open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
   call eval_print("n = 10")
   call eval_print("y = [1, 2, 3]")
   call eval_print("z = n * y")
