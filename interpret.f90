@@ -19,6 +19,7 @@ module interpret_mod
   logical, save :: eval_error = .false.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
+  logical, parameter :: debug = .true.
 contains
 
   subroutine clear()
@@ -111,6 +112,7 @@ contains
     character(len=:), allocatable :: lhs, rhs
 
     call init_evaluator(trim(str), expr, lenstr, pos)
+    if (debug) print*,"returned from init_evaluator, lenstr, pos =", lenstr, pos
     eqpos = index(expr, '=')
     if (eqpos > 0) then
       lhs = adjustl(expr(1:eqpos-1))
@@ -550,8 +552,9 @@ contains
       end do
       return
     end if
-
+    if (debug) print*,"r = evaluate(str) for str = '" // trim(str) // "'"
     r = evaluate(str)
+    if (debug) print*,"(1) here, set r"
     if (eval_error) return
 
     write(*,"(/,'> ',a)") trim(str)
