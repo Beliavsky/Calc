@@ -21,9 +21,11 @@ module interpret_mod
 
 contains
 
+  !------------------------------------------------------------------------
+  ! Store or replace a variable
   subroutine set_variable(name, val)
-    character(len=*), intent(in) :: name
-    real(kind=dp), intent(in), dimension(:) :: val
+    character(len=*), intent(in)       :: name
+    real(kind=dp),    intent(in), dimension(:) :: val
     integer :: i
     character(len=32) :: nm
 
@@ -50,25 +52,51 @@ contains
     end if
   end subroutine set_variable
 
-  function apply_func(fname, arr) result(res)
-    character(len=*), intent(in) :: fname
-    real(kind=dp), intent(in), dimension(:) :: arr
-    real(kind=dp) :: res
+  !------------------------------------------------------------------------
+  ! Apply a scalar-returning function: sum, minval, maxval, etc.
+  function apply_scalar_func(fname, arr) result(r)
+    character(len=*), intent(in)       :: fname
+    real(kind=dp),    intent(in), dimension(:) :: arr
+    real(kind=dp) :: r
 
     select case (trim(fname))
     case ("sum")
-      res = sum(arr)
+      r = sum(arr)
     case ("minval")
-      res = minval(arr)
+      r = minval(arr)
     case ("maxval")
-      res = maxval(arr)
+      r = maxval(arr)
+    case default
+      print *, "Error: function '", trim(fname), "' not defined"
+      eval_error = .true.
+      r = 0.0_dp
+    end select
+  end function apply_scalar_func
+
+  !------------------------------------------------------------------------
+  ! Apply an elementwise function: log, exp, etc.
+  function apply_elemwise_func(fname, arr) result(res)
+    character(len=*), intent(in)       :: fname
+    real(kind=dp),    intent(in), dimension(:) :: arr
+    real(kind=dp), allocatable :: res(:)
+    integer :: n
+
+    n = size(arr)
+    allocate(res(n))
+
+    select case (trim(fname))
+    case ("log")
+      res = log(arr)
+    case ("exp")
+      res = exp(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
       res = 0.0_dp
     end select
-  end function apply_func
+  end function apply_elemwise_func
 
+  !------------------------------------------------------------------------
   recursive function evaluate(str) result(res)
     implicit none
     character(len=*), intent(in) :: str
@@ -97,18 +125,20 @@ contains
 
   contains
 
+    !--------------------------------------------------
     subroutine init_evaluator(str_in, expr, lenstr, pos)
-      character(len=*), intent(in) :: str_in
+      character(len=*), intent(in)               :: str_in
       character(len=:), allocatable, intent(out) :: expr
-      integer, intent(out) :: lenstr, pos
+      integer, intent(out)                       :: lenstr, pos
 
-      expr = str_in
+      expr   = str_in
       lenstr = len_trim(expr)
-      pos = 1
+      pos    = 1
       eval_error = .false.
       call next_char()
     end subroutine init_evaluator
 
+    !--------------------------------------------------
     subroutine next_char()
       if (pos > lenstr) then
         curr_char = char(0)
@@ -118,12 +148,14 @@ contains
       pos = pos + 1
     end subroutine next_char
 
+    !--------------------------------------------------
     subroutine skip_spaces()
       do while (curr_char == ' ')
         call next_char()
       end do
     end subroutine skip_spaces
 
+    !--------------------------------------------------
     function parse_number() result(num)
       real(kind=dp), allocatable :: num(:)
       character(len=64) :: buf
@@ -142,6 +174,7 @@ contains
       num(1) = tmp
     end function parse_number
 
+    !--------------------------------------------------
     function parse_identifier() result(name_out)
       character(len=32) :: name_out
       integer :: i
@@ -158,6 +191,7 @@ contains
       name_out = adjustl(name_out(1:i))
     end function parse_identifier
 
+    !--------------------------------------------------
     function get_variable(name) result(v)
       character(len=*), intent(in) :: name
       real(kind=dp), allocatable :: v(:)
@@ -176,6 +210,7 @@ contains
       v(1) = 0.0_dp
     end function get_variable
 
+    !--------------------------------------------------
     recursive function parse_array() result(arr)
       real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
       integer :: count
@@ -207,6 +242,7 @@ contains
       end if
     end function parse_array
 
+    !--------------------------------------------------
     recursive function parse_factor() result(f)
       real(kind=dp), allocatable :: f(:), exponent(:), tmp(:), arr(:), vvar(:)
       character(len=32) :: id
@@ -235,6 +271,7 @@ contains
           if (curr_char == '(') then
             call next_char()
             call skip_spaces()
+
             ! zero-arg function?
             if (curr_char == ')') then
               call next_char()
@@ -244,50 +281,71 @@ contains
               else
                 print *, "Error: function '", trim(id), "' needs arguments"
                 eval_error = .true.
-                allocate(f(1)); f(1) = 0.0_dp
+                allocate(f(1))
+                f(1) = 0.0_dp
               end if
 
             else
-              ! one or more args
+              ! one-or-more args
               arr = parse_expression()
               if (curr_char == ')') then
                 call next_char()
               end if
+
               if (.not. eval_error) then
 
-                if (trim(id) == "runif") then
+                select case (trim(id))
+
+                case ("runif")
                   nrand = int(arr(1))
                   if (nrand < 1) then
-                    allocate(f(1)); f(1) = 0.0_dp
+                    allocate(f(1))
+                    f(1) = 0.0_dp
                   else
                     f = runif_vec(nrand)
                   end if
 
-                else if (size(arr) > 1) then
-                  allocate(f(1))
-                  f(1) = apply_func(id, arr)
+                case ("log", "exp")
+                  f = apply_elemwise_func(id, arr)
 
-                else
-                  vvar = get_variable(id)
-                  if (.not. eval_error .and. size(vvar) > 1) then
-                    idx = int(arr(1))
-                    if (idx >= 1 .and. idx <= size(vvar)) then
-                      allocate(f(1)); f(1) = vvar(idx)
+                case ("sum", "minval", "maxval")
+                  allocate(f(1))
+                  f(1) = apply_scalar_func(id, arr)
+
+                case default
+                  if (size(arr) == 1) then
+                    vvar = get_variable(id)
+                    if (.not. eval_error .and. size(vvar) > 1) then
+                      idx = int(arr(1))
+                      if (idx >= 1 .and. idx <= size(vvar)) then
+                        allocate(f(1))
+                        f(1) = vvar(idx)
+                      else
+                        print *, "Error: index out of bounds for '", trim(id), "'"
+                        eval_error = .true.
+                        allocate(f(1))
+                        f(1) = 0.0_dp
+                      end if
                     else
-                      print *, "Error: index out of bounds for '", trim(id), "'"
+                      print *, trim(id)//"(x) not defined for scalar x"
                       eval_error = .true.
-                      allocate(f(1)); f(1) = 0.0_dp
+                      allocate(f(1))
+                      f(1) = 0.0_dp
                     end if
                   else
-                    print *, trim(id)//"(x) not defined for scalar x"
+                    print *, "Error: function '", trim(id), "' not defined"
                     eval_error = .true.
-                    allocate(f(1)); f(1) = 0.0_dp
+                    allocate(f(1))
+                    f(1) = 0.0_dp
                   end if
-                end if
+
+                end select
 
               else
-                allocate(f(1)); f(1) = 0.0_dp
+                allocate(f(1))
+                f(1) = 0.0_dp
               end if
+
             end if
 
           else
@@ -295,7 +353,8 @@ contains
           end if
 
         else
-          allocate(f(1)); f(1) = 0.0_dp
+          allocate(f(1))
+          f(1) = 0.0_dp
         end if
       end select
 
@@ -307,9 +366,11 @@ contains
           if (size(f) == size(exponent)) then
             tmp = f ** exponent
           else if (size(exponent) == 1) then
-            allocate(tmp(size(f))); tmp = f ** exponent(1)
+            allocate(tmp(size(f)))
+            tmp = f ** exponent(1)
           else if (size(f) == 1) then
-            allocate(tmp(size(exponent))); tmp = f(1) ** exponent
+            allocate(tmp(size(exponent)))
+            tmp = f(1) ** exponent
           else
             print *, "Error: size mismatch in exponentiation"
             stop
@@ -321,6 +382,7 @@ contains
 
     end function parse_factor
 
+    !--------------------------------------------------
     recursive function parse_term() result(t)
       real(kind=dp), allocatable :: t(:), f2(:), tmp(:)
       integer :: nt, nf
@@ -331,13 +393,16 @@ contains
         if (curr_char=='*') then
           call next_char()
           f2 = parse_factor()
-          nt = size(t); nf = size(f2)
+          nt = size(t)
+          nf = size(f2)
           if (nt == nf) then
             tmp = t * f2
           else if (nf == 1) then
-            allocate(tmp(nt)); tmp = t * f2(1)
+            allocate(tmp(nt))
+            tmp = t * f2(1)
           else if (nt == 1) then
-            allocate(tmp(nf)); tmp = t(1) * f2
+            allocate(tmp(nf))
+            tmp = t(1) * f2
           else
             print *, "Error: size mismatch in multiplication"
             stop
@@ -345,13 +410,16 @@ contains
         else
           call next_char()
           f2 = parse_factor()
-          nt = size(t); nf = size(f2)
+          nt = size(t)
+          nf = size(f2)
           if (nt == nf) then
             tmp = t / f2
           else if (nf == 1) then
-            allocate(tmp(nt)); tmp = t / f2(1)
+            allocate(tmp(nt))
+            tmp = t / f2(1)
           else if (nt == 1) then
-            allocate(tmp(nf)); tmp = t(1) / f2
+            allocate(tmp(nf))
+            tmp = t(1) / f2
           else
             print *, "Error: size mismatch in division"
             stop
@@ -363,6 +431,7 @@ contains
       end do
     end function parse_term
 
+    !--------------------------------------------------
     recursive function parse_expression() result(e)
       real(kind=dp), allocatable :: e(:), t(:), tmp(:)
       integer :: ne, nt
@@ -373,13 +442,16 @@ contains
         if (curr_char=='+') then
           call next_char()
           t = parse_term()
-          ne = size(e); nt = size(t)
+          ne = size(e)
+          nt = size(t)
           if (ne == nt) then
             tmp = e + t
           else if (nt == 1) then
-            allocate(tmp(ne)); tmp = e + t(1)
+            allocate(tmp(ne))
+            tmp = e + t(1)
           else if (ne == 1) then
-            allocate(tmp(nt)); tmp = e(1) + t
+            allocate(tmp(nt))
+            tmp = e(1) + t
           else
             print *, "Error: size mismatch in addition"
             stop
@@ -387,13 +459,16 @@ contains
         else
           call next_char()
           t = parse_term()
-          ne = size(e); nt = size(t)
+          ne = size(e)
+          nt = size(t)
           if (ne == nt) then
             tmp = e - t
           else if (nt == 1) then
-            allocate(tmp(ne)); tmp = e - t(1)
+            allocate(tmp(ne))
+            tmp = e - t(1)
           else if (ne == 1) then
-            allocate(tmp(nt)); tmp = e(1) - t
+            allocate(tmp(nt))
+            tmp = e(1) - t
           else
             print *, "Error: size mismatch in subtraction"
             stop
@@ -407,9 +482,10 @@ contains
 
   end function evaluate
 
+  !------------------------------------------------------------------------
   subroutine assign_element(lhs, rval)
-    character(len=*), intent(in) :: lhs
-    real(kind=dp), allocatable, intent(in) :: rval(:)
+    character(len=*), intent(in)                 :: lhs
+    real(kind=dp), allocatable, intent(in)       :: rval(:)
     character(len=32) :: name
     character(len=:), allocatable :: idxs
     integer :: i1, i2, idx, vi
@@ -443,6 +519,7 @@ contains
     eval_error = .true.
   end subroutine assign_element
 
+  !------------------------------------------------------------------------
   subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
@@ -475,6 +552,7 @@ contains
     end if
   end subroutine eval_print
 
+  !------------------------------------------------------------------------
   function runif_scalar() result(r)
     real(kind=dp) :: r
     call random_number(r)
