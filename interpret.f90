@@ -1,7 +1,10 @@
 module interpret_mod
   implicit none
   private
-  public :: evaluate, eval_print, set_variable
+  public :: evaluate, eval_print, set_variable, runif
+  interface runif
+    module procedure runif_scalar, runif_vec
+  end interface runif
 
   integer, parameter :: dp = kind(1.0d0)
   integer, parameter :: max_vars = 100
@@ -14,7 +17,7 @@ module interpret_mod
   type(var_t) :: vars(max_vars)
   integer :: n_vars = 0
   logical, save :: eval_error = .false.
-  character :: curr_char
+  character(len=1) :: curr_char
 
 contains
 
@@ -71,11 +74,8 @@ contains
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: res(:)
     character(len=:), allocatable :: expr
-    integer :: pos
-    integer :: lenstr
-    integer :: eqpos
-    character(len=:), allocatable :: lhs
-    character(len=:), allocatable :: rhs
+    integer :: pos, lenstr, eqpos
+    character(len=:), allocatable :: lhs, rhs
 
     call init_evaluator(trim(str), expr, lenstr, pos)
     eqpos = index(expr, '=')
@@ -100,8 +100,7 @@ contains
     subroutine init_evaluator(str_in, expr, lenstr, pos)
       character(len=*), intent(in) :: str_in
       character(len=:), allocatable, intent(out) :: expr
-      integer, intent(out) :: lenstr
-      integer, intent(out) :: pos
+      integer, intent(out) :: lenstr, pos
 
       expr = str_in
       lenstr = len_trim(expr)
@@ -178,9 +177,7 @@ contains
     end function get_variable
 
     recursive function parse_array() result(arr)
-      real(kind=dp), allocatable :: arr(:)
-      real(kind=dp), allocatable :: tmp(:)
-      real(kind=dp), allocatable :: elem(:)
+      real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
       integer :: count
 
       call next_char()
@@ -211,13 +208,9 @@ contains
     end function parse_array
 
     recursive function parse_factor() result(f)
-      real(kind=dp), allocatable :: f(:)
-      real(kind=dp), allocatable :: exponent(:)
-      real(kind=dp), allocatable :: tmp(:)
-      real(kind=dp), allocatable :: arr(:)
-      real(kind=dp), allocatable :: vvar(:)
+      real(kind=dp), allocatable :: f(:), exponent(:), tmp(:), arr(:), vvar(:)
       character(len=32) :: id
-      integer :: idx
+      integer :: idx, nrand
 
       call skip_spaces()
       select case (curr_char)
@@ -225,7 +218,7 @@ contains
         call next_char()
         f = parse_expression()
         if (curr_char == ')') then
-          call next_char()
+           call next_char()
         end if
       case ('[')
         f = parse_array()
@@ -240,12 +233,26 @@ contains
             call next_char()
             arr = parse_expression()
             if (curr_char == ')') then
-              call next_char()
+               call next_char()
             end if
             if (.not. eval_error) then
-              if (size(arr) > 1) then
+
+              !— special case runif(n) ——————————————————————
+              if (trim(id) == "runif") then
+                nrand = int(arr(1))
+                if (nrand < 1) then
+                  allocate(f(1))
+                  f(1) = 0.0_dp
+                else
+                  f = runif_vec(nrand)
+                end if
+
+              !— built-in scalar functions sum/minval/maxval ————
+              else if (size(arr) > 1) then
                 allocate(f(1))
                 f(1) = apply_func(id, arr)
+
+              !— array indexing on a variable x(k) ————————
               else
                 vvar = get_variable(id)
                 if (.not. eval_error .and. size(vvar) > 1) then
@@ -266,10 +273,12 @@ contains
                   f(1) = 0.0_dp
                 end if
               end if
+
             else
               allocate(f(1))
               f(1) = 0.0_dp
             end if
+
           else
             f = get_variable(id)
           end if
@@ -287,11 +296,9 @@ contains
           if (size(f) == size(exponent)) then
             tmp = f ** exponent
           else if (size(exponent) == 1) then
-            allocate(tmp(size(f)))
-            tmp = f ** exponent(1)
+            allocate(tmp(size(f))); tmp = f ** exponent(1)
           else if (size(f) == 1) then
-            allocate(tmp(size(exponent)))
-            tmp = f(1) ** exponent
+            allocate(tmp(size(exponent))); tmp = f(1) ** exponent
           else
             print *, "Error: size mismatch in exponentiation"
             stop
@@ -303,103 +310,79 @@ contains
     end function parse_factor
 
     recursive function parse_term() result(t)
-      real(kind=dp), allocatable :: t(:)
-      real(kind=dp), allocatable :: f2(:)
-      real(kind=dp), allocatable :: tmp(:)
-      integer :: nt
-      integer :: nf
+      real(kind=dp), allocatable :: t(:), f2(:), tmp(:)
+      integer :: nt, nf
 
       t = parse_factor()
       call skip_spaces()
       do while (.not. eval_error .and. (curr_char == '*' .or. curr_char == '/'))
         if (curr_char == '*') then
-          call next_char()
-          f2 = parse_factor()
-          nt = size(t)
-          nf = size(f2)
+          call next_char(); f2 = parse_factor()
+          nt = size(t); nf = size(f2)
           if (nt == nf) then
             tmp = t * f2
           else if (nf == 1) then
-            allocate(tmp(nt))
-            tmp = t * f2(1)
+            allocate(tmp(nt)); tmp = t * f2(1)
           else if (nt == 1) then
-            allocate(tmp(nf))
-            tmp = t(1) * f2
+            allocate(tmp(nf)); tmp = t(1) * f2
           else
             print *, "Error: size mismatch in multiplication"
             stop
           end if
         else
-          call next_char()
-          f2 = parse_factor()
-          nt = size(t)
-          nf = size(f2)
+          call next_char(); f2 = parse_factor()
+          nt = size(t); nf = size(f2)
           if (nt == nf) then
             tmp = t / f2
           else if (nf == 1) then
-            allocate(tmp(nt))
-            tmp = t / f2(1)
+            allocate(tmp(nt)); tmp = t / f2(1)
           else if (nt == 1) then
-            allocate(tmp(nf))
-            tmp = t(1) / f2
+            allocate(tmp(nf)); tmp = t(1) / f2
           else
             print *, "Error: size mismatch in division"
             stop
           end if
         end if
-        deallocate(t)
-        t = tmp
+        deallocate(t); t = tmp
         call skip_spaces()
       end do
     end function parse_term
 
     recursive function parse_expression() result(e)
-      real(kind=dp), allocatable :: e(:)
-      real(kind=dp), allocatable :: t(:)
-      real(kind=dp), allocatable :: tmp(:)
-      integer :: ne
-      integer :: nt
+      real(kind=dp), allocatable :: e(:), t(:), tmp(:)
+      integer :: ne, nt
 
       e = parse_term()
       call skip_spaces()
       do while (.not. eval_error .and. (curr_char == '+' .or. curr_char == '-'))
         if (curr_char == '+') then
-          call next_char()
-          t = parse_term()
-          ne = size(e)
-          nt = size(t)
+          call next_char(); t = parse_term()
+          ne = size(e); nt = size(t)
           if (ne == nt) then
             tmp = e + t
           else if (nt == 1) then
-            allocate(tmp(ne))
-            tmp = e + t(1)
+            allocate(tmp(ne)); tmp = e + t(1)
           else if (ne == 1) then
-            allocate(tmp(nt))
-            tmp = e(1) + t
+            allocate(tmp(nt)); tmp = e(1) + t
           else
             print *, "Error: size mismatch in addition"
             stop
           end if
         else
-          call next_char()
-          t = parse_term()
-          ne = size(e)
-          nt = size(t)
+          call next_char(); t = parse_term()
+          ne = size(e); nt = size(t)
           if (ne == nt) then
             tmp = e - t
           else if (nt == 1) then
-            allocate(tmp(ne))
-            tmp = e - t(1)
+            allocate(tmp(ne)); tmp = e - t(1)
           else if (ne == 1) then
-            allocate(tmp(nt))
-            tmp = e(1) - t
+            allocate(tmp(nt)); tmp = e(1) - t
           else
             print *, "Error: size mismatch in subtraction"
             stop
           end if
         end if
-        deallocate(e)
-        e = tmp
+        deallocate(e); e = tmp
         call skip_spaces()
       end do
     end function parse_expression
@@ -411,14 +394,10 @@ contains
     real(kind=dp), allocatable, intent(in) :: rval(:)
     character(len=32) :: name
     character(len=:), allocatable :: idxs
-    integer :: i1
-    integer :: i2
-    integer :: idx
-    integer :: vi
+    integer :: i1, i2, idx, vi
     real(kind=dp), allocatable :: tmp(:)
 
-    i1 = index(lhs,'(')
-    i2 = index(lhs,')')
+    i1 = index(lhs,'('); i2 = index(lhs,')')
     name = adjustl(lhs(1:i1-1))
     idxs = lhs(i1+1:i2-1)
 
@@ -429,7 +408,6 @@ contains
     end if
 
     idx = int(tmp(1))
-
     do vi = 1, n_vars
       if (trim(vars(vi)%name) == trim(name)) then
         if (idx < 1 .or. idx > size(vars(vi)%val)) then
@@ -454,30 +432,44 @@ contains
     if (len_trim(str) >= 2 .and. str(1:1) == '?') then
       write(*,*) 'Defined variables:'
       do i = 1, n_vars
-        if (size(vars(i)%val) == 1) then ! print scalar
+        if (size(vars(i)%val) == 1) then
           write(*,"(a)", advance="no") trim(vars(i)%name)//': '
           print "(F0.6)", vars(i)%val(1)
-        else ! print array
+        else
           write(*,"(a)", advance="no") trim(vars(i)%name)//': '
           write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
-          write(*,"(']')")
+          write(*,"(']')")  
         end if
       end do
       return
     end if
 
     r = evaluate(str)
-    if (eval_error) then
-      return
-    end if
+    if (eval_error) return
 
     write(*,"(/,'> ',a)") trim(str)
     if (size(r) == 1) then
       print "(F0.6)", r(1)
     else
-      write(*,'("[",*(F0.6,:,", "),"]")',advance="no") r
+      write(*,'("[",*(F0.6,:,", "),"]")', advance="no") r
       print "(']')"
     end if
   end subroutine eval_print
+
+  function runif_scalar() result(r)
+    real(kind=dp) :: r
+    call random_number(r)
+  end function runif_scalar
+
+  function runif_vec(n) result(r)
+    integer, intent(in)        :: n
+    real(kind=dp), allocatable :: r(:)
+    if (n < 1) then
+      allocate(r(1)); r(1) = 0.0_dp
+    else
+      allocate(r(n))
+      call random_number(r)
+    end if
+  end function runif_vec
 
 end module interpret_mod
