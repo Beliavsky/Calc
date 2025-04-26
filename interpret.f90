@@ -42,10 +42,6 @@ contains
     nm = adjustl(name)
     do i = 1, n_vars
       if (trim(vars(i)%name) == trim(nm)) then
-        if (allocated(vars(i)%val)) then
-          deallocate(vars(i)%val)
-        end if
-        allocate(vars(i)%val(size(val)))
         vars(i)%val = val
         return
       end if
@@ -54,7 +50,6 @@ contains
     if (n_vars < max_vars) then
       n_vars = n_vars + 1
       vars(n_vars)%name = nm
-      allocate(vars(n_vars)%val(size(val)))
       vars(n_vars)%val = val
     else
       print *, "Error: too many variables."
