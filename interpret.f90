@@ -1,7 +1,7 @@
 module interpret_mod
   implicit none
   private
-  public :: evaluate, eval_print, set_variable, runif, tunit, code_transcript_file
+  public :: evaluate, eval_print, set_variable, tunit, code_transcript_file, clear
   interface runif
     module procedure runif_scalar, runif_vec
   end interface runif
@@ -20,6 +20,16 @@ module interpret_mod
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
 contains
+
+  subroutine clear()
+  ! delete all variables
+  integer :: i
+  do i=1,min(n_vars, max_vars)
+     vars(i)%name = ""
+     if (allocated(vars(i)%val)) deallocate (vars(i)%val)
+  end do
+  n_vars = 0
+  end subroutine
 
   !------------------------------------------------------------------------
   ! Store or replace a variable
@@ -527,6 +537,10 @@ contains
     real(kind=dp), allocatable :: r(:)
     integer :: i
     write (tunit, "(a)") str
+    if (str == "clear") then
+       call clear()
+       return
+    end if
     if (len_trim(str) >= 2 .and. str(1:1) == '?') then
       write(*,*) 'Defined variables:'
       do i = 1, n_vars
