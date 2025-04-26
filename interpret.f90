@@ -217,13 +217,35 @@ contains
       v(1) = 0.0_dp
     end function get_variable
 
-    !--------------------------------------------------
+    !parse_array
+
+
     recursive function parse_array() result(arr)
       real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
       integer :: count
 
+      ! consume the '['
       call next_char()
       call skip_spaces()
+
+      ! --- error if we hit end-of-string before a closing ']' ---
+      if (curr_char == char(0)) then
+        print *, "Error: missing ']' in array literal"
+        eval_error = .true.
+        allocate(arr(1))
+        arr(1) = 0.0_dp
+        return
+      end if
+
+      ! --- empty array literal [] ---
+      if (curr_char == ']') then
+        allocate(arr(0))
+        ! consume the ']'
+        call next_char()
+        return
+      end if
+
+      ! --- otherwise, read one or more elements ---
       count = 0
       do while (curr_char /= ']' .and. curr_char /= char(0))
         elem = parse_expression()
@@ -238,14 +260,20 @@ contains
           deallocate(tmp)
         end if
         arr(count) = elem(1)
+
         call skip_spaces()
         if (curr_char == ',' .or. curr_char == ' ') then
           call next_char()
           call skip_spaces()
         end if
       end do
+
+      ! --- now either we stopped at ']' or at end-of-input ---
       if (curr_char == ']') then
         call next_char()
+      else
+        print *, "Error: missing ']' in array literal"
+        eval_error = .true.
       end if
     end function parse_array
 
