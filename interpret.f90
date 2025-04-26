@@ -218,73 +218,84 @@ contains
         call next_char()
         f = parse_expression()
         if (curr_char == ')') then
-           call next_char()
+          call next_char()
         end if
+
       case ('[')
         f = parse_array()
+
       case default
         if ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.') then
           f = parse_number()
+
         else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
                  (curr_char >= 'A' .and. curr_char <= 'Z')) then
           id = parse_identifier()
           call skip_spaces()
           if (curr_char == '(') then
             call next_char()
-            arr = parse_expression()
+            call skip_spaces()
+            ! zero-arg function?
             if (curr_char == ')') then
-               call next_char()
-            end if
-            if (.not. eval_error) then
-
-              !— special case runif(n) ——————————————————————
+              call next_char()
               if (trim(id) == "runif") then
-                nrand = int(arr(1))
-                if (nrand < 1) then
-                  allocate(f(1))
-                  f(1) = 0.0_dp
-                else
-                  f = runif_vec(nrand)
-                end if
-
-              !— built-in scalar functions sum/minval/maxval ————
-              else if (size(arr) > 1) then
                 allocate(f(1))
-                f(1) = apply_func(id, arr)
-
-              !— array indexing on a variable x(k) ————————
+                f(1) = runif_scalar()
               else
-                vvar = get_variable(id)
-                if (.not. eval_error .and. size(vvar) > 1) then
-                  idx = int(arr(1))
-                  if (idx >= 1 .and. idx <= size(vvar)) then
-                    allocate(f(1))
-                    f(1) = vvar(idx)
-                  else
-                    print *, "Error: index out of bounds for '", trim(id), "'"
-                    eval_error = .true.
-                    allocate(f(1))
-                    f(1) = 0.0_dp
-                  end if
-                else
-                  print *, trim(id)//"(x) not defined for scalar x"
-                  eval_error = .true.
-                  allocate(f(1))
-                  f(1) = 0.0_dp
-                end if
+                print *, "Error: function '", trim(id), "' needs arguments"
+                eval_error = .true.
+                allocate(f(1)); f(1) = 0.0_dp
               end if
 
             else
-              allocate(f(1))
-              f(1) = 0.0_dp
+              ! one or more args
+              arr = parse_expression()
+              if (curr_char == ')') then
+                call next_char()
+              end if
+              if (.not. eval_error) then
+
+                if (trim(id) == "runif") then
+                  nrand = int(arr(1))
+                  if (nrand < 1) then
+                    allocate(f(1)); f(1) = 0.0_dp
+                  else
+                    f = runif_vec(nrand)
+                  end if
+
+                else if (size(arr) > 1) then
+                  allocate(f(1))
+                  f(1) = apply_func(id, arr)
+
+                else
+                  vvar = get_variable(id)
+                  if (.not. eval_error .and. size(vvar) > 1) then
+                    idx = int(arr(1))
+                    if (idx >= 1 .and. idx <= size(vvar)) then
+                      allocate(f(1)); f(1) = vvar(idx)
+                    else
+                      print *, "Error: index out of bounds for '", trim(id), "'"
+                      eval_error = .true.
+                      allocate(f(1)); f(1) = 0.0_dp
+                    end if
+                  else
+                    print *, trim(id)//"(x) not defined for scalar x"
+                    eval_error = .true.
+                    allocate(f(1)); f(1) = 0.0_dp
+                  end if
+                end if
+
+              else
+                allocate(f(1)); f(1) = 0.0_dp
+              end if
             end if
 
           else
             f = get_variable(id)
           end if
+
         else
-          allocate(f(1))
-          f(1) = 0.0_dp
+          allocate(f(1)); f(1) = 0.0_dp
         end if
       end select
 
@@ -307,6 +318,7 @@ contains
           f = tmp
         end if
       end if
+
     end function parse_factor
 
     recursive function parse_term() result(t)
@@ -315,9 +327,10 @@ contains
 
       t = parse_factor()
       call skip_spaces()
-      do while (.not. eval_error .and. (curr_char == '*' .or. curr_char == '/'))
-        if (curr_char == '*') then
-          call next_char(); f2 = parse_factor()
+      do while (.not. eval_error .and. (curr_char=='*' .or. curr_char=='/'))
+        if (curr_char=='*') then
+          call next_char()
+          f2 = parse_factor()
           nt = size(t); nf = size(f2)
           if (nt == nf) then
             tmp = t * f2
@@ -330,7 +343,8 @@ contains
             stop
           end if
         else
-          call next_char(); f2 = parse_factor()
+          call next_char()
+          f2 = parse_factor()
           nt = size(t); nf = size(f2)
           if (nt == nf) then
             tmp = t / f2
@@ -343,7 +357,8 @@ contains
             stop
           end if
         end if
-        deallocate(t); t = tmp
+        deallocate(t)
+        t = tmp
         call skip_spaces()
       end do
     end function parse_term
@@ -354,9 +369,10 @@ contains
 
       e = parse_term()
       call skip_spaces()
-      do while (.not. eval_error .and. (curr_char == '+' .or. curr_char == '-'))
-        if (curr_char == '+') then
-          call next_char(); t = parse_term()
+      do while (.not. eval_error .and. (curr_char=='+' .or. curr_char=='-'))
+        if (curr_char=='+') then
+          call next_char()
+          t = parse_term()
           ne = size(e); nt = size(t)
           if (ne == nt) then
             tmp = e + t
@@ -369,7 +385,8 @@ contains
             stop
           end if
         else
-          call next_char(); t = parse_term()
+          call next_char()
+          t = parse_term()
           ne = size(e); nt = size(t)
           if (ne == nt) then
             tmp = e - t
@@ -382,7 +399,8 @@ contains
             stop
           end if
         end if
-        deallocate(e); e = tmp
+        deallocate(e)
+        e = tmp
         call skip_spaces()
       end do
     end function parse_expression
@@ -397,7 +415,8 @@ contains
     integer :: i1, i2, idx, vi
     real(kind=dp), allocatable :: tmp(:)
 
-    i1 = index(lhs,'('); i2 = index(lhs,')')
+    i1 = index(lhs,'(')
+    i2 = index(lhs,')')
     name = adjustl(lhs(1:i1-1))
     idxs = lhs(i1+1:i2-1)
 
@@ -438,7 +457,7 @@ contains
         else
           write(*,"(a)", advance="no") trim(vars(i)%name)//': '
           write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
-          write(*,"(']')")  
+          write(*,"(']')")
         end if
       end do
       return
@@ -465,7 +484,8 @@ contains
     integer, intent(in)        :: n
     real(kind=dp), allocatable :: r(:)
     if (n < 1) then
-      allocate(r(1)); r(1) = 0.0_dp
+      allocate(r(1))
+      r(1) = 0.0_dp
     else
       allocate(r(n))
       call random_number(r)
