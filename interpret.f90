@@ -538,6 +538,7 @@ contains
   subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
+    integer, allocatable :: rint(:)
     integer :: i, rsize
     write (tunit, "(a)") str
     if (str == "clear") then
@@ -565,15 +566,16 @@ contains
 
     write(*,"(/,'> ',a)") trim(str)
     rsize = size(r)
+    rint = nint(r)
     if (rsize < 2) then
-      if (all(abs(r - nint(r)) <= tol)) then
-         print "(i0)", nint(r)
+      if (all(abs(r - rint) <= tol)) then
+         print "(i0)", rint
       else
          print "(F0.6)", r
       end if
     else if (rsize <= max_print) then
-      if (all(abs(r - nint(r)) <= tol)) then
-         write(*,'("[",*(i0,:," "),"]")', advance="no") nint(r)
+      if (all(abs(r - rint) <= tol)) then
+         write(*,'("[",*(i0,:," "),"]")', advance="no") rint
       else
          write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
       end if
