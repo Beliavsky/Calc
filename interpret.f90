@@ -22,6 +22,7 @@ module interpret_mod
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
   logical, parameter :: debug = .false.
+  real(kind=dp), parameter :: bad_value = -999.0_dp
 contains
 
   subroutine clear()
@@ -68,6 +69,8 @@ contains
     real(kind=dp) :: r
 
     select case (trim(fname))
+    case ("size")
+      r = size(arr)
     case ("sum")
       r = sum(arr)
     case ("minval")
@@ -313,13 +316,11 @@ contains
             if (curr_char == ')') then
               call next_char()
               if (trim(id) == "runif") then
-                allocate(f(1))
-                f(1) = runif_scalar()
+                f = [runif_scalar()]
               else
                 print *, "Error: function '", trim(id), "' needs arguments"
                 eval_error = .true.
-                allocate(f(1))
-                f(1) = 0.0_dp
+                f = [bad_value]
               end if
 
             else
@@ -345,9 +346,8 @@ contains
                 case ("log", "exp")
                   f = apply_elemwise_func(id, arr)
 
-                case ("sum", "minval", "maxval")
-                  allocate(f(1))
-                  f(1) = apply_scalar_func(id, arr)
+                case ("size", "sum", "minval", "maxval")
+                  f = [apply_scalar_func(id, arr)]
 
                 case default
                   if (size(arr) == 1) then
