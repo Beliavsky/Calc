@@ -22,7 +22,7 @@ module interpret_mod
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
   logical, parameter :: debug = .false.
-  real(kind=dp), parameter :: bad_value = -999.0_dp
+  real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
 contains
 
   subroutine clear()
@@ -38,14 +38,14 @@ contains
   !------------------------------------------------------------------------
   ! Store or replace a variable
   subroutine set_variable(name, val)
-    character(len=*), intent(in)       :: name
-    real(kind=dp),    intent(in), dimension(:) :: val
+    character(len=*), intent(in) :: name
+    real(kind=dp),    intent(in) :: val(:)
     integer :: i
     character(len=32) :: nm
 
     nm = adjustl(name)
     do i = 1, n_vars
-      if (trim(vars(i)%name) == trim(nm)) then
+      if (vars(i)%name == nm) then
         vars(i)%val = val
         return
       end if
@@ -65,7 +65,7 @@ contains
   ! Apply a scalar-returning function: sum, minval, maxval, etc.
   function apply_scalar_func(fname, arr) result(r)
     character(len=*), intent(in)       :: fname
-    real(kind=dp),    intent(in), dimension(:) :: arr
+    real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp) :: r
 
     select case (trim(fname))
@@ -88,7 +88,7 @@ contains
   ! Apply an elementwise function: log, exp, etc.
   function apply_elemwise_func(fname, arr) result(res)
     character(len=*), intent(in)       :: fname
-    real(kind=dp),    intent(in), dimension(:) :: arr
+    real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp), allocatable :: res(:)
     integer :: n
 
@@ -566,9 +566,17 @@ contains
     write(*,"(/,'> ',a)") trim(str)
     rsize = size(r)
     if (rsize < 2) then
-      print "(F0.6)", r
+      if (all(abs(r - nint(r)) <= tol)) then
+         print "(i0)", nint(r)
+      else
+         print "(F0.6)", r
+      end if
     else if (rsize <= max_print) then
-      write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
+      if (all(abs(r - nint(r)) <= tol)) then
+         write(*,'("[",*(i0,:," "),"]")', advance="no") nint(r)
+      else
+         write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
+      end if
       print "(']')"
     else
       print "(*(a10))", "size", "mean", "sd", "min", "max", &
