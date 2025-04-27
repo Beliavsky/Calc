@@ -535,7 +535,7 @@ contains
   end subroutine assign_element
 
   !------------------------------------------------------------------------
-  subroutine eval_print(str)
+  impure elemental subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
     integer, allocatable :: rint(:)
