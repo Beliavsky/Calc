@@ -21,7 +21,7 @@ module interpret_mod
   logical, save :: eval_error = .false.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
-  logical, parameter :: debug = .true.
+  logical, parameter :: debug = .false.
 contains
 
   subroutine clear()
@@ -595,8 +595,10 @@ contains
       write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
       print "(']')"
     else
-      print "(*(a10))", "mean", "sd", "min", "max", "first", "last"
-      print "(*(f10.4))", mean(r), sd(r), minval(r), maxval(r), r(1), r(rsize)
+      print "(*(a10))", "size", "mean", "sd", "min", "max", &
+                        "first", "last"
+      print "(i10, *(f10.4))", rsize, mean(r), sd(r), minval(r), &
+                               maxval(r), r(1), r(rsize)
     end if
   end subroutine eval_print
 
