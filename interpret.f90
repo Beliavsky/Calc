@@ -10,7 +10,8 @@ module interpret_mod
     module procedure runif_scalar, runif_vec
   end interface runif
 
-  integer, parameter :: max_vars = 100, max_print = 15
+  integer, parameter :: max_vars = 100
+  integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
 
   type :: var_t
     character(len=32) :: name = ''
@@ -241,62 +242,51 @@ contains
     end function get_variable
 
     !parse_array
-
-
     recursive function parse_array() result(arr)
       real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
-      integer :: count
+      integer :: total, ne
 
-      ! consume the '['
+      !── consume the '[' ────────────────────────────────────────────
       call next_char()
       call skip_spaces()
 
-      ! --- error if we hit end-of-string before a closing ']' ---
-      if (curr_char == char(0)) then
-        print *, "Error: missing ']' in array literal"
-        eval_error = .true.
-        arr = [bad_value]
-        return
-      end if
-
-      ! --- empty array literal [] ---
+      !── empty array literal [] ────────────────────────────────────
       if (curr_char == ']') then
         allocate(arr(0))
-        ! consume the ']'
         call next_char()
         return
       end if
 
-      ! --- otherwise, read one or more elements ---
-      count = 0
-      do while (curr_char /= ']' .and. curr_char /= char(0))
+      total = 0
+      allocate(arr(0))
+
+      do
+        !── parse one element (may itself be an array) ─────────────
         elem = parse_expression()
-        count = count + 1
-        if (count == 1) then
-          allocate(arr(1))
-        else
-          allocate(tmp(count))
-          tmp(1:count-1) = arr
-          deallocate(arr)
-          arr = tmp
-          deallocate(tmp)
-        end if
-        arr(count) = elem(1)
+        if (eval_error) return
+        ne = size(elem)
 
+        !── append elem to arr ─────────────────────────────────────
+        if (allocated(tmp)) deallocate(tmp)
+        allocate(tmp(total+ne))
+        if (total > 0) tmp(1:total) = arr
+        tmp(total+1:total+ne) = elem
+        if (allocated(arr)) deallocate(arr)
+        arr = tmp
+        total = total + ne
+
+        !── now skip any spaces, then decide what to do ────────────
         call skip_spaces()
-        if (curr_char == ',' .or. curr_char == ' ') then
+        select case (curr_char)
+        case (',')         ! explicit comma
           call next_char()
-          call skip_spaces()
-        end if
+        case (']')         ! end of array
+          call next_char()
+          exit
+        case default       ! implicit separator: next token is another element
+          ! do nothing
+        end select
       end do
-
-      ! --- now either we stopped at ']' or at end-of-input ---
-      if (curr_char == ']') then
-        call next_char()
-      else
-        print *, "Error: missing ']' in array literal"
-        eval_error = .true.
-      end if
     end function parse_array
 
     !--------------------------------------------------
@@ -693,9 +683,7 @@ contains
         end if
       end do
 
-      if (.not. found) then
-        print *, "Warning: variable '", trim(nm), "' not defined"
-      end if
+      if (.not. found) print *, "Warning: variable '", trim(nm), "' not defined"
     end do
   end subroutine delete_vars
 end module interpret_mod
