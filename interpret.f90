@@ -5,7 +5,7 @@ module interpret_mod
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
-     code_transcript_file, clear, vars
+     code_transcript_file, clear, vars, mutable
   interface runif
     module procedure runif_scalar, runif_vec
   end interface runif
@@ -24,6 +24,7 @@ module interpret_mod
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
   logical, parameter :: stop_if_error = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
+  logical, parameter :: mutable = .false.   ! when .false., no reassignments allowed
 contains
 
   subroutine clear()
@@ -47,6 +48,11 @@ contains
     nm = adjustl(name)
     do i = 1, n_vars
       if (vars(i)%name == nm) then
+        if (.not. mutable) then
+           print *, "Error: cannot reassign '" // trim(nm) // "' if mutable is .false."
+           eval_error = .true.
+           return
+        end if
         vars(i)%val = val
         return
       end if
@@ -545,13 +551,18 @@ contains
     idx = int(tmp(1))
     do vi = 1, n_vars
       if (trim(vars(vi)%name) == trim(name)) then
-        if (idx < 1 .or. idx > size(vars(vi)%val)) then
-          print *, "Error: index out of bounds for '", trim(name), "'"
-          eval_error = .true.
+        if (.not. mutable) then
+           print *, "Error: cannot assign element of '", trim(name), "'—mutable is .false."
+           eval_error = .true.
         else
-          vars(vi)%val(idx) = rval(1)
+           if (idx < 1 .or. idx > size(vars(vi)%val)) then
+              print *, "Error: index out of bounds for '", trim(name), "'"
+              eval_error = .true.
+           else
+              vars(vi)%val(idx) = rval(1)
+           end if
+           return
         end if
-        return
       end if
     end do
 
