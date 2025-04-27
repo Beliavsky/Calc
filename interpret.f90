@@ -230,7 +230,7 @@ contains
       integer :: i
 
       do i = 1, n_vars
-        if (trim(vars(i)%name) == trim(name)) then
+        if (vars(i)%name == name) then
           v = vars(i)%val
           return
         end if
@@ -271,20 +271,17 @@ contains
         allocate(tmp(total+ne))
         if (total > 0) tmp(1:total) = arr
         tmp(total+1:total+ne) = elem
-        if (allocated(arr)) deallocate(arr)
         arr = tmp
         total = total + ne
 
         !── now skip any spaces, then decide what to do ────────────
         call skip_spaces()
         select case (curr_char)
-        case (',')         ! explicit comma
+        case (",")         ! explicit comma
           call next_char()
-        case (']')         ! end of array
+        case ("]")         ! end of array
           call next_char()
           exit
-        case default       ! implicit separator: next token is another element
-          ! do nothing
         end select
       end do
     end function parse_array
@@ -330,7 +327,7 @@ contains
             ! zero-arg function?
             if (curr_char == ")") then
               call next_char()
-              if (trim(id) == "runif") then
+              if (id == "runif") then
                 f = [runif_scalar()]
               else
                 print *, "Error: function '", trim(id), "' needs arguments"
@@ -540,7 +537,7 @@ contains
 
     idx = int(tmp(1))
     do vi = 1, n_vars
-      if (trim(vars(vi)%name) == trim(name)) then
+      if (vars(vi)%name == name) then
         if (.not. mutable) then
            print *, "Error: cannot assign element of '", trim(name), "'—mutable is .false."
            eval_error = .true.
@@ -668,7 +665,7 @@ contains
       ! try to find and delete nm
       found = .false.
       do i_var = 1, n_vars
-        if (trim(vars(i_var)%name) == nm) then
+        if (vars(i_var)%name == nm) then
           ! deallocate storage
           if (allocated(vars(i_var)%val)) deallocate(vars(i_var)%val)
           ! shift the rest down
