@@ -100,12 +100,23 @@ contains
     allocate(res(n))
 
     select case (trim(fname))
-    case ("abs")  ; res = abs(arr)
+    case ("abs") ; res = abs(arr)
     case ("acos") ; res = acos(arr)
-    case ("acosh"); res = acosh(arr)
-    case ("log")  ; res = log(arr)
-    case ("exp")  ; res = exp(arr)
+    case ("acosh") ; res = acosh(arr)
+    case ("asin") ; res = asin(arr)
+    case ("asinh") ; res = asinh(arr)
+    case ("atan") ; res = atan(arr)
+    case ("atanh") ; res = atanh(arr)
+    case ("cos") ; res = cos(arr)
+    case ("cosh") ; res = cosh(arr)
+    case ("exp") ; res = exp(arr)
+    case ("log") ; res = log(arr)
+    case ("log10") ; res = log10(arr)
+    case ("sin") ; res = sin(arr)
+    case ("sinh") ; res = sinh(arr)
     case ("sqrt") ; res = sqrt(arr)
+    case ("tan") ; res = tan(arr)
+    case ("tanh") ; res = tanh(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -291,8 +302,18 @@ contains
       real(kind=dp), allocatable :: f(:), exponent(:), tmp(:), arr(:), vvar(:)
       character(len=32) :: id
       integer :: idx, nrand
-
+      logical :: is_neg
       call skip_spaces()
+  ! ---- NEW: unary + / – --------------------------------------------
+      if (curr_char == "+" .or. curr_char == "-") then
+         is_neg = (curr_char == '-')
+         call next_char()               ! consume the sign
+         call skip_spaces()
+         f = parse_factor()             ! evaluate the factor that follows
+         if (.not. eval_error .and. is_neg) f = -f
+         return
+      end if
+  ! -------------------------------------------------------------------
       select case (curr_char)
       case ('(')
         call next_char()
@@ -346,7 +367,10 @@ contains
                     f = runif_vec(nrand)
                   end if
 
-                case ("abs", "acos", "acosh", "log", "exp", "sqrt")
+!                case ("abs", "acos", "acosh", "log", "exp", "sqrt")
+                case ("abs", "acos", "acosh", "asin", "asinh", "atan", &
+                      "atanh", "cos", "cosh", "exp", "log", "log10", &
+                      "sin", "sinh", "sqrt", "tan", "tanh")
                   f = apply_elemwise_func(id, arr)
 
                 case ("size", "sum", "product", "norm2", "minval", "maxval")
