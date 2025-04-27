@@ -1,6 +1,7 @@
 module interpret_mod
   use kind_mod, only: dp
   use stats_mod, only: mean, sd
+  use util_mod, only: matched_brackets, matched_parentheses
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -21,7 +22,7 @@ module interpret_mod
   logical, save :: eval_error = .false.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
-  logical, parameter :: debug = .false.
+  logical, parameter :: stop_if_error = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
 contains
 
@@ -134,7 +135,6 @@ contains
     character(len=:), allocatable :: lhs, rhs
 
     call init_evaluator(trim(str), expr, lenstr, pos)
-    if (debug) print*,"returned from init_evaluator, lenstr, pos =", lenstr, pos
     eqpos = index(expr, '=')
     if (eqpos > 0) then
       lhs = adjustl(expr(1:eqpos-1))
@@ -542,6 +542,7 @@ contains
     tmp = evaluate(idxs)
     if (eval_error .or. size(tmp) /= 1) then
       eval_error = .true.
+      if (stop_if_error) stop "stopped with evaluation error"
       return
     end if
 
@@ -574,6 +575,12 @@ contains
        return
     else if (str == "") then
        return
+    else if (.not. matched_parentheses(str)) then
+       print*,"mismatched parentheses"
+       return
+    else if (.not. matched_brackets(str)) then
+       print*,"mismatched brackets"
+       return
     else if (index(str, "**") /= 0) then
        print*,"use ^ instead of ** for exponentiaton"
        return
@@ -592,10 +599,11 @@ contains
       end do
       return
     end if
-    if (debug) print*,"r = evaluate(str) for str = '" // trim(str) // "'"
     r = evaluate(str)
-    if (debug) print*,"(1) here, set r"
-    if (eval_error) return
+    if (eval_error) then
+       if (stop_if_error) stop "stopped with evaluation error"
+       return
+    end if
 
     write(*,"(/,'> ',a)") trim(str)
     rsize = size(r)
