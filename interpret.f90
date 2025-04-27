@@ -304,41 +304,39 @@ contains
       integer :: idx, nrand
       logical :: is_neg
       call skip_spaces()
-  ! ---- NEW: unary + / – --------------------------------------------
       if (curr_char == "+" .or. curr_char == "-") then
-         is_neg = (curr_char == '-')
+         is_neg = curr_char == "-"
          call next_char()               ! consume the sign
          call skip_spaces()
          f = parse_factor()             ! evaluate the factor that follows
          if (.not. eval_error .and. is_neg) f = -f
          return
       end if
-  ! -------------------------------------------------------------------
       select case (curr_char)
-      case ('(')
+      case ("(")
         call next_char()
         f = parse_expression()
-        if (curr_char == ')') then
+        if (curr_char == ")") then
           call next_char()
         end if
 
-      case ('[')
+      case ("[")
         f = parse_array()
 
       case default
-        if ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.') then
+        if ((curr_char >= "0" .and. curr_char <= "9") .or. curr_char == ".") then
           f = parse_number()
 
-        else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
-                 (curr_char >= 'A' .and. curr_char <= 'Z')) then
+        else if ((curr_char >= "a" .and. curr_char <= "z") .or. &
+                 (curr_char >= "A" .and. curr_char <= "Z")) then
           id = parse_identifier()
           call skip_spaces()
-          if (curr_char == '(') then
+          if (curr_char == "(") then
             call next_char()
             call skip_spaces()
 
             ! zero-arg function?
-            if (curr_char == ')') then
+            if (curr_char == ")") then
               call next_char()
               if (trim(id) == "runif") then
                 f = [runif_scalar()]
@@ -575,6 +573,9 @@ contains
        call clear()
        return
     else if (str == "") then
+       return
+    else if (index(str, "**") /= 0) then
+       print*,"use ^ instead of ** for exponentiaton"
        return
     end if
     if (str == "?vars") then
