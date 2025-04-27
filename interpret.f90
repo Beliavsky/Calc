@@ -73,6 +73,10 @@ contains
       r = size(arr)
     case ("sum")
       r = sum(arr)
+    case ("product")
+      r = product(arr)
+    case ("norm2")
+      r = norm2(arr)
     case ("minval")
       r = minval(arr)
     case ("maxval")
@@ -96,10 +100,12 @@ contains
     allocate(res(n))
 
     select case (trim(fname))
-    case ("log")
-      res = log(arr)
-    case ("exp")
-      res = exp(arr)
+    case ("abs")  ; res = abs(arr)
+    case ("acos") ; res = acos(arr)
+    case ("acosh"); res = acosh(arr)
+    case ("log")  ; res = log(arr)
+    case ("exp")  ; res = exp(arr)
+    case ("sqrt") ; res = sqrt(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -340,10 +346,10 @@ contains
                     f = runif_vec(nrand)
                   end if
 
-                case ("log", "exp")
+                case ("abs", "acos", "acosh", "log", "exp", "sqrt")
                   f = apply_elemwise_func(id, arr)
 
-                case ("size", "sum", "minval", "maxval")
+                case ("size", "sum", "product", "norm2", "minval", "maxval")
                   f = [apply_scalar_func(id, arr)]
 
                 case default
@@ -543,6 +549,8 @@ contains
     write (tunit, "(a)") str
     if (str == "clear") then
        call clear()
+       return
+    else if (str == "") then
        return
     end if
     if (str == "?vars") then
