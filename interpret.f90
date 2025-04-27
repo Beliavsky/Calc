@@ -1,7 +1,7 @@
 module interpret_mod
-  use kind_mod, only: dp
+  use kind_mod , only: dp
   use stats_mod, only: mean, sd
-  use util_mod, only: matched_brackets, matched_parentheses
+  use util_mod , only: matched_brackets, matched_parentheses
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -70,18 +70,14 @@ contains
     real(kind=dp) :: r
 
     select case (trim(fname))
-    case ("size")
-      r = size(arr)
-    case ("sum")
-      r = sum(arr)
-    case ("product")
-      r = product(arr)
-    case ("norm2")
-      r = norm2(arr)
-    case ("minval")
-      r = minval(arr)
-    case ("maxval")
-      r = maxval(arr)
+    case ("size")    ; r = size(arr)
+    case ("sum")     ; r = sum(arr)
+    case ("product") ; r = product(arr)
+    case ("norm2")   ; r = norm2(arr)
+    case ("minval")  ; r = minval(arr)
+    case ("maxval")  ; r = maxval(arr)
+    case ("minloc")  ; r = minloc(arr, dim=1)
+    case ("maxloc")  ; r = maxloc(arr, dim=1)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -365,13 +361,13 @@ contains
                     f = runif_vec(nrand)
                   end if
 
-!                case ("abs", "acos", "acosh", "log", "exp", "sqrt")
                 case ("abs", "acos", "acosh", "asin", "asinh", "atan", &
                       "atanh", "cos", "cosh", "exp", "log", "log10", &
                       "sin", "sinh", "sqrt", "tan", "tanh")
                   f = apply_elemwise_func(id, arr)
 
-                case ("size", "sum", "product", "norm2", "minval", "maxval")
+                case ("size", "sum", "product", "norm2", "minval", &
+                      "maxval", "minloc", "maxloc")
                   f = [apply_scalar_func(id, arr)]
 
                 case default
@@ -573,6 +569,9 @@ contains
     if (str == "clear") then
        call clear()
        return
+    else if (index(str, 'del ') == 1) then
+       call delete_vars(str(5:))
+       return
     else if (str == "") then
        return
     else if (.not. matched_parentheses(str)) then
@@ -646,4 +645,46 @@ contains
     end if
   end function runif_vec
 
+  subroutine delete_vars(list_str)
+    character(len=*), intent(in) :: list_str
+    character(len=32) :: nm
+    integer :: start, pos, len_list, i_var, j_var
+    logical :: found
+
+    start = 1
+    len_list = len_trim(list_str)
+    do while (start <= len_list)
+      ! find next comma
+      pos = index(list_str(start:), ',')
+      if (pos > 0) then
+        nm = adjustl(trim(list_str(start:start+pos-2)))
+        start = start + pos
+      else
+        nm = adjustl(trim(list_str(start:len_list)))
+        start = len_list + 1
+      end if
+
+      ! try to find and delete nm
+      found = .false.
+      do i_var = 1, n_vars
+        if (trim(vars(i_var)%name) == nm) then
+          ! deallocate storage
+          if (allocated(vars(i_var)%val)) deallocate(vars(i_var)%val)
+          ! shift the rest down
+          do j_var = i_var, n_vars-1
+            vars(j_var) = vars(j_var+1)
+          end do
+          vars(n_vars)%name = ''
+          if (allocated(vars(n_vars)%val)) deallocate(vars(n_vars)%val)
+          n_vars = n_vars - 1
+          found = .true.
+          exit
+        end if
+      end do
+
+      if (.not. found) then
+        print *, "Warning: variable '", trim(nm), "' not defined"
+      end if
+    end do
+  end subroutine delete_vars
 end module interpret_mod
