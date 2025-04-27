@@ -1,13 +1,15 @@
 module interpret_mod
+  use kind_mod, only: dp
+  use stats_mod, only: mean, sd
   implicit none
   private
-  public :: evaluate, eval_print, set_variable, tunit, code_transcript_file, clear
+  public :: evaluate, eval_print, set_variable, tunit, &
+     code_transcript_file, clear, vars
   interface runif
     module procedure runif_scalar, runif_vec
   end interface runif
 
-  integer, parameter :: dp = kind(1.0d0)
-  integer, parameter :: max_vars = 100
+  integer, parameter :: max_vars = 100, max_print = 15
 
   type :: var_t
     character(len=32) :: name = ''
@@ -560,14 +562,14 @@ contains
   subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
-    integer :: i
+    integer :: i, rsize
     write (tunit, "(a)") str
     if (str == "clear") then
        call clear()
        return
     end if
-    if (len_trim(str) >= 2 .and. str(1:1) == '?') then
-      write(*,*) 'Defined variables:'
+    if (str == "?vars") then
+      write(*,*) "Defined variables:"
       do i = 1, n_vars
         if (size(vars(i)%val) == 1) then
           write(*,"(a)", advance="no") trim(vars(i)%name)//': '
@@ -586,11 +588,15 @@ contains
     if (eval_error) return
 
     write(*,"(/,'> ',a)") trim(str)
-    if (size(r) == 1) then
+    rsize = size(r)
+    if (rsize < 2) then
       print "(F0.6)", r(1)
-    else
+    else if (rsize <= max_print) then
       write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
       print "(']')"
+    else
+      print "(*(a10))", "mean", "sd", "min", "max", "first", "last"
+      print "(*(f10.4))", mean(r), sd(r), minval(r), maxval(r), r(1), r(rsize)
     end if
   end subroutine eval_print
 
@@ -606,7 +612,7 @@ contains
     if (n < 1) then
       allocate(r(1))
       r(1) = 0.0_dp
-    else
+    else 
       allocate(r(n))
       call random_number(r)
     end if
