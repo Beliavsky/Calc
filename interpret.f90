@@ -80,7 +80,7 @@ contains
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
-      r = 0.0_dp
+      r = bad_value
     end select
   end function apply_scalar_func
 
@@ -103,7 +103,7 @@ contains
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
-      res = 0.0_dp
+      res = bad_value
     end select
   end function apply_elemwise_func
 
@@ -218,8 +218,7 @@ contains
 
       print *, "Error: undefined variable '", trim(name), "'"
       eval_error = .true.
-      allocate(v(1))
-      v(1) = 0.0_dp
+      v = [bad_value]
     end function get_variable
 
     !parse_array
@@ -237,8 +236,7 @@ contains
       if (curr_char == char(0)) then
         print *, "Error: missing ']' in array literal"
         eval_error = .true.
-        allocate(arr(1))
-        arr(1) = 0.0_dp
+        arr = [bad_value]
         return
       end if
 
@@ -337,8 +335,7 @@ contains
                 case ("runif")
                   nrand = int(arr(1))
                   if (nrand < 1) then
-                    allocate(f(1))
-                    f(1) = 0.0_dp
+                    allocate(f(0))
                   else
                     f = runif_vec(nrand)
                   end if
@@ -355,32 +352,27 @@ contains
                     if (.not. eval_error .and. size(vvar) > 1) then
                       idx = int(arr(1))
                       if (idx >= 1 .and. idx <= size(vvar)) then
-                        allocate(f(1))
-                        f(1) = vvar(idx)
+                        f = [vvar(idx)]
                       else
                         print *, "Error: index out of bounds for '", trim(id), "'"
                         eval_error = .true.
-                        allocate(f(1))
-                        f(1) = 0.0_dp
+                        f = [bad_value]
                       end if
                     else
                       print *, trim(id)//"(x) not defined for scalar x"
                       eval_error = .true.
-                      allocate(f(1))
-                      f(1) = 0.0_dp
+                      f = [bad_value]
                     end if
                   else
                     print *, "Error: function '", trim(id), "' not defined"
                     eval_error = .true.
-                    allocate(f(1))
-                    f(1) = 0.0_dp
+                    f = [bad_value]
                   end if
 
                 end select
 
               else
-                allocate(f(1))
-                f(1) = 0.0_dp
+                f = [bad_value]
               end if
 
             end if
@@ -390,8 +382,7 @@ contains
           end if
 
         else
-          allocate(f(1))
-          f(1) = 0.0_dp
+          f = [bad_value]
         end if
       end select
 
@@ -403,16 +394,13 @@ contains
           if (size(f) == size(exponent)) then
             tmp = f ** exponent
           else if (size(exponent) == 1) then
-            allocate(tmp(size(f)))
             tmp = f ** exponent(1)
           else if (size(f) == 1) then
-            allocate(tmp(size(exponent)))
             tmp = f(1) ** exponent
           else
             print *, "Error: size mismatch in exponentiation"
             return
           end if
-          deallocate(f)
           f = tmp
         end if
       end if
@@ -435,12 +423,8 @@ contains
           if (nt == nf) then
             tmp = t * f2
           else if (nf == 1) then
-            if (allocated(tmp)) deallocate (tmp)
-            allocate(tmp(nt))
             tmp = t * f2(1)
           else if (nt == 1) then
-            if (allocated(tmp)) deallocate (tmp)
-            allocate(tmp(nf))
             tmp = t(1) * f2
           else
             print *, "Error: size mismatch in multiplication"
@@ -454,17 +438,14 @@ contains
           if (nt == nf) then
             tmp = t / f2
           else if (nf == 1) then
-            allocate(tmp(nt))
             tmp = t / f2(1)
           else if (nt == 1) then
-            allocate(tmp(nf))
             tmp = t(1) / f2
           else
             print *, "Error: size mismatch in division"
             return
           end if
         end if
-        deallocate(t)
         t = tmp
         call skip_spaces()
       end do
@@ -486,10 +467,8 @@ contains
           if (ne == nt) then
             tmp = e + t
           else if (nt == 1) then
-            allocate(tmp(ne))
             tmp = e + t(1)
           else if (ne == 1) then
-            allocate(tmp(nt))
             tmp = e(1) + t
           else
             print *, "Error: size mismatch in addition"
@@ -503,17 +482,14 @@ contains
           if (ne == nt) then
             tmp = e - t
           else if (nt == 1) then
-            allocate(tmp(ne))
             tmp = e - t(1)
           else if (ne == 1) then
-            allocate(tmp(nt))
             tmp = e(1) - t
           else
             print *, "Error: size mismatch in subtraction"
             return
           end if
         end if
-        deallocate(e)
         e = tmp
         call skip_spaces()
       end do
@@ -590,7 +566,7 @@ contains
     write(*,"(/,'> ',a)") trim(str)
     rsize = size(r)
     if (rsize < 2) then
-      print "(F0.6)", r(1)
+      print "(F0.6)", r
     else if (rsize <= max_print) then
       write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
       print "(']')"
@@ -612,8 +588,7 @@ contains
     integer, intent(in)        :: n
     real(kind=dp), allocatable :: r(:)
     if (n < 1) then
-      allocate(r(1))
-      r(1) = 0.0_dp
+      allocate(r(0))
     else 
       allocate(r(n))
       call random_number(r)
