@@ -62,10 +62,16 @@ subroutine slice_array(name, idxs, result)
   end if
 
   !── check bounds ─────────────────────────────────────────────────
-  if (i1<1 .or. i2>size(v) .or. i1>i2) then
+  if (i1<1 .or. i2>size(v)) then
     print *, "Error: slice indices out of range"
-    eval_error = .true.; return
+    eval_error = .true.
+    return
   end if
+
+   if (i1 > i2) then
+      result = [real(kind=dp) ::] 
+      return
+   end if
 
   !── produce the slice ────────────────────────────────────────────
   result = v(i1:i2)
