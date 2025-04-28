@@ -918,10 +918,20 @@ end function parse_factor
     rsize = size(r)
     rint = nint(r)
     if (rsize < 2) then
-      if (all(abs(r - rint) <= tol)) then
+      if (rsize == 0) then
+         print*
+      else if (all(abs(r - rint) <= tol)) then
          print "(i0)", rint
       else
-         print "(F0.6)", r
+         if (abs(r(1)) < 1.0_dp) then
+            if (r(1) >= 0) then
+               print "(F8.6)", r
+            else
+               print "(F9.6)", r
+            end if
+         else
+            print "(F0.6)", r
+         end if
       end if
     else if (rsize <= max_print) then
       if (all(abs(r - rint) <= tol)) then
