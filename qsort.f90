@@ -2,8 +2,8 @@ module qsort_mod
    use kind_mod, only : dp
    implicit none
    private
-   public :: indexx               , quick_sort_in_place    , quick_sort , &
-             sorted               , rank                     ! <── new
+   public :: indexx, quick_sort_in_place, quick_sort , &
+             sorted, rank, median
 
    !–––––––––––––––– generic interfaces –––––––––––––––––––––––––––––––––
    interface indexx
@@ -13,12 +13,16 @@ module qsort_mod
    interface rank                           ! <── new
       module procedure rank_real, rank_int
    end interface rank
+
+   interface median
+      module procedure median_real, median_int
+   end interface median
    !––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 contains
 !=======================================================================
 !  helper: return **sorted copy** of a real vector
 !=======================================================================
-   function sorted(x) result(y)
+   pure function sorted(x) result(y)
       real(kind=dp), intent(in) :: x(:)
       real(kind=dp)             :: y(size(x))
       y = x
@@ -158,6 +162,58 @@ contains
 
       rk = rank_real(real(x,kind=dp))
    end function rank_int
+!=======================================================================
+
+!=======================================================================
+!  Median for REAL(dp) and INTEGER vectors
+!=======================================================================
+   pure function median_real(x) result(med)
+      !! Median of a REAL(dp) vector.
+      !! For an even‐length vector the mean of the two middle values
+      !! is returned.
+      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp)             :: med
+
+      integer :: n
+      real(kind=dp), allocatable :: y(:)
+
+      n = size(x)
+      if (n == 0) then
+         med = 0.0_dp
+         return
+      end if
+
+      y  = sorted(x)                       ! already provided helper
+      if (mod(n,2) == 1) then              ! odd length
+         med = y((n+1)/2)
+      else                                 ! even length
+         med = 0.5_dp * ( y(n/2) + y(n/2 + 1) )
+      end if
+   end function median_real
+!-----------------------------------------------------------------------
+   pure function median_int(x) result(med)
+      !! Median of an INTEGER vector (integer result).
+      !! For an even‐length vector the *integer* mean of the two middle
+      !! values (truncated toward zero) is returned.
+      integer, intent(in) :: x(:)
+      integer             :: med
+
+      integer              :: n
+      integer, allocatable :: ord(:)
+
+      n = size(x)
+      if (n == 0) then
+         med = 0
+         return
+      end if
+
+      ord = indexx_int(x)                  ! ordering permutation
+      if (mod(n,2) == 1) then              ! odd
+         med = x( ord((n+1)/2) )
+      else                                 ! even
+         med = ( x( ord(n/2) ) + x( ord(n/2 + 1) ) ) / 2
+      end if
+   end function median_int
 !=======================================================================
 
 end module qsort_mod
