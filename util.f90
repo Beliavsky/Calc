@@ -1,7 +1,8 @@
 module util_mod
+use kind_mod, only: dp
 implicit none
 private
-public :: matched_parentheses, matched_brackets
+public :: matched_parentheses, matched_brackets, arange
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -39,5 +40,14 @@ elemental logical function matched_brackets(s) result(is_valid)
   end do
   is_valid = balance == 0
 end function matched_brackets
+
+function arange(n) result(vec)
+integer, intent(in) :: n
+real(kind=dp) :: vec(n)
+integer :: i
+do i=1,n
+   vec(i) = real(i, kind=dp)
+end do
+end function arange
 
 end module util_mod
