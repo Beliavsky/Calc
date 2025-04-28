@@ -181,6 +181,8 @@ end subroutine slice_array
     case ("maxval")  ; r = maxval(arr)
     case ("minloc")  ; r = minloc(arr, dim=1)
     case ("maxloc")  ; r = maxloc(arr, dim=1)
+    case ("mean")    ; r = mean(arr)
+    case ("sd")      ; r = sd(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -557,12 +559,12 @@ recursive function parse_factor() result(f)
             case ('abs','acos','acosh','asin','asinh','atan','atanh', &
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product','norm2','minval', &
-                  'maxval','minloc','maxloc')
+                  'maxval','minloc','maxloc','mean','sd')
                if (have_second) then
                   print *, "Error: function '",trim(id),"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  if (index('size sum product norm2 minval maxval minloc maxloc', &
+                  if (index('size sum product norm2 minval maxval minloc maxloc mean sd', &
                              trim(id)) > 0) then
                      f = [ apply_scalar_func(id, arg1) ]
                   else
