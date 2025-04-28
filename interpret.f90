@@ -65,16 +65,11 @@ subroutine slice_array(name, idxs, result)
   if (i1<1 .or. i2>size(v)) then
     print *, "Error: slice indices out of range"
     eval_error = .true.
-    return
+  else if (i1 > i2) then
+    result = [real(kind=dp) ::] 
+  else
+    result = v(i1:i2)
   end if
-
-   if (i1 > i2) then
-      result = [real(kind=dp) ::] 
-      return
-   end if
-
-  !── produce the slice ────────────────────────────────────────────
-  result = v(i1:i2)
 
 contains
 
