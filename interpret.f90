@@ -516,20 +516,23 @@ recursive function parse_factor() result(f)
             !------------- dispatch -----------------------------------------
             select case (trim(id))
 
-            case ("cor", "cov") ! correlation and covariance
+            case ("cor", "cov", "dot") ! correlation and covariance
                if (.not. have_second) then
                   print *, "Error: function needs two arguments"
                   eval_error = .true.;  f = [bad_value]
                else if (size(arg1) /= size(arg2)) then
-                  print *, "Error: function array arguments must have equal sizes"
+                  print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
+                                           size(arg1), size(arg2), " must be equal"
                   eval_error = .true.;  f = [bad_value]
-               else if (size(arg1) < 2) then
+               else if (id == "cor" .or. id == "cov" .and. size(arg1) < 2) then
                   print *, "Error: function array arguments must have sizes > 1"
                   eval_error = .true.;  f = [bad_value]
+               else if (id == "dot") then
+                  f = [dot_product(arg1, arg2)]
                else
                   if (id == "cor") then
                      f = [cor(arg1, arg2)]
-                  else
+                  else if (id == "cov") then
                      f = [cov(arg1, arg2)]
                   end if
                end if
