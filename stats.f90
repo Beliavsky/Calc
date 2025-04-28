@@ -18,14 +18,14 @@ sumsq = sum(y**2)
 if (sumsq > 0) y = y / sqrt(sumsq/n)
 end function standardize
 
-function mean(x) result(mean_val)
+pure function mean(x) result(mean_val)
 ! return the mean of x
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: mean_val
-mean_val = sum(x) / size(x)
+mean_val = sum(x) / (max(1, size(x)))
 end function mean
 
-function sd(x) result(sd_val)
+pure function sd(x) result(sd_val)
 ! return the standard deviation of x
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: sd_val
@@ -100,13 +100,37 @@ subroutine print_stats(x)
 real(kind=dp), intent(in) :: x(:)
 integer :: n
 n = size(x)
-print "(*(a10))", "size", "mean", "sd", "min", "max", "first", "last"
+print "(*(a10))", "size", "mean", "sd", "skew", "kurt", "min", "max", "first", "last"
 if (n > 0) then
-   print "(i10, *(f10.4))", n, mean(x), sd(x), minval(x), &
+   print "(i10, *(f10.4))", n, mean(x), sd(x), skew(x), kurtosis(x), minval(x), &
                             maxval(x), x(1), x(n)
 else
    print "(i10)", n
 end if
 end subroutine print_stats
+
+pure function skew(x) result(skew_val)
+! return the skewness of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: skew_val
+real(kind=dp) :: mean_x, sd_x
+integer :: n
+n = size(x)
+mean_x = mean(x)
+sd_x = sd(x)
+skew_val = sum(((x - mean_x) / sd_x)**3) / n
+end function skew
+
+pure function kurtosis(x) result(kurtosis_val)
+! return the kurtosis of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: kurtosis_val
+real(kind=dp) :: mean_x, sd_x
+integer :: n
+n = size(x)
+mean_x = mean(x)
+sd_x = sd(x)
+kurtosis_val = sum(((x - mean_x) / sd_x)**4) / n - 3.0_dp
+end function kurtosis
 
 end module stats_mod
