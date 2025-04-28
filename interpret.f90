@@ -1,7 +1,8 @@
 module interpret_mod
   use kind_mod , only: dp
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize
-  use util_mod , only: matched_brackets, matched_parentheses, arange
+  use util_mod , only: matched_brackets, matched_parentheses, arange, &
+                       head, tail
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank, median
   implicit none
@@ -225,6 +226,8 @@ end subroutine slice_array
     case ("tanh") ; res = tanh(arr)
     case ("cumsum"); res = cumsum(arr)
     case ("diff"); res = diff(arr)
+    case ("head"); res = head(arr)
+    case ("tail"); res = tail(arr)
     case ("sort"); res = sorted(arr)
     case ("indexx"); res = indexx(arr)
     case ("rank"); res = rank(arr)
@@ -613,7 +616,7 @@ recursive function parse_factor() result(f)
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product', 'norm1', 'norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
-                  'sort','indexx','rank','stdz','median')
+                  'sort','indexx','rank','stdz','median','head','tail')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
