@@ -1,6 +1,6 @@
 module interpret_mod
   use kind_mod , only: dp
-  use stats_mod, only: mean, sd, cor
+  use stats_mod, only: mean, sd, cor, cov
   use util_mod , only: matched_brackets, matched_parentheses
   implicit none
   private
@@ -493,7 +493,7 @@ recursive function parse_factor() result(f)
             !------------- dispatch -----------------------------------------
             select case (trim(id))
 
-            case ("cor")                                 ! correlation
+            case ("cor", "cov") ! correlation and covariance
                if (.not. have_second) then
                   print *, "Error: function needs two arguments"
                   eval_error = .true.;  f = [bad_value]
@@ -504,7 +504,11 @@ recursive function parse_factor() result(f)
                   print *, "Error: function array arguments must have sizes > 1"
                   eval_error = .true.;  f = [bad_value]
                else
-                  f = [cor(arg1, arg2)]
+                  if (id == "cor") then
+                     f = [cor(arg1, arg2)]
+                  else if (id == "cov") then
+                     f = [cov(arg1, arg2)]
+                  end if
                end if
 
             case ('min','max')                           ! two-arg intrinsics
