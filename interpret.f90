@@ -7,7 +7,7 @@ module interpret_mod
   public :: evaluate, eval_print, set_variable, tunit, &
      code_transcript_file, clear, vars, mutable, slice_array
   interface runif
-    module procedure runif_scalar, runif_vec
+    module procedure runif_vec
   end interface runif
 
   integer, parameter :: max_vars = 100
@@ -28,65 +28,100 @@ module interpret_mod
   logical, parameter :: mutable = .false.   ! when .false., no reassignments allowed
 contains
 
+!---------------------------------------------------------------
+!  Return a 1-D section of variable NAME described by the text
+!  in IDXS ( e.g. "2:11:3", "5:", ":7:-2", … ).
+!
 subroutine slice_array(name, idxs, result)
-  character(len=*), intent(in)            :: name
-  character(len=*), intent(in)            :: idxs
-  real(kind=dp), allocatable, intent(out) :: result(:)
+   character(len=*), intent(in)            :: name
+   character(len=*), intent(in)            :: idxs
+   real(kind=dp),   allocatable, intent(out) :: result(:)
 
-  real(kind=dp), allocatable :: v(:), left_arr(:), right_arr(:)
-  integer :: colon, i1, i2
-  allocate (result(0))
-  !── fetch the variable via your public evaluate() ────────────────
-  v = evaluate(name)
-  if (eval_error) return
+   real(kind=dp), allocatable :: v(:), larr(:), uarr(:), sarr(:)
+   integer                    :: c1, c2       ! locations of ':' in IDXS
+   integer                    :: i1, i2, step
+   integer                    :: n            ! array size
 
-  colon = index(idxs, ":")
+   !------------------------------------------------------------
+   ! evaluate the variable itself
+   v = evaluate(name)
+   if (eval_error) return
+   n = size(v)
 
-  if (colon == 0) then
-    print *, "Error: bad slice syntax in '", trim(idxs), "'"
-    eval_error = .true.; return
-  end if
+   !------------------------------------------------------------
+   ! locate first and (optional) second ':' in the text
+   c1 = index(idxs, ":")
+   if (c1 == 0) then
+      print *, "Error: bad slice syntax in '", trim(idxs), "'"
+      eval_error = .true.
+      allocate(result(0));  return
+   end if
+   c2 = index(idxs(c1+1:), ":")
+   if (c2 > 0) c2 = c1 + c2        !→ absolute position, or 0 if none
 
-  !── left index ───────────────────────────────────────────────────
-  if (colon > 1) then
-    call parse_index(idxs(1:colon-1), left_arr, i1)  ! helper below
-  else
-    i1 = 1
-  end if
+   !------------------------------------------------------------
+   ! lower bound
+   if (c1 > 1) then
+      call parse_index( idxs(:c1-1), larr, i1 )
+   else
+      i1 = 1
+   end if
 
-  !── right index ──────────────────────────────────────────────────
-  if (colon < len_trim(idxs)) then
-    call parse_index(idxs(colon+1:), right_arr, i2)
-  else
-    i2 = size(v)
-  end if
+   !------------------------------------------------------------
+   ! upper bound & stride
+   if (c2 == 0) then                    ! only one ':'
+      step = 1
+      if (c1 < len_trim(idxs)) then
+         call parse_index( idxs(c1+1:), uarr, i2 )
+      else
+         i2 = n
+      end if
+   else                                  ! two ':'  → stride present
+      if (c2 - c1 > 1) then              ! ←  strictly “> 1” is the right check
+         call parse_index( idxs(c1+1:c2-1), uarr, i2 )
+      else
+         i2 = n          ! omitted upper bound
+      end if
+      call parse_index( idxs(c2+1:), sarr, step )
+   end if
 
-  !── check bounds ─────────────────────────────────────────────────
-  if (i1<1 .or. i2>size(v)) then
-    print *, "Error: slice indices out of range"
-    eval_error = .true.
-  else if (i1 > i2) then
-    result = [real(kind=dp) ::] 
-  else
-    result = v(i1:i2)
-  end if
+   !------------------------------------------------------------
+   ! sanity checks
+   if (step == 0) then
+      print *, "Error: slice stride cannot be zero"
+      eval_error = .true.;  allocate(result(0));  return
+   end if
+   if (i1 < 1 .or. i1 > n .or. i2 < 0 .or. i2 > n) then
+      print *, "Error: slice indices out of range"
+      eval_error = .true.;  allocate(result(0));  return
+   end if
+
+   !------------------------------------------------------------
+   ! empty slice situations that are nevertheless valid
+   if ( (step > 0 .and. i1 >  i2)  .or. &
+        (step < 0 .and. i1 <  i2) ) then
+      allocate(result(0))
+      return
+   end if
+
+   !------------------------------------------------------------
+   ! finally deliver the section
+   result = v(i1:i2:step)
 
 contains
+   !----------------------------------------------------------------
+   subroutine parse_index(str, arr, idx)
+      character(len=*), intent(in)            :: str
+      real(kind=dp),   allocatable, intent(out) :: arr(:)
+      integer,         intent(out)            :: idx
 
-  !------------------------------------------------------------------
-  ! parse a subscript expression like "3+2" or "k-1"
-  subroutine parse_index(str, arr, idx)
-    character(len=*), intent(in)            :: str
-    real(kind=dp), allocatable, intent(out):: arr(:)
-    integer,       intent(out)              :: idx
-
-    arr = evaluate(str)           ! arr is allocatable real(:)
-    if (eval_error) then
-      idx = -1; return
-    end if
-    idx = int(arr(1))
-  end subroutine parse_index
-
+      arr = evaluate(str)
+      if (eval_error) then
+         idx = -1
+      else
+         idx = int(arr(1))
+      end if
+   end subroutine parse_index
 end subroutine slice_array
 
   subroutine clear()
@@ -347,169 +382,166 @@ end subroutine slice_array
       end do
     end function parse_array
 
-    recursive function parse_factor() result(f)
-      implicit none
+!--------------------------------------------------
+recursive function parse_factor() result(f)
+   implicit none
+   ! ––– local data ––––––––––––––––––––––––––––––––
+   real(kind=dp), allocatable :: f(:), exponent(:), tmp(:)
+   real(kind=dp), allocatable :: arr(:), vvar(:)
+   character(len=32)          :: id
+   character(len=:), allocatable :: idxs
+   integer :: idx, nrand
+   integer :: pstart, pend, depth
+   logical :: is_neg
+   ! ––––––––––––––––––––––––––––––––––––––––––––––––
+   call skip_spaces()
 
-      ! Declarations
-      real(kind=dp), allocatable :: f(:), exponent(:), tmp(:), arr(:), vvar(:)
-      character(len=32)         :: id
-      integer                   :: idx, nrand, pstart, relpos
-      character(len=:), allocatable :: idxs
-      logical                   :: is_neg
-
-      ! Body
+   ! unary ±
+   if (curr_char == "+" .or. curr_char == "-") then
+      is_neg = (curr_char == "-")
+      call next_char()
       call skip_spaces()
+      f = parse_factor()
+      if (.not. eval_error .and. is_neg) f = -f
+      return
+   end if
 
-      ! Unary +/‐  
-      if (curr_char == "+" .or. curr_char == "-") then
-        is_neg = (curr_char == "-")
-        call next_char()
-        call skip_spaces()
-        f = parse_factor()
-        if (.not. eval_error .and. is_neg) f = -f
-        return
-      end if
+   select case (curr_char)
 
-      select case (curr_char)
+   !––––– parenthesised expression ––––––––––––––––
+   case ("(")
+      call next_char()
+      f = parse_expression()
+      if (curr_char == ")") call next_char()
 
-      ! Parenthesized expression
-      case ("(")
-        call next_char()
-        f = parse_expression()
-        if (curr_char == ")") call next_char()
+   !––––– array literal –––––––––––––––––––––––––––
+   case ("[")
+      f = parse_array()
 
-      ! Array literal
-      case ("[")
-        f = parse_array()
+   !––––– number, variable, slice or function –––––
+   case default
+      if ((curr_char >= "0" .and. curr_char <= "9") .or. curr_char == ".") then
+         f = parse_number()
 
-      case default
-        ! Number literal?
-        if ((curr_char >= "0" .and. curr_char <= "9") .or. curr_char == ".") then
-          f = parse_number()
+      else if ((curr_char >= "a" .and. curr_char <= "z") .or. &
+               (curr_char >= "A" .and. curr_char <= "Z")) then
 
-        ! Identifier: could be variable, slice, or function call
-        else if ((curr_char >= "a" .and. curr_char <= "z") .or. &
-                 (curr_char >= "A" .and. curr_char <= "Z")) then
+         id = parse_identifier()
+         call skip_spaces()
 
-          id = parse_identifier()
-          call skip_spaces()
-
-          if (curr_char == "(") then
-            !–– consume '(' and skip any spaces
-            call next_char()
+         if (curr_char == "(") then                ! id( … )
+            call next_char()                       ! eat '('
             call skip_spaces()
 
-            !–– detect slicing syntax:  name(i:j), name(i:), name(:j)
-            pstart = pos - 1                    ! first slice character
-            relpos  = index( expr(pstart:) , ")" )   ! distance to ')'
-
-            if (relpos > 0) then
-              if (index( expr(pstart:pstart+relpos-2) , ":" ) > 0) then
-                idxs = expr( pstart : pstart + relpos - 2 )  ! "i:j", "i:", ":j"
-                ! consume through the ')'
-                do while (curr_char /= ")" .and. curr_char /= char(0))
-                  call next_char()
-                end do
-                if (curr_char == ")") call next_char()
-                call slice_array(id, idxs, f)
-                return
-              end if
+            !–– try to recognise a slice id(expr:expr[:expr])
+            pstart = pos - 1                       ! first char *inside* "( )"
+            depth  = 1
+            pend   = pstart - 1
+            do while (pend < lenstr .and. depth > 0)
+               pend = pend + 1
+               select case (expr(pend:pend))
+               case("(") ; depth = depth + 1
+               case(")") ; depth = depth - 1
+               end select
+            end do
+            if (depth /= 0) then
+               print *, "Error: mismatched parentheses in slice"
+               eval_error = .true.;  f = [bad_value];  return
             end if
-            !–– end slicing check
 
-            ! Zero-argument function?
-            if (curr_char == ")") then
-              call next_char()
-              if (trim(id) == "runif") then
-                f = [runif_scalar()]
-              else
-                print *, "Error: function '", trim(id), "' needs arguments"
-                eval_error = .true.
-                f = [bad_value]
-              end if
+            if (index( expr(pstart:pend-1) , ":" ) > 0) then
+               idxs = expr(pstart:pend-1)
+               call slice_array(id, idxs, f)
 
-            ! One-or-more-argument function or single-element indexing
-            else
-              arr = parse_expression()
-              if (curr_char == ")") call next_char()
-              if (.not. eval_error) then
-                select case (trim(id))
-                case ("runif")
+               !–––– advance parser cursor *past* the ')' –––––
+               pos = pend + 1
+               if (pos > lenstr) then
+                  curr_char = char(0)
+               else
+                  curr_char = expr(pos:pos)
+                  pos = pos + 1
+               end if
+               return
+            end if
+            !–––– end slice handling ––––––––––––––––––––––––––
+
+            ! … otherwise: function-call or single-element access
+            arr = parse_expression()
+            if (curr_char == ")") call next_char()
+
+            if (.not. eval_error) then
+               select case (trim(id))
+
+               case ("runif")
                   nrand = int(arr(1))
                   if (nrand < 1) then
-                    allocate(f(0))
+                     allocate(f(0))
                   else
-                    f = runif_vec(nrand)
+                     f = runif_vec(nrand)
                   end if
 
-                case ("abs","acos","acosh","asin","asinh","atan","atanh", &
-                      "cos","cosh","exp","log","log10","sin","sinh","sqrt","tan","tanh")
+               case ("abs","acos","acosh","asin","asinh","atan","atanh", &
+                     "cos","cosh","exp","log","log10","sin","sinh","sqrt", &
+                     "tan","tanh")
                   f = apply_elemwise_func(id, arr)
 
-                case ("size","sum","product","norm2","minval","maxval","minloc","maxloc")
+               case ("size","sum","product","norm2","minval","maxval", &
+                     "minloc","maxloc")
                   f = [apply_scalar_func(id, arr)]
 
-                case default
-                  ! single-element indexing x(i)
+               case default                         ! maybe x(i)
                   if (size(arr) == 1) then
-                    vvar = get_variable(id)
-                    if (.not. eval_error .and. size(vvar) > 1) then
-                      idx = int(arr(1))
-                      if (idx >= 1 .and. idx <= size(vvar)) then
-                        f = [vvar(idx)]
-                      else
-                        print *, "Error: index out of bounds for '", trim(id), "'"
-                        eval_error = .true.
-                        f = [bad_value]
-                      end if
-                    else
-                      print *, trim(id)//"(x) not defined for scalar x"
-                      eval_error = .true.
-                      f = [bad_value]
-                    end if
+                     vvar = get_variable(id)
+                     if (.not. eval_error .and. size(vvar) > 1) then
+                        idx = int(arr(1))
+                        if (idx >= 1 .and. idx <= size(vvar)) then
+                           f = [vvar(idx)]
+                        else
+                           print *, "Error: index out of bounds for '",trim(id),"'"
+                           eval_error = .true.;  f = [bad_value]
+                        end if
+                     else
+                        print *, trim(id)//"(x) not defined for scalar x"
+                        eval_error = .true.;  f = [bad_value]
+                     end if
                   else
-                    print *, "Error: function '", trim(id), "' not defined"
-                    eval_error = .true.
-                    f = [bad_value]
+                     print *, "Error: function '", trim(id), "' not defined"
+                     eval_error = .true.;  f = [bad_value]
                   end if
-                end select
-              else
-                f = [bad_value]
-              end if
+               end select
+            else
+               f = [bad_value]
             end if
 
-          else
-            ! Simple variable reference
+         else                                       ! plain variable
             f = get_variable(id)
-          end if
+         end if
 
-        else
-          ! Unexpected character → error
-          f = [bad_value]
-        end if
-      end select
+      else                                          ! unrecognised token
+         f = [bad_value]
+      end if
+   end select
 
-      ! Exponentiation: f ^ exponent
-      call skip_spaces()
-      if (curr_char == '^') then
-        call next_char()
-        exponent = parse_factor()
-        if (.not. eval_error) then
-          if (size(f) == size(exponent)) then
+   !––––– exponentiation ––––––––––––––––––––––––––
+   call skip_spaces()
+   if (curr_char == '^') then
+      call next_char()
+      exponent = parse_factor()
+      if (.not. eval_error) then
+         if      (size(f) == size(exponent)) then
             tmp = f ** exponent
-          else if (size(exponent) == 1) then
+         else if (size(exponent) == 1) then
             tmp = f ** exponent(1)
-          else if (size(f) == 1) then
+         else if (size(f) == 1) then
             tmp = f(1) ** exponent
-          else
+         else
             print *, "Error: size mismatch in exponentiation"
             return
-          end if
-          f = tmp
-        end if
+         end if
+         f = tmp
       end if
-
-    end function parse_factor
+   end if
+end function parse_factor
 
     !--------------------------------------------------
     recursive function parse_term() result(t)
@@ -712,12 +744,6 @@ end subroutine slice_array
                                maxval(r), r(1), r(rsize)
     end if
   end subroutine eval_print
-
-  !------------------------------------------------------------------------
-  function runif_scalar() result(r)
-    real(kind=dp) :: r
-    call random_number(r)
-  end function runif_scalar
 
   function runif_vec(n) result(r)
     integer, intent(in)        :: n
