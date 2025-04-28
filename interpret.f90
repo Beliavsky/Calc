@@ -1,6 +1,7 @@
 module interpret_mod
   use kind_mod , only: dp
-  use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize
+  use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize, &
+                       print_stats
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid
   use random_mod, only: random_normal
@@ -188,6 +189,7 @@ end subroutine slice_array
     case ("median")  ; r = median(arr)
     case ("mean")    ; r = mean(arr)
     case ("sd")      ; r = sd(arr)
+    case ("print_stats"); call print_stats(arr); r = 0
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -201,10 +203,6 @@ end subroutine slice_array
     character(len=*), intent(in)       :: fname
     real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp), allocatable :: res(:)
-!    integer :: n
-
-!    n = size(arr)
-!    allocate(res(n))
 
     select case (trim(fname))
     case ("abs") ; res = abs(arr)
@@ -667,12 +665,12 @@ case ("grid")                                     !  grid(n,x0,xh)
                   'sort','indexx','rank','stdz','median','head','tail', &
                   'bessel_j0','bessel_j1','bessel_y0','bessel_y1', &
                   'gamma','log_gamma','cosd','sind','tand', &
-                  'acosd','asind','atand')
+                  'acosd','asind','atand','print_stats')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  if (index('size sum product norm1 norm2 minval maxval minloc maxloc mean sd median', &
+                  if (index('size sum product norm1 norm2 minval maxval minloc maxloc mean sd median print_stats', &
                              trim(id)) > 0) then
                      f = [ apply_scalar_func(id, arg1) ] ! functions that take array and return scalar
                   else
@@ -978,7 +976,7 @@ end function parse_factor
        if (stop_if_error) stop "stopped with evaluation error"
        return
     end if
-
+    if (index(trim(str),"print_stats") == 1) return 
     write(*,"(/,'> ',a)") trim(str)
     rsize = size(r)
     rint = nint(r)
@@ -1006,10 +1004,7 @@ end function parse_factor
       end if
       print "(']')"
     else
-      print "(*(a10))", "size", "mean", "sd", "min", "max", &
-                        "first", "last"
-      print "(i10, *(f10.4))", rsize, mean(r), sd(r), minval(r), &
-                               maxval(r), r(1), r(rsize)
+      call print_stats(r)
     end if
   end subroutine eval_print
 
