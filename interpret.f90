@@ -35,7 +35,7 @@ subroutine slice_array(name, idxs, result)
 
   real(kind=dp), allocatable :: v(:), left_arr(:), right_arr(:)
   integer :: colon, i1, i2
-
+  allocate (result(0))
   !── fetch the variable via your public evaluate() ────────────────
   v = evaluate(name)
   if (eval_error) return
