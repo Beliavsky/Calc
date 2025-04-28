@@ -398,7 +398,7 @@ recursive function parse_factor() result(f)
    integer,          allocatable :: idxv(:)
    character(len=32) :: id
    character(len=:), allocatable :: idxs
-   integer :: nrand, pstart, pend, depth, n1, n2
+   integer :: nsize, pstart, pend, depth, n1, n2
    logical :: is_neg, have_second
    logical :: toplevel_colon, toplevel_comma
    !------------------------------------------------------------------
@@ -437,6 +437,22 @@ recursive function parse_factor() result(f)
          if (curr_char == '(') then            !  id( … )
             call next_char()                   !  consume '('
             call skip_spaces()
+
+            !============ ZERO-ARGUMENT SPECIAL CASE ======================
+            if (curr_char == ')') then         !  e.g. runif()
+               call next_char()                !  consume ')'
+               select case (trim(id))
+               case ('runif')
+                  allocate(f(1))
+                  call random_number(f(1))
+               case default
+                  print *, "Error: function '"//trim(id)//"' needs arguments"
+                  eval_error = .true.
+                  f = [bad_value]
+               end select
+               return
+            end if
+            !========== end zero-argument special case ====================
 
             !--- examine the whole parenthesised chunk --------------------
             pstart = pos - 1                   ! first char _inside_ '('
@@ -510,7 +526,7 @@ recursive function parse_factor() result(f)
                else
                   if (id == "cor") then
                      f = [cor(arg1, arg2)]
-                  else if (id == "cov") then
+                  else
                      f = [cov(arg1, arg2)]
                   end if
                end if
@@ -545,20 +561,16 @@ recursive function parse_factor() result(f)
                   end if
                end if
 
-            case ("runif","arange")                               ! one-arg only
+            case ("runif","arange")                       ! one-arg
                if (have_second) then
                   print *, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
+                  nsize = int(arg1(1))
                   if (id == "runif") then
-                     nrand = int(arg1(1))
-                     if (nrand < 1) then
-                        allocate(f(0))
-                     else
-                        f = runif_vec(nrand)
-                     end if
-                  else if (id == "arange") then
-                     f = arange(int(arg1(1)))
+                     f = runif_vec(nsize)
+                  else
+                     f = arange(nsize)
                   end if
                end if
 
@@ -567,7 +579,7 @@ recursive function parse_factor() result(f)
                   'tan','tanh','size','sum','product','norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff')
                if (have_second) then
-                  print *, "Error: function '",trim(id),"' takes one argument"
+                  print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
                   if (index('size sum product norm2 minval maxval minloc maxloc mean sd', &
@@ -580,18 +592,18 @@ recursive function parse_factor() result(f)
 
             case default                                  ! subscript  x(i)
                if (have_second) then
-                  print *, "Error: function '",trim(id),"' not defined"
+                  print *, "Error: function '"//trim(id)//"' not defined"
                   eval_error = .true.;  f = [bad_value]
                else
                   vvar = get_variable(id)
                   if (.not. eval_error) then
                      if (any(abs(arg1 - nint(arg1)) > tol)) then
-                        print *, "Error: non-integer subscript for '",trim(id),"'"
+                        print *, "Error: non-integer subscript for '"//trim(id)//"'"
                         eval_error = .true.;  f = [bad_value]
                      else
                         idxv = nint(arg1)
                         if (any(idxv < 1) .or. any(idxv > size(vvar))) then
-                           print *, "Error: index out of bounds for '",trim(id),"'"
+                           print *, "Error: index out of bounds for '"//trim(id)//"'"
                            eval_error = .true.;  f = [bad_value]
                         else
                            allocate(f(size(idxv)));  f = vvar(idxv)
@@ -609,7 +621,7 @@ recursive function parse_factor() result(f)
          end if
 
       else
-         print *, "Error: unexpected character '", curr_char, "'"
+         print *, "Error: unexpected character '"//curr_char//"'"
          eval_error = .true.;  f = [bad_value]
       end if
    end select
