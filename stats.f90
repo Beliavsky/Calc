@@ -2,7 +2,7 @@ module stats_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: mean, sd, cor, cov
+public :: mean, sd, cor, cov, cumsum, diff
 contains
 function mean(x) result(mean_val)
 ! return the mean of x
@@ -58,4 +58,28 @@ x_mean = sum(x) / n
 y_mean = sum(y) / n
 cov_xy = sum((x - x_mean) * (y - y_mean)) / (n - 1)
 end function cov
+
+function cumsum(x) result(y)
+! return the cumulative sum of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: y(size(x))
+integer :: i, n
+n = size(x)
+if (n < 1) return
+y(1) = x(1)
+do i=2,n
+   y(i) = y(i-1) + x(i)
+end do
+end function cumsum
+
+function diff(x) result(y)
+! return the consecutive differences of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: y(size(x)-1)
+integer :: n
+n = size(x)
+if (n < 2) return
+y = x(2:) - x(:n-1)
+end function diff
+
 end module stats_mod
