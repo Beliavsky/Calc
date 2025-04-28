@@ -229,32 +229,52 @@ end subroutine slice_array
     end select
   end function apply_vec_func
 
-  !------------------------------------------------------------------------
+  !------------------------------------------------------------------
   recursive function evaluate(str) result(res)
+  !------------------------------------------------------------------
     implicit none
     character(len=*), intent(in) :: str
-    real(kind=dp), allocatable :: res(:)
-    character(len=:), allocatable :: expr
-    integer :: pos, lenstr, eqpos
-    character(len=:), allocatable :: lhs, rhs
+    real(kind=dp),   allocatable :: res(:)
 
+    !–- local to this outer shell –----------------------------------
+    character(len=:), allocatable :: expr, lhs, rhs
+    integer                      :: pos, lenstr      ! parser cursor & length
+    integer                      :: i, eqpos         ! scan index & "=" position
+  !------------------------------------------------------------------
+
+    !–– prepare the string for parsing –––––––––––––––––––––––––––––
     call init_evaluator(trim(str), expr, lenstr, pos)
-    eqpos = index(expr, '=')
+
+    !–– look for an *assignment* “=” that is **not** part of >= <= == !=
+    eqpos = 0
+    do i = 1, lenstr
+       if (expr(i:i) == '=') then
+          if ( i > 1  .and. any( expr(i-1:i-1) == ['>','<','!','='] ) ) cycle
+          if ( i < lenstr .and. expr(i+1:i+1) == '='                 ) cycle
+          eqpos = i
+          exit                       ! first qualifying “=” wins
+       end if
+    end do
+
+    !–– assignment found → evaluate RHS then store ––––––––––––––––
     if (eqpos > 0) then
-      lhs = adjustl(expr(1:eqpos-1))
-      rhs = expr(eqpos+1:)
-      res = evaluate(rhs)
-      if (.not. eval_error) then
-        if (index(lhs,'(') > 0 .and. index(lhs,')') > index(lhs,'(')) then
-          call assign_element(lhs, res)
-        else
-          call set_variable(lhs, res)
-        end if
-      end if
-      return
+       lhs = adjustl(expr(1:eqpos-1))
+       rhs = expr(eqpos+1:)
+
+       res = evaluate(rhs)           ! recursive call
+       if (.not. eval_error) then
+          if (index(lhs,'(') > 0 .and. index(lhs,')') > index(lhs,'(')) then
+             call assign_element(lhs, res)   ! element assignment  a(i)=…
+          else
+             call set_variable  (lhs, res)   ! whole–variable assignment
+          end if
+       end if
+       return
     end if
 
+    !–– no “=” ⇒ treat the whole string as an expression ––––––––––
     res = parse_expression()
+
 
   contains
 
