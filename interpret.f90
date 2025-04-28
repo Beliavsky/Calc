@@ -3,7 +3,7 @@ module interpret_mod
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize
   use util_mod , only: matched_brackets, matched_parentheses, arange
   use random_mod, only: random_normal
-  use qsort_mod, only: sorted, indexx, rank
+  use qsort_mod, only: sorted, indexx, rank, median
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -183,6 +183,7 @@ end subroutine slice_array
     case ("maxval")  ; r = maxval(arr)
     case ("minloc")  ; r = minloc(arr, dim=1)
     case ("maxloc")  ; r = maxloc(arr, dim=1)
+    case ("median")  ; r = median(arr)
     case ("mean")    ; r = mean(arr)
     case ("sd")      ; r = sd(arr)
     case default
@@ -611,14 +612,14 @@ recursive function parse_factor() result(f)
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product','norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
-                  'sort','indexx','rank','stdz')
+                  'sort','indexx','rank','stdz','median')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  if (index('size sum product norm2 minval maxval minloc maxloc mean sd', &
+                  if (index('size sum product norm2 minval maxval minloc maxloc mean sd median', &
                              trim(id)) > 0) then
-                     f = [ apply_scalar_func(id, arg1) ]
+                     f = [ apply_scalar_func(id, arg1) ] ! functions that take array and return scalar
                   else
                      f = apply_vec_func(id, arg1)
                   end if
