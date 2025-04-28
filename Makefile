@@ -1,7 +1,7 @@
-executables = xinterpret_gfort.exe xcalc_gfort.exe
+executables = xinterpret_gfort.exe
 FC     = gfortran
 FFLAGS = -O0 -Wall -Werror=unused-parameter -Werror=unused-variable -Werror=unused-function -Wno-maybe-uninitialized -Wno-surprising -fbounds-check -static -g -fmodule-private
-obj    = kind.o stats.o interpret.o xinterpret.o calc.o xcalc.o
+obj    = kind.o util.o constants.o qsort.o random.o stats.o interpret.o xinterpret.o
 
 all: $(executables)
 
@@ -9,15 +9,11 @@ all: $(executables)
 %.o: %.f90
 	$(FC) $(FFLAGS) -c $<
 
-xinterpret_gfort.exe: kind.o stats.o interpret.o xinterpret.o
-	$(FC) -o xinterpret_gfort.exe kind.o stats.o interpret.o xinterpret.o $(FFLAGS)
-
-xcalc_gfort.exe: calc.o xcalc.o
-	$(FC) -o xcalc_gfort.exe calc.o xcalc.o $(FFLAGS)
+xinterpret_gfort.exe: kind.o util.o constants.o qsort.o random.o stats.o interpret.o xinterpret.o
+	$(FC) -o xinterpret_gfort.exe kind.o util.o constants.o qsort.o random.o stats.o interpret.o xinterpret.o $(FFLAGS)
 
 run: $(executables)
 	./xinterpret_gfort.exe
-	./xcalc_gfort.exe
 
 clean:
 	rm -f $(executables) $(obj)
