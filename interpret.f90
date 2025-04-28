@@ -495,13 +495,13 @@ recursive function parse_factor() result(f)
 
             case ("cor")                                 ! correlation
                if (.not. have_second) then
-                  print *, "Error: cor() needs two arguments"
+                  print *, "Error: function needs two arguments"
                   eval_error = .true.;  f = [bad_value]
                else if (size(arg1) /= size(arg2)) then
-                  print *, "Error: cor(x,y) arrays must have equal sizes"
+                  print *, "Error: function array arguments must have equal sizes"
                   eval_error = .true.;  f = [bad_value]
                else if (size(arg1) < 2) then
-                  print *, "Error: cor(x,y) arrays must have sizes > 1"
+                  print *, "Error: function array arguments must have sizes > 1"
                   eval_error = .true.;  f = [bad_value]
                else
                   f = [cor(arg1, arg2)]
