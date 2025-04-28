@@ -2,7 +2,8 @@ module stats_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: mean, sd, cor, cov, cumsum, diff, standardize, print_stats
+public :: mean, sd, cor, cov, cumsum, diff, standardize, &
+          print_stats, skew, kurtosis
 contains
 
 function standardize(x) result(y)
