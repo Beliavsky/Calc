@@ -255,11 +255,11 @@ end subroutine slice_array
     !–– prepare the string for parsing –––––––––––––––––––––––––––––
     call init_evaluator(trim(str), expr, lenstr, pos)
 
-    !–– look for an *assignment* “=” that is **not** part of >= <= == !=
+    !–– look for an *assignment* “=” that is **not** part of >= <= == <=
     eqpos = 0
     do i = 1, lenstr
        if (expr(i:i) == '=') then
-          if ( i > 1  .and. any( expr(i-1:i-1) == ['>','<','!','='] ) ) cycle
+          if ( i > 1  .and. any( expr(i-1:i-1) == ['>','<','!','=','/'] ) ) cycle
           if ( i < lenstr .and. expr(i+1:i+1) == '='                 ) cycle
           eqpos = i
           exit                       ! first qualifying “=” wins
@@ -746,6 +746,9 @@ end function parse_factor
             return
           end if
         else
+          !– If the next character is '=', this is `/=`; leave it to the
+          !  relational layer above and break out of the *term* loop.
+          if (pos <= lenstr .and. expr(pos:pos) == '=') exit
           call next_char()
           f2 = parse_factor()
           nt = size(t)
@@ -772,7 +775,7 @@ end function parse_factor
     !--------------------------------------------------
     ! Handles:
     !   – addition / subtraction        (+  -)
-    !   – relational comparisons        (<  <=  >  >=  ==  !=)
+    !   – relational comparisons        (<  <=  >  >=  ==  <=)
     ! Comparison rules
     !   • scalar ∘ scalar               → size-1 array  (1 or 0)
     !   • vector ∘ vector (same size)   → size-n array
@@ -849,12 +852,12 @@ end function parse_factor
             else
                op = '= '
             end if
-         case ('!')
+         case ('/')
             call next_char()
             if (curr_char == '=') then
-               op = '!=';  call next_char()
+               op = '/=';  call next_char()
             else
-               print *, "Error: unknown operator '!'.  Use != for < >."
+               print *, "Error: error with /"
                eval_error = .true.;  exit
             end if
          case default
@@ -1067,12 +1070,12 @@ end function parse_factor
          case ('>='); mask = a >= b
          case ('= ') ; mask = abs(a-b) <= tol
          case ('=='); mask = abs(a-b) <= tol
-         case ('!='); mask = abs(a-b) >  tol
+         case ('/='); mask = abs(a-b) >  tol
          end select
          res = merge( 1.0_dp , 0.0_dp , mask )
 
       else if (nb == 1) then
-         ! vector ∘ scalar
+         ! vector - scalar
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
@@ -1082,12 +1085,12 @@ end function parse_factor
          case ('>='); mask = a >= b(1)
          case ('= ') ; mask = abs(a-b(1)) <= tol
          case ('=='); mask = abs(a-b(1)) <= tol
-         case ('!='); mask = abs(a-b(1)) >  tol
+         case ('/='); mask = abs(a-b(1)) >  tol
          end select
          res = merge( 1.0_dp , 0.0_dp , mask )
 
       else if (na == 1) then
-         ! scalar ∘ vector   (broadcast the scalar)
+         ! scalar - vector   (broadcast the scalar)
          n  = nb
          allocate (mask(n), source = .false.)
          select case (op)
@@ -1097,7 +1100,7 @@ end function parse_factor
          case ('>='); mask = a(1) >= b
          case ('= ') ; mask = abs(a(1)-b) <= tol
          case ('=='); mask = abs(a(1)-b) <= tol
-         case ('!='); mask = abs(a(1)-b) >  tol
+         case ('/='); mask = abs(a(1)-b) >  tol
          end select
          res = merge( 1.0_dp , 0.0_dp , mask )
 
@@ -1108,3 +1111,4 @@ end function parse_factor
       end if
     end function rel_compare
 end module interpret_mod
+
