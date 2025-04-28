@@ -178,6 +178,7 @@ end subroutine slice_array
     case ("size")    ; r = size(arr)
     case ("sum")     ; r = sum(arr)
     case ("product") ; r = product(arr)
+    case ("norm1")   ; r = sum(abs(arr))
     case ("norm2")   ; r = norm2(arr)
     case ("minval")  ; r = minval(arr)
     case ("maxval")  ; r = maxval(arr)
@@ -610,14 +611,14 @@ recursive function parse_factor() result(f)
 
             case ('abs','acos','acosh','asin','asinh','atan','atanh', &
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
-                  'tan','tanh','size','sum','product','norm2','minval', &
+                  'tan','tanh','size','sum','product', 'norm1', 'norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
                   'sort','indexx','rank','stdz','median')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  if (index('size sum product norm2 minval maxval minloc maxloc mean sd median', &
+                  if (index('size sum product norm1 norm2 minval maxval minloc maxloc mean sd median', &
                              trim(id)) > 0) then
                      f = [ apply_scalar_func(id, arg1) ] ! functions that take array and return scalar
                   else
