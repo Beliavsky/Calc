@@ -2,6 +2,7 @@ module interpret_mod
   use kind_mod , only: dp
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff
   use util_mod , only: matched_brackets, matched_parentheses, arange
+  use random_mod, only: random_normal
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -442,9 +443,11 @@ recursive function parse_factor() result(f)
             if (curr_char == ')') then         !  e.g. runif()
                call next_char()                !  consume ')'
                select case (trim(id))
-               case ('runif')
+               case ("runif")
                   allocate(f(1))
                   call random_number(f(1))
+               case ("rnorm")
+                  f = random_normal(1)
                case default
                   print *, "Error: function '"//trim(id)//"' needs arguments"
                   eval_error = .true.
@@ -561,7 +564,7 @@ recursive function parse_factor() result(f)
                   end if
                end if
 
-            case ("runif","arange")                       ! one-arg
+            case ("runif","rnorm","arange")                       ! one-arg
                if (have_second) then
                   print *, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
@@ -569,6 +572,8 @@ recursive function parse_factor() result(f)
                   nsize = int(arg1(1))
                   if (id == "runif") then
                      f = runif_vec(nsize)
+                  else if (id == "rnorm") then
+                     f = random_normal(nsize)
                   else
                      f = arange(nsize)
                   end if
