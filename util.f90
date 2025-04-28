@@ -2,7 +2,8 @@ module util_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: matched_parentheses, matched_brackets, arange
+public :: matched_parentheses, matched_brackets, arange, head, &
+   tail
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -49,5 +50,45 @@ do i=1,n
    vec(i) = real(i, kind=dp)
 end do
 end function arange
+
+pure function head(x, n) result(y)
+!=====================================================================
+!  First n (default 5) elements of a real(kind=dp) vector
+!---------------------------------------------------------------------
+   real(kind=dp), intent(in)          :: x(:)
+   integer,        intent(in), optional :: n
+   real(kind=dp), allocatable         :: y(:)
+   integer :: n_                       ! number of elements to return
+   if (present(n)) then
+      n_ = n
+   else
+      n_ = 5
+   end if
+   n_ = min(max(n_,0), size(x))         ! clamp to [0, size(x)]
+
+   allocate(y(n_))
+   if (n_ > 0) y = x(:n_)
+end function head
+
+pure function tail(x, n) result(y)
+!=====================================================================
+!  Last n (default 5) elements of a real(kind=dp) vector
+!---------------------------------------------------------------------
+   real(kind=dp), intent(in)          :: x(:)
+   integer,        intent(in), optional :: n
+   real(kind=dp), allocatable         :: y(:)
+   integer :: n_, first                 ! number to return and first index
+   if (present(n)) then
+      n_ = n
+   else
+      n_ = 5
+   end if
+
+   n_ = min(max(n_,0), size(x))
+
+   first = size(x) - n_ + 1
+   allocate(y(n_))
+   if (n_ > 0) y = x(first:)
+end function tail
 
 end module util_mod
