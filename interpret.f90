@@ -1,7 +1,7 @@
 module interpret_mod
   use kind_mod , only: dp
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff
-  use util_mod , only: matched_brackets, matched_parentheses
+  use util_mod , only: matched_brackets, matched_parentheses, arange
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -545,16 +545,20 @@ recursive function parse_factor() result(f)
                   end if
                end if
 
-            case ('runif')                               ! one-arg only
+            case ("runif","arange")                               ! one-arg only
                if (have_second) then
-                  print *, "Error: runif() takes one argument"
+                  print *, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  nrand = int(arg1(1))
-                  if (nrand < 1) then
-                     allocate(f(0))
-                  else
-                     f = runif_vec(nrand)
+                  if (id == "runif") then
+                     nrand = int(arg1(1))
+                     if (nrand < 1) then
+                        allocate(f(0))
+                     else
+                        f = runif_vec(nrand)
+                     end if
+                  else if (id == "arange") then
+                     f = arange(int(arg1(1)))
                   end if
                end if
 
