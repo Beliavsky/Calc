@@ -1,6 +1,6 @@
 module interpret_mod
   use kind_mod , only: dp
-  use stats_mod, only: mean, sd, cor, cov
+  use stats_mod, only: mean, sd, cor, cov, cumsum, diff
   use util_mod , only: matched_brackets, matched_parentheses
   implicit none
   private
@@ -196,10 +196,10 @@ end subroutine slice_array
     character(len=*), intent(in)       :: fname
     real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp), allocatable :: res(:)
-    integer :: n
+!    integer :: n
 
-    n = size(arr)
-    allocate(res(n))
+!    n = size(arr)
+!    allocate(res(n))
 
     select case (trim(fname))
     case ("abs") ; res = abs(arr)
@@ -219,6 +219,8 @@ end subroutine slice_array
     case ("sqrt") ; res = sqrt(arr)
     case ("tan") ; res = tan(arr)
     case ("tanh") ; res = tanh(arr)
+    case ("cumsum"); res = cumsum(arr)
+    case ("diff"); res = diff(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -559,7 +561,7 @@ recursive function parse_factor() result(f)
             case ('abs','acos','acosh','asin','asinh','atan','atanh', &
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product','norm2','minval', &
-                  'maxval','minloc','maxloc','mean','sd')
+                  'maxval','minloc','maxloc','mean','sd','cumsum','diff')
                if (have_second) then
                   print *, "Error: function '",trim(id),"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
