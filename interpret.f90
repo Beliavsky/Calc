@@ -466,7 +466,8 @@ recursive function parse_factor() result(f)
             !------------- parse first argument ---------------------------------
             arg1 = parse_expression()
             if (eval_error) then
-               f = [bad_value];  return
+               f = [bad_value]
+               return
             end if
 
             call skip_spaces()
@@ -476,7 +477,8 @@ recursive function parse_factor() result(f)
                call next_char()
                arg2 = parse_expression()
                if (eval_error) then
-                  f = [bad_value];  return
+                  f = [bad_value]
+                  return
                end if
             end if
             if (curr_char == ')') call next_char()
@@ -487,9 +489,11 @@ recursive function parse_factor() result(f)
             case ('min','max')                  ! *****  2-ARG intrinsics *****
                if (.not. have_second) then
                   print *, "Error: ", trim(id), "() needs two arguments"
-                  eval_error = .true.;  f = [bad_value]
+                  eval_error = .true.
+                  f = [bad_value]
                else
-                  n1 = size(arg1);  n2 = size(arg2)
+                  n1 = size(arg1)
+                  n2 = size(arg2)
                   if (n1 == n2) then
                      if (trim(id) == 'min') then
                         f = min(arg1, arg2)
