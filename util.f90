@@ -3,7 +3,7 @@ use kind_mod, only: dp
 implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
-   tail
+   tail, grid
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -50,6 +50,18 @@ do i=1,n
    vec(i) = real(i, kind=dp)
 end do
 end function arange
+
+function grid(n, x0, xh) result(vec)
+integer, intent(in) :: n
+real(kind=dp) :: vec(n)
+real(kind=dp), intent(in) :: x0, xh
+integer :: i
+if (n < 1) return
+vec(1) = x0
+do i=2,n
+   vec(i) = vec(i-1) + xh
+end do
+end function grid
 
 pure function head(x, n) result(y)
 !=====================================================================
