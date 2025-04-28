@@ -382,25 +382,25 @@ end subroutine slice_array
       end do
     end function parse_array
 
-!--------------------------------------------------
 recursive function parse_factor() result(f)
-   implicit none
-   ! ––– local data ––––––––––––––––––––––––––––––––
-   real(kind=dp), allocatable :: f(:), exponent(:), tmp(:)
+   !– return value
+   real(kind=dp), allocatable :: f(:)
+   !– locals
+   real(kind=dp), allocatable :: exponent(:), tmp(:)
    real(kind=dp), allocatable :: arr(:), vvar(:)
-   character(len=32)          :: id
+   integer,          allocatable :: idxv(:)
+   character(len=32) :: id
    character(len=:), allocatable :: idxs
-   integer :: idx, nrand
-   integer :: pstart, pend, depth
-   logical :: is_neg
-   ! ––––––––––––––––––––––––––––––––––––––––––––––––
+   integer  :: nrand, pstart, pend, depth
+   logical  :: is_neg
+   !----------------------------------------------------------------
+
    call skip_spaces()
 
-   ! unary ±
-   if (curr_char == "+" .or. curr_char == "-") then
-      is_neg = (curr_char == "-")
+   ! unary ± --------------------------------------------------------
+   if (curr_char == '+' .or. curr_char == '-') then
+      is_neg = (curr_char == '-')
       call next_char()
-      call skip_spaces()
       f = parse_factor()
       if (.not. eval_error .and. is_neg) f = -f
       return
@@ -408,52 +408,55 @@ recursive function parse_factor() result(f)
 
    select case (curr_char)
 
-   !––––– parenthesised expression ––––––––––––––––
-   case ("(")
+   !––––– parenthesised expression ––––––––––––––––––––––––––––––––
+   case ('(')
       call next_char()
       f = parse_expression()
-      if (curr_char == ")") call next_char()
+      if (curr_char == ')') call next_char()
 
-   !––––– array literal –––––––––––––––––––––––––––
-   case ("[")
+   !––––– array literal –––––––––––––––––––––––––––––––––––––––––––-
+   case ('[')
       f = parse_array()
 
-   !––––– number, variable, slice or function –––––
+   !––––– number / identifier ––––––––––––––––––––––––––––––––––––
    case default
-      if ((curr_char >= "0" .and. curr_char <= "9") .or. curr_char == ".") then
+      if ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.') then
          f = parse_number()
 
-      else if ((curr_char >= "a" .and. curr_char <= "z") .or. &
-               (curr_char >= "A" .and. curr_char <= "Z")) then
+      else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
+               (curr_char >= 'A' .and. curr_char <= 'Z')) then
 
          id = parse_identifier()
          call skip_spaces()
 
-         if (curr_char == "(") then                ! id( … )
-            call next_char()                       ! eat '('
+         !----------------------------------------------------------
+         ! identifier followed by “( … )”
+         !----------------------------------------------------------
+         if (curr_char == '(') then
+            call next_char()                         ! consume '('
             call skip_spaces()
 
-            !–– try to recognise a slice id(expr:expr[:expr])
-            pstart = pos - 1                       ! first char *inside* "( )"
+            !–– detect slice  id(expr:expr[:expr]) ––––––––––––––––
+            pstart = pos - 1                         ! first char inside
             depth  = 1
             pend   = pstart - 1
             do while (pend < lenstr .and. depth > 0)
                pend = pend + 1
                select case (expr(pend:pend))
-               case("(") ; depth = depth + 1
-               case(")") ; depth = depth - 1
+               case ('('); depth = depth + 1
+               case (')'); depth = depth - 1
                end select
             end do
             if (depth /= 0) then
-               print *, "Error: mismatched parentheses in slice"
+               print *, "Error: mismatched parentheses"
                eval_error = .true.;  f = [bad_value];  return
             end if
 
-            if (index( expr(pstart:pend-1) , ":" ) > 0) then
+            if (index(expr(pstart:pend-1), ':') > 0) then
                idxs = expr(pstart:pend-1)
                call slice_array(id, idxs, f)
 
-               !–––– advance parser cursor *past* the ')' –––––
+               ! advance cursor past ')'
                pos = pend + 1
                if (pos > lenstr) then
                   curr_char = char(0)
@@ -463,16 +466,18 @@ recursive function parse_factor() result(f)
                end if
                return
             end if
-            !–––– end slice handling ––––––––––––––––––––––––––
+            !–– end slice detection ––––––––––––––––––––––––––––––––
 
-            ! … otherwise: function-call or single-element access
+            ! Otherwise evaluate inside “( … )”
             arr = parse_expression()
-            if (curr_char == ")") call next_char()
+            if (curr_char == ')') call next_char()
 
             if (.not. eval_error) then
+               !===================================================
                select case (trim(id))
+               !===================================================
 
-               case ("runif")
+               case ('runif')
                   nrand = int(arr(1))
                   if (nrand < 1) then
                      allocate(f(0))
@@ -480,69 +485,79 @@ recursive function parse_factor() result(f)
                      f = runif_vec(nrand)
                   end if
 
-               case ("abs","acos","acosh","asin","asinh","atan","atanh", &
-                     "cos","cosh","exp","log","log10","sin","sinh","sqrt", &
-                     "tan","tanh")
+               case ('abs','acos','acosh','asin','asinh','atan','atanh', &
+                     'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
+                     'tan','tanh')
                   f = apply_elemwise_func(id, arr)
 
-               case ("size","sum","product","norm2","minval","maxval", &
-                     "minloc","maxloc")
-                  f = [apply_scalar_func(id, arr)]
+               case ('size','sum','product','norm2','minval','maxval', &
+                     'minloc','maxloc')
+                  f = [ apply_scalar_func(id, arr) ]
 
-               case default                         ! maybe x(i)
-                  if (size(arr) == 1) then
-                     vvar = get_variable(id)
-                     if (.not. eval_error .and. size(vvar) > 1) then
-                        idx = int(arr(1))
-                        if (idx >= 1 .and. idx <= size(vvar)) then
-                           f = [vvar(idx)]
-                        else
+               case default          !–– scalar or **vector** subscript
+                  vvar = get_variable(id)
+
+                  if (.not. eval_error) then
+                     ! must be integer indices
+                     if (any(abs(arr - nint(arr)) > tol)) then
+                        print *, "Error: non-integer subscript for '",trim(id),"'"
+                        eval_error = .true.
+                        f = [bad_value]
+                     else
+                        idxv = nint(arr)
+
+                        if (any(idxv < 1) .or. any(idxv > size(vvar))) then
                            print *, "Error: index out of bounds for '",trim(id),"'"
                            eval_error = .true.;  f = [bad_value]
+                        else
+                           allocate(f(size(idxv)))
+                           f = vvar(idxv)
                         end if
-                     else
-                        print *, trim(id)//"(x) not defined for scalar x"
-                        eval_error = .true.;  f = [bad_value]
                      end if
                   else
-                     print *, "Error: function '", trim(id), "' not defined"
-                     eval_error = .true.;  f = [bad_value]
+                     f = [bad_value]
                   end if
+               !===================================================
                end select
+               !===================================================
             else
                f = [bad_value]
             end if
 
-         else                                       ! plain variable
+         else
+            ! plain variable reference ---------------------------
             f = get_variable(id)
          end if
 
-      else                                          ! unrecognised token
-         f = [bad_value]
+      else
+         print *, "Error: unexpected character '", curr_char, "'"
+         eval_error = .true.;  f = [bad_value]
       end if
    end select
 
-   !––––– exponentiation ––––––––––––––––––––––––––
+   !––––– exponentiation ––––––––––––––––––––––––––––––––––––––––––
    call skip_spaces()
    if (curr_char == '^') then
       call next_char()
       exponent = parse_factor()
       if (.not. eval_error) then
-         if      (size(f) == size(exponent)) then
-            tmp = f ** exponent
-         else if (size(exponent) == 1) then
+         if (size(exponent) == 1) then
             tmp = f ** exponent(1)
          else if (size(f) == 1) then
             tmp = f(1) ** exponent
+         else if (size(f) == size(exponent)) then
+            tmp = f ** exponent
          else
             print *, "Error: size mismatch in exponentiation"
-            return
+            eval_error = .true.
+            tmp = [bad_value]
          end if
          f = tmp
+      else
+         f = [bad_value]
       end if
    end if
 end function parse_factor
-
     !--------------------------------------------------
     recursive function parse_term() result(t)
       real(kind=dp), allocatable :: t(:), f2(:), tmp(:)
