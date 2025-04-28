@@ -191,8 +191,8 @@ end subroutine slice_array
   end function apply_scalar_func
 
   !------------------------------------------------------------------------
-  ! Apply an elementwise function: log, exp, etc.
-  function apply_elemwise_func(fname, arr) result(res)
+  ! Apply a function that takes an array and returns an array
+  function apply_vec_func(fname, arr) result(res)
     character(len=*), intent(in)       :: fname
     real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp), allocatable :: res(:)
@@ -224,7 +224,7 @@ end subroutine slice_array
       eval_error = .true.
       res = bad_value
     end select
-  end function apply_elemwise_func
+  end function apply_vec_func
 
   !------------------------------------------------------------------------
   recursive function evaluate(str) result(res)
@@ -568,7 +568,7 @@ recursive function parse_factor() result(f)
                              trim(id)) > 0) then
                      f = [ apply_scalar_func(id, arg1) ]
                   else
-                     f = apply_elemwise_func(id, arg1)
+                     f = apply_vec_func(id, arg1)
                   end if
                end if
 
