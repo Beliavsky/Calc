@@ -2,8 +2,22 @@ module stats_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: mean, sd, cor, cov, cumsum, diff
+public :: mean, sd, cor, cov, cumsum, diff, standardize, print_stats
 contains
+
+function standardize(x) result(y)
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp)             :: y(size(x))
+real(kind=dp)             :: sumsq
+integer                   :: n
+n = size(x)
+if (n == 1) y = 0.0_dp
+if (n < 1) return
+y = x - mean(x)
+sumsq = sum(y**2)
+if (sumsq > 0) y = y / sqrt(sumsq/n)
+end function standardize
+
 function mean(x) result(mean_val)
 ! return the mean of x
 real(kind=dp), intent(in) :: x(:)
@@ -81,5 +95,18 @@ n = size(x)
 if (n < 2) return
 y = x(2:) - x(:n-1)
 end function diff
+
+subroutine print_stats(x)
+real(kind=dp), intent(in) :: x(:)
+integer :: n
+n = size(x)
+print "(*(a10))", "size", "mean", "sd", "min", "max", "first", "last"
+if (n > 0) then
+   print "(i10, *(f10.4))", n, mean(x), sd(x), minval(x), &
+                            maxval(x), x(1), x(n)
+else
+   print "(i10)", n
+end if
+end subroutine print_stats
 
 end module stats_mod
