@@ -516,7 +516,7 @@ recursive function parse_factor() result(f)
             !------------- dispatch -----------------------------------------
             select case (trim(id))
 
-            case ("cor", "cov", "dot") ! correlation and covariance
+            case ("cor", "cov", "dot") ! correlation, covariance, dot product
                if (.not. have_second) then
                   print *, "Error: function needs two arguments"
                   eval_error = .true.;  f = [bad_value]
@@ -701,46 +701,106 @@ end function parse_factor
     end function parse_term
 
     !--------------------------------------------------
+    !--------------------------------------------------
     recursive function parse_expression() result(e)
-      real(kind=dp), allocatable :: e(:), t(:), tmp(:)
+    !--------------------------------------------------
+    ! Handles:
+    !   – addition / subtraction        (+  -)
+    !   – relational comparisons        (<  <=  >  >=  ==  !=)
+    ! Comparison rules
+    !   • scalar ∘ scalar               → size-1 array  (1 or 0)
+    !   • vector ∘ vector (same size)   → size-n array
+    !   • vector ∘ scalar (or vice-versa)→ size-n array
+    ! If the sizes are incompatible an error is raised.
+    !
+      real(kind=dp), allocatable :: e(:), t(:), rhs(:)
+      character(len=2)           :: op
       integer :: ne, nt
+      logical :: more_rel
 
+      !----------------  additive part (+ / -)  -------------------
       e = parse_term()
       call skip_spaces()
       do while (.not. eval_error .and. (curr_char=='+' .or. curr_char=='-'))
-        if (curr_char=='+') then
-          call next_char()
-          t = parse_term()
-          ne = size(e)
-          nt = size(t)
-          if (ne == nt) then
-            tmp = e + t
-          else if (nt == 1) then
-            tmp = e + t(1)
-          else if (ne == 1) then
-            tmp = e(1) + t
-          else
-            print *, "Error: size mismatch in addition"
-            return
-          end if
-        else
-          call next_char()
-          t = parse_term()
-          ne = size(e)
-          nt = size(t)
-          if (ne == nt) then
-            tmp = e - t
-          else if (nt == 1) then
-            tmp = e - t(1)
-          else if (ne == 1) then
-            tmp = e(1) - t
-          else
-            print *, "Error: size mismatch in subtraction"
-            return
-          end if
-        end if
-        e = tmp
-        call skip_spaces()
+         if (curr_char=='+') then
+            call next_char()
+            t = parse_term()
+            ne = size(e);  nt = size(t)
+            if (ne == nt) then
+               e = e + t
+            else if (nt == 1) then
+               e = e + t(1)
+            else if (ne == 1) then
+               e = e(1) + t
+            else
+               print *, "Error: size mismatch in addition"
+               eval_error = .true.;  return
+            end if
+         else
+            call next_char()
+            t = parse_term()
+            ne = size(e);  nt = size(t)
+            if (ne == nt) then
+               e = e - t
+            else if (nt == 1) then
+               e = e - t(1)
+            else if (ne == 1) then
+               e = e(1) - t
+            else
+               print *, "Error: size mismatch in subtraction"
+               eval_error = .true.;  return
+            end if
+         end if
+         call skip_spaces()
+      end do
+
+      !----------------  relational part (<  >  == …)  ------------
+      call skip_spaces()
+      more_rel = .true.
+      do while (.not. eval_error .and. more_rel)
+
+         !— detect operator ---------------------------------------
+         op = '  '           ! blanks
+         select case (curr_char)
+         case ('<')
+            call next_char()
+            if (curr_char == '=') then
+               op = '<=';  call next_char()
+            else
+               op = '< '
+            end if
+         case ('>')
+            call next_char()
+            if (curr_char == '=') then
+               op = '>=';  call next_char()
+            else
+               op = '> '
+            end if
+         case ('=')
+            call next_char()
+            if (curr_char == '=') then
+               op = '==';  call next_char()
+            else
+               op = '= '
+            end if
+         case ('!')
+            call next_char()
+            if (curr_char == '=') then
+               op = '!=';  call next_char()
+            else
+               print *, "Error: unknown operator '!'.  Use != for < >."
+               eval_error = .true.;  exit
+            end if
+         case default
+            more_rel = .false.;  cycle
+         end select
+
+         call skip_spaces()
+         rhs = parse_term()             ! RHS has same precedence chain
+         if (eval_error) exit
+
+         e = rel_compare(op, e, rhs)    ! perform comparison
+         call skip_spaces()
       end do
     end function parse_expression
 
@@ -909,4 +969,66 @@ end function parse_factor
       if (.not. found) print *, "Warning: variable '", trim(nm), "' not defined"
     end do
   end subroutine delete_vars
+
+    !--------------------------------------------------
+    function rel_compare(op, a, b) result(res)
+    !--------------------------------------------------
+    ! Element-wise comparison returning 1.0 or 0.0
+      character(len=*), intent(in) :: op
+      real(kind=dp),    intent(in) :: a(:), b(:)
+      real(kind=dp), allocatable   :: res(:)
+      logical, allocatable         :: mask(:)
+      integer :: na, nb, n
+
+      na = size(a);  nb = size(b)
+      if (na == nb) then
+         n  = na
+         allocate (mask(n), source = .false.)
+         select case (op)
+         case ('< ') ; mask = a <  b
+         case ('<='); mask = a <= b
+         case ('> ') ; mask = a >  b
+         case ('>='); mask = a >= b
+         case ('= ') ; mask = abs(a-b) <= tol
+         case ('=='); mask = abs(a-b) <= tol
+         case ('!='); mask = abs(a-b) >  tol
+         end select
+         res = merge( 1.0_dp , 0.0_dp , mask )
+
+      else if (nb == 1) then
+         ! vector ∘ scalar
+         n  = na
+         allocate (mask(n), source = .false.)
+         select case (op)
+         case ('< ') ; mask = a <  b(1)
+         case ('<='); mask = a <= b(1)
+         case ('> ') ; mask = a >  b(1)
+         case ('>='); mask = a >= b(1)
+         case ('= ') ; mask = abs(a-b(1)) <= tol
+         case ('=='); mask = abs(a-b(1)) <= tol
+         case ('!='); mask = abs(a-b(1)) >  tol
+         end select
+         res = merge( 1.0_dp , 0.0_dp , mask )
+
+      else if (na == 1) then
+         ! scalar ∘ vector   (broadcast the scalar)
+         n  = nb
+         allocate (mask(n), source = .false.)
+         select case (op)
+         case ('< ') ; mask = a(1) <  b
+         case ('<='); mask = a(1) <= b
+         case ('> ') ; mask = a(1) >  b
+         case ('>='); mask = a(1) >= b
+         case ('= ') ; mask = abs(a(1)-b) <= tol
+         case ('=='); mask = abs(a(1)-b) <= tol
+         case ('!='); mask = abs(a(1)-b) >  tol
+         end select
+         res = merge( 1.0_dp , 0.0_dp , mask )
+
+      else
+         print *, "Error: size mismatch in relational comparison"
+         eval_error = .true.
+         res = [bad_value]
+      end if
+    end function rel_compare
 end module interpret_mod
