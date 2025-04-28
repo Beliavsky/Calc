@@ -2,7 +2,7 @@ module interpret_mod
   use kind_mod , only: dp
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
-                       head, tail
+                       head, tail, grid
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank, median
   implicit none
@@ -424,7 +424,7 @@ recursive function parse_factor() result(f)
    real(kind=dp), allocatable :: f(:)
 
    !===================  locals  =====================================
-   real(kind=dp), allocatable :: arg1(:), arg2(:)
+   real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
    real(kind=dp), allocatable :: exponent(:), vvar(:)
    integer,          allocatable :: idxv(:)
    character(len=32) :: id
@@ -611,6 +611,41 @@ recursive function parse_factor() result(f)
                      f = arange(nsize)
                   end if
                end if
+
+!---------------------------------------------------------------
+case ("grid")                                     !  grid(n,x0,xh)
+!---------------------------------------------------------------
+   if (.not. have_second) then
+      ! we have only one argument so far – need two more
+      print *, "Error: grid(n,x0,xh) needs three arguments"
+      eval_error = .true.;  f = [bad_value]
+
+   else
+      ! arg1 and arg2 have already been parsed --> read arg3
+      call skip_spaces()
+      if (curr_char /= ',') then
+         print *, "Error: grid(n,x0,xh) needs three arguments"
+         eval_error = .true.;  f = [bad_value]
+      else
+         call next_char()
+         call skip_spaces()
+         ! ---------------- third argument ----------------
+         arg3 = parse_expression()
+         if (eval_error) then
+            f = [bad_value]
+         else
+            ! ---- scalar-checks and the actual call -------
+            if (size(arg1) /= 1 .or. size(arg2) /= 1 .or. size(arg3) /= 1) then
+               print *, "Error: grid arguments must be scalars"
+               eval_error = .true.;  f = [bad_value]
+            else
+               f = grid(nint(arg1(1)), arg2(1), arg3(1))
+            end if
+         end if
+      end if
+   end if
+!---------------------------------------------------------------
+
 
             case ('abs','acos','acosh','asin','asinh','atan','atanh', &
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
