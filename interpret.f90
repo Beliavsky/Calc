@@ -224,6 +224,18 @@ end subroutine slice_array
     case ("sqrt") ; res = sqrt(arr)
     case ("tan") ; res = tan(arr)
     case ("tanh") ; res = tanh(arr)
+    case ("bessel_j0"); res = bessel_j0(arr)
+    case ("bessel_j1"); res = bessel_j1(arr)
+    case ("bessel_y0"); res = bessel_y0(arr)
+    case ("bessel_y1"); res = bessel_y1(arr)
+    case ("gamma"); res = gamma(arr)
+    case ("log_gamma"); res = log_gamma(arr)
+    case ("cosd"); res = cosd(arr)
+    case ("sind"); res = sind(arr)
+    case ("tand"); res = tand(arr)
+    case ("acosd"); res = acosd(arr)
+    case ("asind"); res = asind(arr)
+    case ("atand"); res = atand(arr)
     case ("cumsum"); res = cumsum(arr)
     case ("diff"); res = diff(arr)
     case ("head"); res = head(arr)
@@ -346,7 +358,8 @@ end subroutine slice_array
       i = 0
       do while ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
                 (curr_char >= 'A' .and. curr_char <= 'Z') .or. &
-                (curr_char >= '0' .and. curr_char <= '9'))
+                (curr_char >= '0' .and. curr_char <= '9') .or. &
+                 curr_char == "_")
         i = i + 1
         name_out(i:i) = curr_char
         call next_char()
@@ -651,7 +664,10 @@ case ("grid")                                     !  grid(n,x0,xh)
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product', 'norm1', 'norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
-                  'sort','indexx','rank','stdz','median','head','tail')
+                  'sort','indexx','rank','stdz','median','head','tail', &
+                  'bessel_j0','bessel_j1','bessel_y0','bessel_y1', &
+                  'gamma','log_gamma','cosd','sind','tand', &
+                  'acosd','asind','atand')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
@@ -1111,4 +1127,3 @@ end function parse_factor
       end if
     end function rel_compare
 end module interpret_mod
-
