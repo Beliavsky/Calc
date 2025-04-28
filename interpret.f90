@@ -1,6 +1,6 @@
 module interpret_mod
   use kind_mod , only: dp
-  use stats_mod, only: mean, sd, cor, cov, cumsum, diff
+  use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize
   use util_mod , only: matched_brackets, matched_parentheses, arange
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank
@@ -226,6 +226,7 @@ end subroutine slice_array
     case ("sort"); res = sorted(arr)
     case ("indexx"); res = indexx(arr)
     case ("rank"); res = rank(arr)
+    case ("stdz"); res = standardize(arr)
     case default
       print *, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
@@ -610,7 +611,7 @@ recursive function parse_factor() result(f)
                   'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
                   'tan','tanh','size','sum','product','norm2','minval', &
                   'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
-                  'sort','indexx','rank')
+                  'sort','indexx','rank','stdz')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
