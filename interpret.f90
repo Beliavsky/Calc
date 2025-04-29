@@ -236,6 +236,7 @@ end subroutine slice_array
     case ("acosd"); res = acosd(arr)
     case ("asind"); res = asind(arr)
     case ("atand"); res = atand(arr)
+    case ("spacing"); res = spacing(arr)
     case ("cumsum"); res = cumsum(arr)
     case ("diff"); res = diff(arr)
     case ("head"); res = head(arr)
@@ -667,7 +668,7 @@ case ("grid")                                     !  grid(n,x0,xh)
                   'sort','indexx','rank','stdz','median','head','tail', &
                   'bessel_j0','bessel_j1','bessel_y0','bessel_y1', &
                   'gamma','log_gamma','cosd','sind','tand', &
-                  'acosd','asind','atand','skew','kurt','print_stats')
+                  'acosd','asind','atand','spacing','skew','kurt','print_stats')
                if (have_second) then
                   print *, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
