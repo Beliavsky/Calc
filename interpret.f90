@@ -3,7 +3,7 @@ module interpret_mod
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize, &
                        print_stats, skew, kurtosis
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
-                       head, tail, grid
+                       head, tail, grid, print_real
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank, median
   implicit none
@@ -616,7 +616,7 @@ recursive function parse_factor() result(f)
                   print *, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
-                  nsize = int(arg1(1))
+                  nsize = nint(arg1(1))
                   if (id == "runif") then
                      f = runif_vec(nsize)
                   else if (id == "rnorm") then
@@ -990,15 +990,7 @@ end function parse_factor
       else if (all(abs(r - rint) <= tol)) then
          print "(i0)", rint
       else
-         if (abs(r(1)) < 1.0_dp) then
-            if (r(1) >= 0) then
-               print "(F8.6)", r
-            else
-               print "(F9.6)", r
-            end if
-         else
-            print "(F0.6)", r
-         end if
+         call print_real(r(1))
       end if
     else if (rsize <= max_print) then
       if (all(abs(r - rint) <= tol)) then
