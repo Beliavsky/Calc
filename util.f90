@@ -3,7 +3,7 @@ use kind_mod, only: dp
 implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
-   tail, grid
+   tail, grid, print_real
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -102,5 +102,26 @@ pure function tail(x, n) result(y)
    allocate(y(n_))
    if (n_ > 0) y = x(first:)
 end function tail
+
+impure elemental subroutine print_real(x)
+! print real x with leading zero for abs(x) < 1, and use
+! scientific notation for very large numbers
+real(kind=dp), intent(in) :: x
+if (abs(x) < 1.0_dp) then
+   if (x >= 0) then
+      print "(F8.6)", x
+   else
+      print "(F9.6)", x ! space for leading negative sign
+   end if
+else if (abs(x) > 1.0e22_dp) then ! use scientific notation
+   if (x >= 0) then
+      print "(ES12.6)", x
+   else
+      print "(ES13.6)", x ! space for leading negative sign
+   end if
+else
+   print "(F0.6)", x
+end if
+end subroutine print_real
 
 end module util_mod
