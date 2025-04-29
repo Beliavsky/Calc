@@ -3,7 +3,7 @@ use kind_mod, only: dp
 implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
-   tail, grid, print_real
+   tail, grid, print_real, replace
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -123,5 +123,33 @@ else
    print "(F0.6)", x
 end if
 end subroutine print_real
+
+
+function replace(string, old, new) result(string_new)
+! replace – return a copy of string with every occurrence of old replaced by new
+character(len=*), intent(in) :: string, old, new
+character(len=:), allocatable :: string_new
+integer :: current, pos, len_old
+
+len_old = len_trim(old)
+
+! nothing to replace – return the original string
+if (len_old == 0) then
+   string_new = string
+   return
+end if
+
+string_new = ''           ! start with an empty result
+current    = 1
+
+do
+   pos = index(string(current:), old)
+   if (pos == 0) exit
+   pos = pos + current - 1
+   string_new = string_new // string(current:pos-1) // new
+   current    = pos + len_old
+end do
+string_new = string_new // string(current:)
+end function replace
 
 end module util_mod
