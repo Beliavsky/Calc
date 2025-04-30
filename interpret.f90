@@ -29,7 +29,7 @@ module interpret_mod
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
   logical, parameter :: stop_if_error = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
-  logical, parameter :: mutable = .false.   ! when .false., no reassignments allowed
+  logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
 contains
 
 !---------------------------------------------------------------
@@ -297,7 +297,18 @@ end subroutine slice_array
 
     !–– no “=” ⇒ treat the whole string as an expression ––––––––––
     res = parse_expression()
-
+    ! detect any extraneous characters left on the line
+    call skip_spaces()
+    if (curr_char /= char(0)) then
+       print *, "Error: unexpected input after valid expression: '", &
+                trim(expr(pos-1:lenstr)), "'"
+       eval_error = .true.
+       ! return an empty result to signal failure
+       if (allocated(res)) then
+          deallocate(res)
+       end if
+       allocate(res(0))
+    end if
 
   contains
 
