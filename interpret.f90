@@ -6,6 +6,7 @@ module interpret_mod
                        head, tail, grid, print_real
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank, median
+  use iso_fortran_env
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -112,7 +113,7 @@ subroutine slice_array(name, idxs, result)
    ! finally deliver the section
    result = v(i1:i2:step)
 
-contains
+   contains
    !----------------------------------------------------------------
    subroutine parse_index(str, arr, idx)
       character(len=*), intent(in)            :: str
@@ -136,7 +137,7 @@ end subroutine slice_array
      if (allocated(vars(i)%val)) deallocate (vars(i)%val)
   end do
   n_vars = 0
-  end subroutine
+  end subroutine clear
 
   !------------------------------------------------------------------------
   ! Store or replace a variable
@@ -956,6 +957,13 @@ end function parse_factor
     write (tunit, "(a)") str
     if (str == "clear") then
        call clear()
+       return
+    else if (str == "print_compiler_version()") then
+       print "(a)", trim(compiler_version())
+       return
+    else if (str == "print_compiler_info()") then
+       print "(a)", trim(compiler_version())
+       print "(a)", trim(compiler_options())
        return
     else if (index(str, 'del ') == 1) then
        call delete_vars(str(5:))
