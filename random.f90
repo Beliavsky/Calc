@@ -4,7 +4,10 @@ module random_mod
   implicit none
   private
   public :: random_normal, random_gamma, random_student_t, &
-            random_seed_init
+            random_seed_init, runif
+  interface runif
+    module procedure runif_scalar, runif_vec
+  end interface runif
   interface random_normal
      module procedure random_normal_scalar, random_normal_vec, &
                       random_normal_mat
@@ -135,5 +138,21 @@ if (present(print_seed)) then
    if (print_seed) print "('seed vector:', *(1x,i0))", seed
 end if
 end subroutine random_seed_init
+
+function runif_scalar() result(r)
+real(kind=dp) :: r
+call random_number(r)
+end function runif_scalar
+
+function runif_vec(n) result(r)
+integer, intent(in)  :: n
+real(kind=dp), allocatable :: r(:)
+if (n < 1) then
+  allocate(r(0))
+else 
+  allocate(r(n))
+  call random_number(r)
+end if
+end function runif_vec
 
 end module random_mod
