@@ -598,7 +598,7 @@ recursive function parse_factor() result(f)
                else
                   nsize = nint(arg1(1))
                   if (id == "runif") then
-                     f = runif_vec(nsize)
+                     f = runif(nsize)
                   else if (id == "rnorm") then
                      f = random_normal(nsize)
                   else
@@ -984,17 +984,6 @@ end function parse_factor
       call print_stats(r)
     end if
   end subroutine eval_print
-
-  function runif_vec(n) result(r)
-    integer, intent(in)        :: n
-    real(kind=dp), allocatable :: r(:)
-    if (n < 1) then
-      allocate(r(0))
-    else 
-      allocate(r(n))
-      call random_number(r)
-    end if
-  end function runif_vec
 
   subroutine delete_vars(list_str)
     character(len=*), intent(in) :: list_str
