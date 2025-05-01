@@ -3,7 +3,8 @@ module interpret_mod
   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize, &
                        print_stats, skew, kurtosis
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
-                       head, tail, grid, print_real
+                       head, tail, grid, print_real, is_alphanumeric, &
+                       is_numeral, is_letter
   use random_mod, only: random_normal
   use qsort_mod, only: sorted, indexx, rank, median
   use iso_fortran_env
@@ -256,7 +257,6 @@ end subroutine slice_array
   !------------------------------------------------------------------
   recursive function evaluate(str) result(res)
   !------------------------------------------------------------------
-    implicit none
     character(len=*), intent(in) :: str
     real(kind=dp),   allocatable :: res(:)
 
@@ -284,7 +284,6 @@ end subroutine slice_array
     if (eqpos > 0) then
        lhs = adjustl(expr(1:eqpos-1))
        rhs = expr(eqpos+1:)
-
        res = evaluate(rhs)           ! recursive call
        if (.not. eval_error) then
           if (index(lhs,'(') > 0 .and. index(lhs,')') > index(lhs,'(')) then
@@ -305,10 +304,7 @@ end subroutine slice_array
                 trim(expr(pos-1:lenstr)), "'"
        eval_error = .true.
        ! return an empty result to signal failure
-       if (allocated(res)) then
-          deallocate(res)
-       end if
-       allocate(res(0))
+       res = [real(kind=dp) ::] 
     end if
 
   contains
@@ -349,30 +345,24 @@ end subroutine slice_array
       character(len=64) :: buf
       integer :: i
       real(kind=dp) :: tmp
-
       call skip_spaces()
       i = 0
-      do while ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.')
+      do while (is_numeral(curr_char) .or. curr_char == '.')
         i = i + 1
         buf(i:i) = curr_char
         call next_char()
       end do
       read(buf(1:i), *) tmp
-      allocate(num(1))
-      num(1) = tmp
+      num = [tmp]
     end function parse_number
 
     !--------------------------------------------------
     function parse_identifier() result(name_out)
       character(len=32) :: name_out
       integer :: i
-
       call skip_spaces()
       i = 0
-      do while ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
-                (curr_char >= 'A' .and. curr_char <= 'Z') .or. &
-                (curr_char >= '0' .and. curr_char <= '9') .or. &
-                 curr_char == "_")
+      do while (is_alphanumeric(curr_char) .or. curr_char == "_")
         i = i + 1
         name_out(i:i) = curr_char
         call next_char()
@@ -481,11 +471,10 @@ recursive function parse_factor() result(f)
       f = parse_array()
 
    case default
-      if ((curr_char >= '0' .and. curr_char <= '9') .or. curr_char == '.') then
+      if (is_numeral(curr_char) .or. curr_char == '.') then
          f = parse_number()
 
-      else if ((curr_char >= 'a' .and. curr_char <= 'z') .or. &
-               (curr_char >= 'A' .and. curr_char <= 'Z')) then
+      else if (is_letter(curr_char)) then
 
          id = parse_identifier()
          call skip_spaces()
