@@ -57,7 +57,7 @@ subroutine slice_array(name, idxs, result)
    ! locate first and (optional) second ':' in the text
    c1 = index(idxs, ":")
    if (c1 == 0) then
-      print *, "Error: bad slice syntax in '", trim(idxs), "'"
+      print*, "Error: bad slice syntax in '", trim(idxs), "'"
       eval_error = .true.
       allocate(result(0));  return
    end if
@@ -93,11 +93,11 @@ subroutine slice_array(name, idxs, result)
    !------------------------------------------------------------
    ! sanity checks
    if (step == 0) then
-      print *, "Error: slice stride cannot be zero"
+      print*, "Error: slice stride cannot be zero"
       eval_error = .true.;  allocate(result(0));  return
    end if
    if (i1 < 1 .or. i1 > n .or. i2 < 0 .or. i2 > n) then
-      print *, "Error: slice indices out of range"
+      print*, "Error: slice indices out of range"
       eval_error = .true.;  allocate(result(0));  return
    end if
 
@@ -151,7 +151,7 @@ end subroutine slice_array
     do i = 1, n_vars
       if (vars(i)%name == nm) then
         if (.not. mutable) then
-           print *, "Error: cannot reassign '" // trim(nm) // "' if mutable is .false."
+           print*, "Error: cannot reassign '" // trim(nm) // "' if mutable is .false."
            eval_error = .true.
            return
         end if
@@ -165,7 +165,7 @@ end subroutine slice_array
       vars(n_vars)%name = nm
       vars(n_vars)%val = val
     else
-      print *, "Error: too many variables."
+      print*, "Error: too many variables."
       eval_error = .true.
     end if
   end subroutine set_variable
@@ -194,7 +194,7 @@ end subroutine slice_array
     case ("kurt")    ; r = kurtosis(arr)
     case ("print_stats"); call print_stats(arr); r = 0
     case default
-      print *, "Error: function '", trim(fname), "' not defined"
+      print*, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
       r = bad_value
     end select
@@ -247,7 +247,7 @@ end subroutine slice_array
     case ("rank"); res = rank(arr)
     case ("stdz"); res = standardize(arr)
     case default
-      print *, "Error: function '", trim(fname), "' not defined"
+      print*, "Error: function '", trim(fname), "' not defined"
       eval_error = .true.
       res = bad_value
     end select
@@ -301,7 +301,7 @@ end subroutine slice_array
     ! detect any extraneous characters left on the line
     call skip_spaces()
     if (curr_char /= char(0)) then
-       print *, "Error: unexpected input after valid expression: '", &
+       print*, "Error: unexpected input after valid expression: '", &
                 trim(expr(pos-1:lenstr)), "'"
        eval_error = .true.
        ! return an empty result to signal failure
@@ -393,7 +393,7 @@ end subroutine slice_array
         end if
       end do
 
-      print *, "Error: undefined variable '", trim(name), "'"
+      print*, "Error: undefined variable '", trim(name), "'"
       eval_error = .true.
       v = [bad_value]
     end function get_variable
@@ -505,7 +505,7 @@ recursive function parse_factor() result(f)
                case ("rnorm")
                   f = random_normal(1)
                case default
-                  print *, "Error: function '"//trim(id)//"' needs arguments"
+                  print*, "Error: function '"//trim(id)//"' needs arguments"
                   eval_error = .true.
                   f = [bad_value]
                end select
@@ -531,7 +531,7 @@ recursive function parse_factor() result(f)
                end select
             end do
             if (depth /= 0) then
-               print *, "Error: mismatched parentheses"
+               print*, "Error: mismatched parentheses"
                eval_error = .true.;  f = [bad_value];  return
             end if
 
@@ -574,14 +574,14 @@ recursive function parse_factor() result(f)
 
             case ("cor", "cov", "dot") ! correlation, covariance, dot product
                if (.not. have_second) then
-                  print *, "Error: function needs two arguments"
+                  print*, "Error: function needs two arguments"
                   eval_error = .true.;  f = [bad_value]
                else if (size(arg1) /= size(arg2)) then
                   print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
                                            size(arg1), size(arg2), " must be equal"
                   eval_error = .true.;  f = [bad_value]
                else if (id == "cor" .or. id == "cov" .and. size(arg1) < 2) then
-                  print *, "Error: function array arguments must have sizes > 1"
+                  print*, "Error: function array arguments must have sizes > 1"
                   eval_error = .true.;  f = [bad_value]
                else if (id == "dot") then
                   f = [dot_product(arg1, arg2)]
@@ -595,7 +595,7 @@ recursive function parse_factor() result(f)
 
             case ('min','max')                           ! two-arg intrinsics
                if (.not. have_second) then
-                  print *, "Error: ", trim(id), "() needs two arguments"
+                  print*, "Error: ", trim(id), "() needs two arguments"
                   eval_error = .true.;  f = [bad_value]
                else
                   n1 = size(arg1);  n2 = size(arg2)
@@ -618,14 +618,14 @@ recursive function parse_factor() result(f)
                         f = max(arg1, arg2(1))
                      end if
                   else
-                     print *, "Error: argument size mismatch in ", trim(id),"()"
+                     print*, "Error: argument size mismatch in ", trim(id),"()"
                      eval_error = .true.;  f = [bad_value]
                   end if
                end if
 
             case ("runif","rnorm","arange")                       ! one-arg
                if (have_second) then
-                  print *, "Error: function takes one argument"
+                  print*, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
                   nsize = nint(arg1(1))
@@ -643,14 +643,14 @@ case ("grid")                                     !  grid(n,x0,xh)
 !---------------------------------------------------------------
    if (.not. have_second) then
       ! we have only one argument so far  need two more
-      print *, "Error: grid(n,x0,xh) needs three arguments"
+      print*, "Error: grid(n,x0,xh) needs three arguments"
       eval_error = .true.;  f = [bad_value]
 
    else
       ! arg1 and arg2 have already been parsed --> read arg3
       call skip_spaces()
       if (curr_char /= ',') then
-         print *, "Error: grid(n,x0,xh) needs three arguments"
+         print*, "Error: grid(n,x0,xh) needs three arguments"
          eval_error = .true.;  f = [bad_value]
       else
          call next_char()
@@ -662,7 +662,7 @@ case ("grid")                                     !  grid(n,x0,xh)
          else
             ! ---- scalar-checks and the actual call -------
             if (size(arg1) /= 1 .or. size(arg2) /= 1 .or. size(arg3) /= 1) then
-               print *, "Error: grid arguments must be scalars"
+               print*, "Error: grid arguments must be scalars"
                eval_error = .true.;  f = [bad_value]
             else
                f = grid(nint(arg1(1)), arg2(1), arg3(1))
@@ -682,7 +682,7 @@ case ("grid")                                     !  grid(n,x0,xh)
                   'gamma','log_gamma','cosd','sind','tand', &
                   'acosd','asind','atand','spacing','skew','kurt','print_stats')
                if (have_second) then
-                  print *, "Error: function '"//trim(id)//"' takes one argument"
+                  print*, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
                   if (index('size sum product norm1 norm2 minval maxval minloc' // &
@@ -696,18 +696,18 @@ case ("grid")                                     !  grid(n,x0,xh)
 
             case default                                  ! subscript  x(i)
                if (have_second) then
-                  print *, "Error: function '"//trim(id)//"' not defined"
+                  print*, "Error: function '"//trim(id)//"' not defined"
                   eval_error = .true.;  f = [bad_value]
                else
                   vvar = get_variable(id)
                   if (.not. eval_error) then
                      if (any(abs(arg1 - nint(arg1)) > tol)) then
-                        print *, "Error: non-integer subscript for '"//trim(id)//"'"
+                        print*, "Error: non-integer subscript for '"//trim(id)//"'"
                         eval_error = .true.;  f = [bad_value]
                      else
                         idxv = nint(arg1)
                         if (any(idxv < 1) .or. any(idxv > size(vvar))) then
-                           print *, "Error: index out of bounds for '"//trim(id)//"'"
+                           print*, "Error: index out of bounds for '"//trim(id)//"'"
                            eval_error = .true.;  f = [bad_value]
                         else
                            allocate(f(size(idxv)));  f = vvar(idxv)
@@ -725,7 +725,7 @@ case ("grid")                                     !  grid(n,x0,xh)
          end if
 
       else
-         print *, "Error: unexpected character '"//curr_char//"'"
+         print*, "Error: unexpected character '"//curr_char//"'"
          eval_error = .true.;  f = [bad_value]
       end if
    end select
@@ -743,7 +743,7 @@ case ("grid")                                     !  grid(n,x0,xh)
          else if (size(f) == size(exponent)) then
             f = f ** exponent
          else
-            print *, "Error: size mismatch in exponentiation"
+            print*, "Error: size mismatch in exponentiation"
             eval_error = .true.;  f = [bad_value]
          end if
       else
@@ -772,7 +772,7 @@ end function parse_factor
           else if (nt == 1) then
             tmp = t(1) * f2
           else
-            print *, "Error: size mismatch in multiplication"
+            print*, "Error: size mismatch in multiplication"
             return
           end if
         else
@@ -790,7 +790,7 @@ end function parse_factor
           else if (nt == 1) then
             tmp = t(1) / f2
           else
-            print *, "Error: size mismatch in division"
+            print*, "Error: size mismatch in division"
             return
           end if
         end if
@@ -832,7 +832,7 @@ end function parse_factor
             else if (ne == 1) then
                e = e(1) + t
             else
-               print *, "Error: size mismatch in addition"
+               print*, "Error: size mismatch in addition"
                eval_error = .true.;  return
             end if
          else
@@ -846,7 +846,7 @@ end function parse_factor
             else if (ne == 1) then
                e = e(1) - t
             else
-               print *, "Error: size mismatch in subtraction"
+               print*, "Error: size mismatch in subtraction"
                eval_error = .true.;  return
             end if
          end if
@@ -887,7 +887,7 @@ end function parse_factor
             if (curr_char == '=') then
                op = '/=';  call next_char()
             else
-               print *, "Error: error with /"
+               print*, "Error: error with /"
                eval_error = .true.;  exit
             end if
          case default
@@ -930,11 +930,11 @@ end function parse_factor
     do vi = 1, n_vars
       if (vars(vi)%name == name) then
         if (.not. mutable) then
-           print *, "Error: cannot assign element of '", trim(name), "'mutable is .false."
+           print*, "Error: cannot assign element of '", trim(name), "'mutable is .false."
            eval_error = .true.
         else
            if (idx < 1 .or. idx > size(vars(vi)%val)) then
-              print *, "Error: index out of bounds for '", trim(name), "'"
+              print*, "Error: index out of bounds for '", trim(name), "'"
               eval_error = .true.
            else
               vars(vi)%val(idx) = rval(1)
@@ -944,7 +944,7 @@ end function parse_factor
       end if
     end do
 
-    print *, "Error: undefined variable '", trim(name), "' in assignment"
+    print*, "Error: undefined variable '", trim(name), "' in assignment"
     eval_error = .true.
   end subroutine assign_element
 
@@ -1071,7 +1071,7 @@ end function parse_factor
         end if
       end do
 
-      if (.not. found) print *, "Warning: variable '", trim(nm), "' not defined"
+      if (.not. found) print*, "Warning: variable '", trim(nm), "' not defined"
     end do
   end subroutine delete_vars
 
@@ -1131,7 +1131,7 @@ end function parse_factor
          res = merge(1.0_dp , 0.0_dp , mask)
 
       else
-         print *, "Error: size mismatch in relational comparison"
+         print*, "Error: size mismatch in relational comparison"
          eval_error = .true.
          res = [bad_value]
       end if
