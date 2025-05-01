@@ -666,6 +666,31 @@ recursive function parse_factor() result(f)
          end if
       end if
 
+   case ("merge")                 ! *** NEW branch ***
+      if (.not. have_second) then
+         print*, "Error: merge() needs three arguments"
+         eval_error = .true.;  f = [bad_value]
+
+      else
+         ! arg1 and arg2 have already been parsed
+         call skip_spaces()
+         if (curr_char /= ",") then
+            print*, "Error: merge() needs three arguments"
+            eval_error = .true.;  f = [bad_value]
+         else
+            call next_char()                 ! skip the comma
+            call skip_spaces()
+            arg3 = parse_expression()        ! ----- third argument -----
+            if (.not. eval_error) then
+               f = merge_array(arg1, arg2, arg3)
+               call skip_spaces()
+               if (curr_char == ")") call next_char()
+            else
+               f = [bad_value]
+            end if
+         end if
+      end if
+
    case default ! subscript  x(i)
       if (have_second) then
          print*, "Error: function '"//trim(id)//"' not defined"
@@ -1122,5 +1147,50 @@ end function parse_factor
       end if
     end function rel_compare
 
+  function merge_array(t_source, f_source, mask_val) result(res)
+  !! Elemental-style MERGE for the interpreter.
+  !! – Any of the three inputs may be size-1 (scalar) or an array.
+     real(dp), intent(in)          :: t_source(:)
+     real(dp), intent(in)          :: f_source(:)
+     real(dp), intent(in)          :: mask_val(:)   ! zero → .false., non-zero → .true.
+     real(dp), allocatable         :: res(:)
+
+     integer :: nt, nf, nm, n
+     logical, allocatable :: lmask(:)
+     real(dp), allocatable :: t(:), f(:)
+
+     nt = size(t_source);  nf = size(f_source);  nm = size(mask_val)
+     n  = max(nt, nf, nm)
+
+     ! ---- conformability checks -----------------------------------------
+     if (   (nt /= 1 .and. nt /= n) &
+        .or.(nf /= 1 .and. nf /= n) &
+        .or.(nm /= 1 .and. nm /= n) ) then
+        print*, "Error: merge() arguments are not conformable"
+        eval_error = .true.;  res = [bad_value];  return
+     end if
+
+     ! ---- broadcast scalars where necessary -----------------------------
+     allocate(t(n), f(n), lmask(n))
+     if (nt == 1) then
+        t = t_source(1)
+     else
+        t = t_source
+     end if
+     if (nf == 1) then
+        f = f_source(1)
+     else
+        f = f_source
+     end if
+     if (nm == 1) then
+        lmask = mask_val(1) /= 0.0_dp
+     else
+        lmask = mask_val /= 0.0_dp
+     end if
+
+     ! ---- element-wise selection ----------------------------------------
+     allocate(res(n))
+     res = merge(t, f, lmask)   ! use intrinsic MERGE now that shapes match
+  end function merge_array
 
 end module interpret_mod
