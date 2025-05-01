@@ -34,11 +34,9 @@ module interpret_mod
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
 contains
 
-!---------------------------------------------------------------
+subroutine slice_array(name, idxs, result)
 !  Return a 1-D section of variable NAME described by the text
 !  in IDXS (e.g. "2:11:3", "5:", ":7:-2",).
-!
-subroutine slice_array(name, idxs, result)
    character(len=*), intent(in)            :: name
    character(len=*), intent(in)            :: idxs
    real(kind=dp),   allocatable, intent(out) :: result(:)
@@ -48,13 +46,11 @@ subroutine slice_array(name, idxs, result)
    integer                    :: i1, i2, step
    integer                    :: n            ! array size
 
-   !------------------------------------------------------------
    ! evaluate the variable itself
    v = evaluate(name)
    if (eval_error) return
    n = size(v)
 
-   !------------------------------------------------------------
    ! locate first and (optional) second ':' in the text
    c1 = index(idxs, ":")
    if (c1 == 0) then
@@ -65,7 +61,6 @@ subroutine slice_array(name, idxs, result)
    c2 = index(idxs(c1+1:), ":")
    if (c2 > 0) c2 = c1 + c2        ! absolute position, or 0 if none
 
-   !------------------------------------------------------------
    ! lower bound
    if (c1 > 1) then
       call parse_index(idxs(:c1-1), larr, i1)
@@ -73,7 +68,6 @@ subroutine slice_array(name, idxs, result)
       i1 = 1
    end if
 
-   !------------------------------------------------------------
    ! upper bound & stride
    if (c2 == 0) then                    ! only one ':'
       step = 1
@@ -91,7 +85,6 @@ subroutine slice_array(name, idxs, result)
       call parse_index(idxs(c2+1:), sarr, step)
    end if
 
-   !------------------------------------------------------------
    ! sanity checks
    if (step == 0) then
       print*, "Error: slice stride cannot be zero"
@@ -102,7 +95,6 @@ subroutine slice_array(name, idxs, result)
       eval_error = .true.;  allocate(result(0));  return
    end if
 
-   !------------------------------------------------------------
    ! empty slice situations that are nevertheless valid
    if ((step > 0 .and. i1 >  i2)  .or. &
         (step < 0 .and. i1 <  i2)) then
@@ -110,12 +102,11 @@ subroutine slice_array(name, idxs, result)
       return
    end if
 
-   !------------------------------------------------------------
    ! finally deliver the section
    result = v(i1:i2:step)
 
    contains
-   !----------------------------------------------------------------
+
    subroutine parse_index(str, arr, idx)
       character(len=*), intent(in)            :: str
       real(kind=dp),   allocatable, intent(out) :: arr(:)
@@ -140,9 +131,8 @@ end subroutine slice_array
   n_vars = 0
   end subroutine clear
 
-  !------------------------------------------------------------------------
-  ! Store or replace a variable
   subroutine set_variable(name, val)
+  ! Store or replace a variable
     character(len=*), intent(in) :: name
     real(kind=dp),    intent(in) :: val(:)
     integer :: i
@@ -171,9 +161,8 @@ end subroutine slice_array
     end if
   end subroutine set_variable
 
-  !------------------------------------------------------------------------
-  ! Apply a scalar-returning function: sum, minval, maxval, etc.
   function apply_scalar_func(fname, arr) result(r)
+  ! Apply a scalar-returning function: sum, minval, maxval, etc.
     character(len=*), intent(in)       :: fname
     real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp) :: r
@@ -201,9 +190,8 @@ end subroutine slice_array
     end select
   end function apply_scalar_func
 
-  !------------------------------------------------------------------------
-  ! Apply a function that takes an array and returns an array
   function apply_vec_func(fname, arr) result(res)
+  ! Apply a function that takes an array and returns an array
     character(len=*), intent(in)       :: fname
     real(kind=dp),    intent(in)       :: arr(:)
     real(kind=dp), allocatable :: res(:)
@@ -254,9 +242,7 @@ end subroutine slice_array
     end select
   end function apply_vec_func
 
-  !------------------------------------------------------------------
   recursive function evaluate(str) result(res)
-  !------------------------------------------------------------------
     character(len=*), intent(in) :: str
     real(kind=dp),   allocatable :: res(:)
 
@@ -433,11 +419,9 @@ end subroutine slice_array
       end do
     end function parse_array
 
-!--------------------------------------------------------------------
 recursive function parse_factor() result(f)
 !--------------------------------------------------------------------
-   !===================  result  =====================================
-   real(kind=dp), allocatable :: f(:)
+   real(kind=dp), allocatable :: f(:) ! result
 
    !===================  locals  =====================================
    real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
@@ -448,7 +432,6 @@ recursive function parse_factor() result(f)
    integer :: nsize, pstart, pend, depth, n1, n2
    logical :: is_neg, have_second
    logical :: toplevel_colon, toplevel_comma
-   !------------------------------------------------------------------
 
    call skip_spaces()
 
@@ -462,16 +445,16 @@ recursive function parse_factor() result(f)
    end if
 
    select case (curr_char)
-   case ('(')                                    ! parenthesised expr.
+   case ("(")                                    ! parenthesised expr.
       call next_char()
       f = parse_expression()
-      if (curr_char == ')') call next_char()
+      if (curr_char == ")") call next_char()
 
-   case ('[')                                    ! array literal
+   case ("[")                                    ! array literal
       f = parse_array()
 
    case default
-      if (is_numeral(curr_char) .or. curr_char == '.') then
+      if (is_numeral(curr_char) .or. curr_char == ".") then
          f = parse_number()
 
       else if (is_letter(curr_char)) then
@@ -480,13 +463,13 @@ recursive function parse_factor() result(f)
          call skip_spaces()
 
          !-----------------------------------------------------------------
-         if (curr_char == '(') then            !  id()
-            call next_char()                   !  consume '('
+         if (curr_char == "(") then            !  id()
+            call next_char()                   !  consume "("
             call skip_spaces()
 
             !============ ZERO-ARGUMENT SPECIAL CASE ======================
-            if (curr_char == ')') then         !  e.g. runif()
-               call next_char()                !  consume ')'
+            if (curr_char == ")") then         !  e.g. runif()
+               call next_char()                !  consume ")"
                select case (trim(id))
                case ("runif")
                   allocate(f(1))
@@ -511,11 +494,11 @@ recursive function parse_factor() result(f)
             do while (pend < lenstr .and. depth > 0)
                pend = pend + 1
                select case (expr(pend:pend))
-               case ('('); depth = depth + 1
-               case (')'); depth = depth - 1
-               case (':')
+               case ("("); depth = depth + 1
+               case (")"); depth = depth - 1
+               case (":")
                   if (depth == 1) toplevel_colon = .true.
-               case (',')
+               case (",")
                   if (depth == 1) toplevel_comma = .true.
                end select
             end do
@@ -529,7 +512,7 @@ recursive function parse_factor() result(f)
                idxs = expr(pstart:pend-1)
                call slice_array(id, idxs, f)
 
-               ! advance cursor just past ')'
+               ! advance cursor just past ")"
                pos = pend + 1
                if (pos > lenstr) then
                   curr_char = char(0)
@@ -538,7 +521,6 @@ recursive function parse_factor() result(f)
                end if
                return
             end if
-            !----------------------------------------------------------------
 
             !------------- first argument -----------------------------------
             arg1 = parse_expression()
@@ -548,7 +530,7 @@ recursive function parse_factor() result(f)
 
             call skip_spaces()
             have_second = .false.
-            if (curr_char == ',') then
+            if (curr_char == ",") then
                have_second = .true.
                call next_char()
                arg2 = parse_expression()
@@ -556,7 +538,7 @@ recursive function parse_factor() result(f)
                   f = [bad_value];  return
                end if
             end if
-            if (curr_char == ')') call next_char()
+            if (curr_char == ")") call next_char()
 
             !------------- dispatch -----------------------------------------
             select case (trim(id))
@@ -582,26 +564,26 @@ recursive function parse_factor() result(f)
                   end if
                end if
 
-            case ('min','max')                           ! two-arg intrinsics
+            case ("min","max")                           ! two-arg intrinsics
                if (.not. have_second) then
                   print*, "Error: ", trim(id), "() needs two arguments"
                   eval_error = .true.;  f = [bad_value]
                else
                   n1 = size(arg1);  n2 = size(arg2)
                   if (n1 == n2) then
-                     if (trim(id) == 'min') then
+                     if (trim(id) == "min") then
                         f = min(arg1, arg2)
                      else
                         f = max(arg1, arg2)
                      end if
                   else if (n1 == 1) then
-                     if (trim(id) == 'min') then
+                     if (trim(id) == "min") then
                         f = min(arg1(1), arg2)
                      else
                         f = max(arg1(1), arg2)
                      end if
                   else if (n2 == 1) then
-                     if (trim(id) == 'min') then
+                     if (trim(id) == "min") then
                         f = min(arg1, arg2(1))
                      else
                         f = max(arg1, arg2(1))
@@ -627,18 +609,15 @@ recursive function parse_factor() result(f)
                   end if
                end if
 
-!---------------------------------------------------------------
-case ("grid")                                     !  grid(n,x0,xh)
-!---------------------------------------------------------------
+   case ("grid") !  grid(n,x0,xh)
    if (.not. have_second) then
       ! we have only one argument so far  need two more
       print*, "Error: grid(n,x0,xh) needs three arguments"
       eval_error = .true.;  f = [bad_value]
-
    else
       ! arg1 and arg2 have already been parsed --> read arg3
       call skip_spaces()
-      if (curr_char /= ',') then
+      if (curr_char /= ",") then
          print*, "Error: grid(n,x0,xh) needs three arguments"
          eval_error = .true.;  f = [bad_value]
       else
@@ -659,17 +638,15 @@ case ("grid")                                     !  grid(n,x0,xh)
          end if
       end if
    end if
-!---------------------------------------------------------------
 
-
-            case ('abs','acos','acosh','asin','asinh','atan','atanh', &
-                  'cos','cosh','exp','log','log10','sin','sinh','sqrt', &
-                  'tan','tanh','size','sum','product', 'norm1', 'norm2','minval', &
-                  'maxval','minloc','maxloc','mean','sd','cumsum','diff', &
-                  'sort','indexx','rank','stdz','median','head','tail', &
-                  'bessel_j0','bessel_j1','bessel_y0','bessel_y1', &
-                  'gamma','log_gamma','cosd','sind','tand', &
-                  'acosd','asind','atand','spacing','skew','kurt','print_stats')
+            case ("abs","acos","acosh","asin","asinh","atan","atanh", &
+                  "cos","cosh","exp","log","log10","sin","sinh","sqrt", &
+                  "tan","tanh","size","sum","product", "norm1", "norm2","minval", &
+                  "maxval","minloc","maxloc","mean","sd","cumsum","diff", &
+                  "sort","indexx","rank","stdz","median","head","tail", &
+                  "bessel_j0","bessel_j1","bessel_y0","bessel_y1", &
+                  "gamma","log_gamma","cosd","sind","tand", &
+                  "acosd","asind","atand","spacing","skew","kurt","print_stats")
                if (have_second) then
                   print*, "Error: function '"//trim(id)//"' takes one argument"
                   eval_error = .true.;  f = [bad_value]
@@ -677,7 +654,7 @@ case ("grid")                                     !  grid(n,x0,xh)
                   if (index('size sum product norm1 norm2 minval maxval minloc' // &
                             ' maxlocmean sd median print_stats skew kurt', &
                              trim(id)) > 0) then
-                     f = [ apply_scalar_func(id, arg1) ] ! functions that take array and return scalar
+                     f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
                   else
                      f = apply_vec_func(id, arg1)
                   end if
@@ -707,7 +684,6 @@ case ("grid")                                     !  grid(n,x0,xh)
                   end if
                end if
             end select
-            !------------------------------------------------------------------
 
          else                                            ! plain variable
             f = get_variable(id)
