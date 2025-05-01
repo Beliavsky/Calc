@@ -46,7 +46,6 @@ contains
       do i = 1, size(xx)
          iord(i) = i
       end do
-      if (any(isnan(xx))) return
       call quick_sort(xx, iord)
    end function indexx_real
 !=======================================================================
