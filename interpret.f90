@@ -105,6 +105,8 @@ subroutine slice_array(name, idxs, result)
    contains
 
    subroutine parse_index(str, arr, idx)
+   ! Parse a slice index string str into its evaluated array arr and
+   ! integer index idx.
       character(len=*), intent(in)            :: str
       real(kind=dp),   allocatable, intent(out) :: arr(:)
       integer,         intent(out)            :: idx
@@ -240,6 +242,9 @@ end subroutine slice_array
   end function apply_vec_func
 
   recursive function evaluate(str) result(res)
+  ! Evaluate the input string str as an expression or assignment
+  ! and return its result array res
+
     character(len=*), intent(in) :: str
     real(kind=dp),   allocatable :: res(:)
 
@@ -294,6 +299,8 @@ end subroutine slice_array
 
     !--------------------------------------------------
     subroutine init_evaluator(str_in, expr, lenstr, pos)
+    ! Prepare parser state: copy str_in into expr and set lenstr
+    ! and reset pos for evaluation
       character(len=*), intent(in)               :: str_in
       character(len=:), allocatable, intent(out) :: expr
       integer, intent(out)                       :: lenstr, pos
@@ -305,8 +312,9 @@ end subroutine slice_array
       call next_char()
     end subroutine init_evaluator
 
-    !--------------------------------------------------
     subroutine next_char()
+    ! Advance the parser cursor to the next character in expr
+    ! updating curr_char and pos
       if (pos > lenstr) then
         curr_char = char(0)
       else
@@ -315,15 +323,16 @@ end subroutine slice_array
       pos = pos + 1
     end subroutine next_char
 
-    !--------------------------------------------------
     subroutine skip_spaces()
-      do while (curr_char == ' ')
+    ! Advance pos until non-space is found
+      do while (curr_char == " ")
         call next_char()
       end do
     end subroutine skip_spaces
 
-    !--------------------------------------------------
     function parse_number() result(num)
+    ! Read a numeric literal starting at the current cursor
+    ! and return it as a one-element array num
       real(kind=dp), allocatable :: num(:)
       character(len=64) :: buf
       integer :: i
@@ -339,8 +348,9 @@ end subroutine slice_array
       num = [tmp]
     end function parse_number
 
-    !--------------------------------------------------
     function parse_identifier() result(name_out)
+    ! Read an alphanumeric identifier from the current cursor
+    ! and return it as name_out
       character(len=32) :: name_out
       integer :: i
       call skip_spaces()
@@ -353,8 +363,9 @@ end subroutine slice_array
       name_out = adjustl(name_out(1:i))
     end function parse_identifier
 
-    !--------------------------------------------------
     function get_variable(name) result(v)
+    ! Look up variable name in storage and return its value array v
+    ! or signal an undefined-variable error
       character(len=*), intent(in) :: name
       real(kind=dp), allocatable :: v(:)
       integer :: i
@@ -712,8 +723,9 @@ end select
    end if
 end function parse_factor
 
-    !--------------------------------------------------
     recursive function parse_term() result(t)
+    ! Parse and evaluate a sequence of factors joined by "*" or "/"
+    ! returning t
       real(kind=dp), allocatable :: t(:), f2(:), tmp(:)
       integer :: nt, nf
 
@@ -860,8 +872,9 @@ end function parse_factor
     end function parse_expression
   end function evaluate
 
-  !------------------------------------------------------------------------
   subroutine assign_element(lhs, rval)
+  ! Assign the single-value array rval to the element of variable lhs
+  ! specified by its indices
     character(len=*), intent(in)                 :: lhs
     real(kind=dp), allocatable, intent(in)       :: rval(:)
     character(len=32) :: name
@@ -979,6 +992,8 @@ end function parse_factor
   end subroutine eval_print
 
   subroutine delete_vars(list_str)
+  ! Remove all variables named in the comma-separated list_str
+  ! from storage, warning on missing names
     character(len=*), intent(in) :: list_str
     character(len=32) :: nm
     integer :: start, pos, len_list, i_var, j_var
