@@ -5,16 +5,13 @@ module interpret_mod
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter
-  use random_mod, only: random_normal
+  use random_mod, only: random_normal, runif
   use qsort_mod, only: sorted, indexx, rank, median
   use iso_fortran_env
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
      code_transcript_file, clear, vars, mutable, slice_array
-  interface runif
-    module procedure runif_vec
-  end interface runif
 
   integer, parameter :: max_vars = 100
   integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
@@ -697,7 +694,7 @@ recursive function parse_factor() result(f)
 
    !------------- exponentiation ------------------------------------
    call skip_spaces()
-   if (curr_char == '^') then
+   if (curr_char == "^") then
       call next_char()
       exponent = parse_factor()
       if (.not. eval_error) then
@@ -724,8 +721,8 @@ end function parse_factor
 
       t = parse_factor()
       call skip_spaces()
-      do while (.not. eval_error .and. (curr_char=='*' .or. curr_char=='/'))
-        if (curr_char=='*') then
+      do while (.not. eval_error .and. (curr_char=="*" .or. curr_char=="/"))
+        if (curr_char=="*") then
           call next_char()
           f2 = parse_factor()
           nt = size(t)
@@ -741,9 +738,9 @@ end function parse_factor
             return
           end if
         else
-          ! If the next character is '=', this is `/=`; leave it to the
+          ! If the next character is "=", this is `/=`; leave it to the
           !  relational layer above and break out of the *term* loop.
-          if (pos <= lenstr .and. expr(pos:pos) == '=') exit
+          if (pos <= lenstr .and. expr(pos:pos) == "=") exit
           call next_char()
           f2 = parse_factor()
           nt = size(t)
@@ -785,8 +782,8 @@ end function parse_factor
       !----------------  additive part (+ / -)  -------------------
       e = parse_term()
       call skip_spaces()
-      do while (.not. eval_error .and. (curr_char=='+' .or. curr_char=='-'))
-         if (curr_char=='+') then
+      do while (.not. eval_error .and. (curr_char=="+" .or. curr_char=="-"))
+         if (curr_char=="+") then
             call next_char()
             t = parse_term()
             ne = size(e);  nt = size(t)
@@ -824,33 +821,33 @@ end function parse_factor
       do while (.not. eval_error .and. more_rel)
 
          ! detect operator ---------------------------------------
-         op = '  '           ! blanks
+         op = "  "           ! blanks
          select case (curr_char)
-         case ('<')
+         case ("<")
             call next_char()
-            if (curr_char == '=') then
-               op = '<=';  call next_char()
+            if (curr_char == "=") then
+               op = "<=";  call next_char()
             else
-               op = '< '
+               op = "< "
             end if
-         case ('>')
+         case (">")
             call next_char()
-            if (curr_char == '=') then
-               op = '>=';  call next_char()
+            if (curr_char == "=") then
+               op = ">=";  call next_char()
             else
-               op = '> '
+               op = "> "
             end if
-         case ('=')
+         case ("=")
             call next_char()
-            if (curr_char == '=') then
-               op = '==';  call next_char()
+            if (curr_char == "=") then
+               op = "==";  call next_char()
             else
-               op = '= '
+               op = "= "
             end if
-         case ('/')
+         case ("/")
             call next_char()
-            if (curr_char == '=') then
-               op = '/=';  call next_char()
+            if (curr_char == "=") then
+               op = "/=";  call next_char()
             else
                print*, "Error: error with /"
                eval_error = .true.;  exit
@@ -879,8 +876,8 @@ end function parse_factor
     integer :: i1, i2, idx, vi
     real(kind=dp), allocatable :: tmp(:)
 
-    i1 = index(lhs,'(')
-    i2 = index(lhs,')')
+    i1 = index(lhs,"(")
+    i2 = index(lhs,")")
     name = adjustl(lhs(1:i1-1))
     idxs = lhs(i1+1:i2-1)
 
