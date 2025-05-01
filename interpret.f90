@@ -1032,13 +1032,13 @@ end function parse_factor
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
-            case ('< ') ; mask = a <  b
-            case ('<=') ; mask = a <= b
-            case ('> ') ; mask = a >  b
-            case ('>=') ; mask = a >= b
-            case ('= ') ; mask = abs(a-b) <= tol
-            case ('==') ; mask = abs(a-b) <= tol
-            case ('/=') ; mask = abs(a-b) >  tol
+            case ("< ") ; mask = a <  b
+            case ("<=") ; mask = a <= b
+            case ("> ") ; mask = a >  b
+            case (">=") ; mask = a >= b
+            case ("= ") ; mask = abs(a-b) <= tol
+            case ("==") ; mask = abs(a-b) <= tol
+            case ("/=") ; mask = abs(a-b) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
 
@@ -1047,13 +1047,13 @@ end function parse_factor
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
-            case ('< ') ; mask = a <  b(1)
-            case ('<=') ; mask = a <= b(1)
-            case ('> ') ; mask = a >  b(1)
-            case ('>=') ; mask = a >= b(1)
-            case ('= ') ; mask = abs(a-b(1)) <= tol
-            case ('==') ; mask = abs(a-b(1)) <= tol
-            case ('/=') ; mask = abs(a-b(1)) >  tol
+            case ("< ") ; mask = a <  b(1)
+            case ("<=") ; mask = a <= b(1)
+            case ("> ") ; mask = a >  b(1)
+            case (">=") ; mask = a >= b(1)
+            case ("= ") ; mask = abs(a-b(1)) <= tol
+            case ("==") ; mask = abs(a-b(1)) <= tol
+            case ("/=") ; mask = abs(a-b(1)) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
 
@@ -1062,13 +1062,13 @@ end function parse_factor
          n  = nb
          allocate (mask(n), source = .false.)
          select case (op)
-            case ('< ') ; mask = a(1) <  b
-            case ('<=') ; mask = a(1) <= b
-            case ('> ') ; mask = a(1) >  b
-            case ('>=') ; mask = a(1) >= b
-            case ('= ') ; mask = abs(a(1)-b) <= tol
-            case ('==') ; mask = abs(a(1)-b) <= tol
-            case ('/=') ; mask = abs(a(1)-b) >  tol
+            case ("< ") ; mask = a(1) <  b
+            case ("<=") ; mask = a(1) <= b
+            case ("> ") ; mask = a(1) >  b
+            case (">=") ; mask = a(1) >= b
+            case ("= ") ; mask = abs(a(1)-b) <= tol
+            case ("==") ; mask = abs(a(1)-b) <= tol
+            case ("/=") ; mask = abs(a(1)-b) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
       else
