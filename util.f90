@@ -3,7 +3,8 @@ use kind_mod, only: dp
 implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
-   tail, grid, print_real, replace
+   tail, grid, print_real, replace, is_numeral, is_letter, &
+   is_alphanumeric
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -151,5 +152,24 @@ do
 end do
 string_new = string_new // string(current:)
 end function replace
+
+elemental function is_numeral(xchar) result(tf)
+character (len=1), intent(in) :: xchar
+logical                       :: tf
+tf = xchar >= '0' .and. xchar <= '9'
+end function is_numeral
+
+elemental function is_letter(xchar) result(tf)
+character (len=1), intent(in) :: xchar
+logical                       :: tf
+tf = (xchar >= 'a' .and. xchar <= 'z') .or. &
+     (xchar >= 'A' .and. xchar <= 'Z')
+end function is_letter
+
+elemental function is_alphanumeric(xchar) result(tf)
+character (len=1), intent(in) :: xchar
+logical                       :: tf
+tf = is_letter(xchar) .or. is_numeral(xchar)
+end function is_alphanumeric
 
 end module util_mod
