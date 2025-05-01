@@ -1,6 +1,6 @@
 executables = xinterpret_gfort.exe
 FC     = gfortran
-FFLAGS = -O0 -Wall -Werror=unused-parameter -Werror=unused-variable -Werror=unused-function -Wno-maybe-uninitialized -Wno-surprising -fbounds-check -static -g -fmodule-private
+FFLAGS = -O0 -Wall -std=f2023 -Werror=unused-parameter -Werror=unused-variable -Werror=unused-function -Wno-maybe-uninitialized -Wno-surprising -fbounds-check -static -g -fmodule-private
 obj    = kind.o util.o constants.o qsort.o random.o stats.o interpret.o xinterpret.o
 
 all: $(executables)
