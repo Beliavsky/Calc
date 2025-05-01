@@ -183,7 +183,7 @@ end subroutine slice_array
     case ("kurt")    ; r = kurtosis(arr)
     case ("print_stats"); call print_stats(arr); r = 0
     case default
-      print*, "Error: function '", trim(fname), "' not defined"
+      print*, "Error in apply_scalar_func: function '", trim(fname), "' not defined"
       eval_error = .true.
       r = bad_value
     end select
@@ -235,7 +235,7 @@ end subroutine slice_array
     case ("rank"); res = rank(arr)
     case ("stdz"); res = standardize(arr)
     case default
-      print*, "Error: function '", trim(fname), "' not defined"
+      print*, "Error in apply_vec_func: function '", trim(fname), "' not defined"
       eval_error = .true.
       res = bad_value
     end select
@@ -601,6 +601,21 @@ recursive function parse_factor() result(f)
                      eval_error = .true.;  f = [bad_value]
                   end if
                end if
+ 
+            case ("pack")
+              if (.not. have_second) then
+                 print *, "Error: pack() needs two arguments"
+                 eval_error = .true.
+                 f = [bad_value]
+              else if (size(arg1) /= size(arg2)) then
+                 print *, "Error: pack() arguments must have same size"
+                 eval_error = .true.
+                 f = [bad_value]
+              else
+                 ! intrinsic PACK(source, mask) returns a 1-D array of those source(i)
+                 ! for which mask(i) is .true.  Here we treat nonzero arg2 as .true.
+                 f = pack(arg1, arg2 /= 0.0_dp)
+              end if
 
             case ("runif","rnorm","arange")                       ! one-arg
                if (have_second) then
@@ -693,7 +708,7 @@ recursive function parse_factor() result(f)
 
    case default ! subscript  x(i)
       if (have_second) then
-         print*, "Error: function '"//trim(id)//"' not defined"
+         print*, "Error in have_second: function '"//trim(id)//"' not defined"
          eval_error = .true.;  f = [bad_value]
       else
          vvar = get_variable(id)
