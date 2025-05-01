@@ -35,7 +35,7 @@ contains
 
 !---------------------------------------------------------------
 !  Return a 1-D section of variable NAME described by the text
-!  in IDXS ( e.g. "2:11:3", "5:", ":7:-2", … ).
+!  in IDXS (e.g. "2:11:3", "5:", ":7:-2",).
 !
 subroutine slice_array(name, idxs, result)
    character(len=*), intent(in)            :: name
@@ -62,12 +62,12 @@ subroutine slice_array(name, idxs, result)
       allocate(result(0));  return
    end if
    c2 = index(idxs(c1+1:), ":")
-   if (c2 > 0) c2 = c1 + c2        !→ absolute position, or 0 if none
+   if (c2 > 0) c2 = c1 + c2        ! absolute position, or 0 if none
 
    !------------------------------------------------------------
    ! lower bound
    if (c1 > 1) then
-      call parse_index( idxs(:c1-1), larr, i1 )
+      call parse_index(idxs(:c1-1), larr, i1)
    else
       i1 = 1
    end if
@@ -77,17 +77,17 @@ subroutine slice_array(name, idxs, result)
    if (c2 == 0) then                    ! only one ':'
       step = 1
       if (c1 < len_trim(idxs)) then
-         call parse_index( idxs(c1+1:), uarr, i2 )
+         call parse_index(idxs(c1+1:), uarr, i2)
       else
          i2 = n
       end if
-   else                                  ! two ':'  → stride present
-      if (c2 - c1 > 1) then              ! ←  strictly “> 1” is the right check
-         call parse_index( idxs(c1+1:c2-1), uarr, i2 )
+   else                                  ! two ':'   stride present
+      if (c2 - c1 > 1) then              !   strictly > 1 is the right check
+         call parse_index(idxs(c1+1:c2-1), uarr, i2)
       else
          i2 = n          ! omitted upper bound
       end if
-      call parse_index( idxs(c2+1:), sarr, step )
+      call parse_index(idxs(c2+1:), sarr, step)
    end if
 
    !------------------------------------------------------------
@@ -103,8 +103,8 @@ subroutine slice_array(name, idxs, result)
 
    !------------------------------------------------------------
    ! empty slice situations that are nevertheless valid
-   if ( (step > 0 .and. i1 >  i2)  .or. &
-        (step < 0 .and. i1 <  i2) ) then
+   if ((step > 0 .and. i1 >  i2)  .or. &
+        (step < 0 .and. i1 <  i2)) then
       allocate(result(0))
       return
    end if
@@ -260,27 +260,27 @@ end subroutine slice_array
     character(len=*), intent(in) :: str
     real(kind=dp),   allocatable :: res(:)
 
-    !–- local to this outer shell –----------------------------------
+    !- local to this outer shell ----------------------------------
     character(len=:), allocatable :: expr, lhs, rhs
     integer                      :: pos, lenstr      ! parser cursor & length
     integer                      :: i, eqpos         ! scan index & "=" position
   !------------------------------------------------------------------
 
-    !–– prepare the string for parsing –––––––––––––––––––––––––––––
+    ! prepare the string for parsing 
     call init_evaluator(trim(str), expr, lenstr, pos)
 
-    !–– look for an *assignment* “=” that is **not** part of >= <= == <=
+    ! look for an *assignment* = that is **not** part of >= <= == <=
     eqpos = 0
     do i = 1, lenstr
        if (expr(i:i) == '=') then
-          if ( i > 1  .and. any( expr(i-1:i-1) == ['>','<','!','=','/'] ) ) cycle
-          if ( i < lenstr .and. expr(i+1:i+1) == '='                 ) cycle
+          if (i > 1  .and. any(expr(i-1:i-1) == ['>','<','!','=','/'])) cycle
+          if (i < lenstr .and. expr(i+1:i+1) == '=') cycle
           eqpos = i
-          exit                       ! first qualifying “=” wins
+          exit                       ! first qualifying = wins
        end if
     end do
 
-    !–– assignment found → evaluate RHS then store ––––––––––––––––
+    ! assignment found  evaluate RHS then store 
     if (eqpos > 0) then
        lhs = adjustl(expr(1:eqpos-1))
        rhs = expr(eqpos+1:)
@@ -288,15 +288,15 @@ end subroutine slice_array
        res = evaluate(rhs)           ! recursive call
        if (.not. eval_error) then
           if (index(lhs,'(') > 0 .and. index(lhs,')') > index(lhs,'(')) then
-             call assign_element(lhs, res)   ! element assignment  a(i)=…
+             call assign_element(lhs, res)   ! element assignment  a(i)=
           else
-             call set_variable  (lhs, res)   ! whole–variable assignment
+             call set_variable  (lhs, res)   ! wholevariable assignment
           end if
        end if
        return
     end if
 
-    !–– no “=” ⇒ treat the whole string as an expression ––––––––––
+    ! no =  treat the whole string as an expression 
     res = parse_expression()
     ! detect any extraneous characters left on the line
     call skip_spaces()
@@ -403,11 +403,11 @@ end subroutine slice_array
       real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
       integer :: total, ne
 
-      !── consume the '[' ────────────────────────────────────────────
+      ! consume the '[' 
       call next_char()
       call skip_spaces()
 
-      !── empty array literal [] ────────────────────────────────────
+      ! empty array literal [] 
       if (curr_char == ']') then
         allocate(arr(0))
         call next_char()
@@ -418,12 +418,12 @@ end subroutine slice_array
       allocate(arr(0))
 
       do
-        !── parse one element (may itself be an array) ─────────────
+        ! parse one element (may itself be an array) 
         elem = parse_expression()
         if (eval_error) return
         ne = size(elem)
 
-        !── append elem to arr ─────────────────────────────────────
+        ! append elem to arr 
         if (allocated(tmp)) deallocate(tmp)
         allocate(tmp(total+ne))
         if (total > 0) tmp(1:total) = arr
@@ -431,7 +431,7 @@ end subroutine slice_array
         arr = tmp
         total = total + ne
 
-        !── now skip any spaces, then decide what to do ────────────
+        ! now skip any spaces, then decide what to do 
         call skip_spaces()
         select case (curr_char)
         case (",")         ! explicit comma
@@ -462,7 +462,7 @@ recursive function parse_factor() result(f)
 
    call skip_spaces()
 
-   !---------------- unary ± -----------------------------------------
+   !---------------- unary  -----------------------------------------
    if (curr_char == '+' .or. curr_char == '-') then
       is_neg = (curr_char == '-')
       call next_char()
@@ -491,7 +491,7 @@ recursive function parse_factor() result(f)
          call skip_spaces()
 
          !-----------------------------------------------------------------
-         if (curr_char == '(') then            !  id( … )
+         if (curr_char == '(') then            !  id()
             call next_char()                   !  consume '('
             call skip_spaces()
 
@@ -642,7 +642,7 @@ recursive function parse_factor() result(f)
 case ("grid")                                     !  grid(n,x0,xh)
 !---------------------------------------------------------------
    if (.not. have_second) then
-      ! we have only one argument so far – need two more
+      ! we have only one argument so far  need two more
       print *, "Error: grid(n,x0,xh) needs three arguments"
       eval_error = .true.;  f = [bad_value]
 
@@ -776,7 +776,7 @@ end function parse_factor
             return
           end if
         else
-          !– If the next character is '=', this is `/=`; leave it to the
+          ! If the next character is '=', this is `/=`; leave it to the
           !  relational layer above and break out of the *term* loop.
           if (pos <= lenstr .and. expr(pos:pos) == '=') exit
           call next_char()
@@ -804,12 +804,12 @@ end function parse_factor
     recursive function parse_expression() result(e)
     !--------------------------------------------------
     ! Handles:
-    !   – addition / subtraction        (+  -)
-    !   – relational comparisons        (<  <=  >  >=  ==  <=)
+    !    addition / subtraction        (+  -)
+    !    relational comparisons        (<  <=  >  >=  ==  <=)
     ! Comparison rules
-    !   • scalar ∘ scalar               → size-1 array  (1 or 0)
-    !   • vector ∘ vector (same size)   → size-n array
-    !   • vector ∘ scalar (or vice-versa)→ size-n array
+    !    scalar  scalar                size-1 array  (1 or 0)
+    !    vector  vector (same size)    size-n array
+    !    vector  scalar (or vice-versa) size-n array
     ! If the sizes are incompatible an error is raised.
     !
       real(kind=dp), allocatable :: e(:), t(:), rhs(:)
@@ -853,12 +853,12 @@ end function parse_factor
          call skip_spaces()
       end do
 
-      !----------------  relational part (<  >  == …)  ------------
+      !----------------  relational part (<  >  ==)  ------------
       call skip_spaces()
       more_rel = .true.
       do while (.not. eval_error .and. more_rel)
 
-         !— detect operator ---------------------------------------
+         ! detect operator ---------------------------------------
          op = '  '           ! blanks
          select case (curr_char)
          case ('<')
@@ -930,7 +930,7 @@ end function parse_factor
     do vi = 1, n_vars
       if (vars(vi)%name == name) then
         if (.not. mutable) then
-           print *, "Error: cannot assign element of '", trim(name), "'—mutable is .false."
+           print *, "Error: cannot assign element of '", trim(name), "'mutable is .false."
            eval_error = .true.
         else
            if (idx < 1 .or. idx > size(vars(vi)%val)) then
@@ -1098,7 +1098,7 @@ end function parse_factor
          case ('=='); mask = abs(a-b) <= tol
          case ('/='); mask = abs(a-b) >  tol
          end select
-         res = merge( 1.0_dp , 0.0_dp , mask )
+         res = merge(1.0_dp , 0.0_dp , mask)
 
       else if (nb == 1) then
          ! vector - scalar
@@ -1113,7 +1113,7 @@ end function parse_factor
          case ('=='); mask = abs(a-b(1)) <= tol
          case ('/='); mask = abs(a-b(1)) >  tol
          end select
-         res = merge( 1.0_dp , 0.0_dp , mask )
+         res = merge(1.0_dp , 0.0_dp , mask)
 
       else if (na == 1) then
          ! scalar - vector   (broadcast the scalar)
@@ -1128,7 +1128,7 @@ end function parse_factor
          case ('=='); mask = abs(a(1)-b) <= tol
          case ('/='); mask = abs(a(1)-b) >  tol
          end select
-         res = merge( 1.0_dp , 0.0_dp , mask )
+         res = merge(1.0_dp , 0.0_dp , mask)
 
       else
          print *, "Error: size mismatch in relational comparison"
