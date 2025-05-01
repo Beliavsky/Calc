@@ -636,61 +636,59 @@ recursive function parse_factor() result(f)
       end if
    end if
 
-            case ("abs","acos","acosh","asin","asinh","atan","atanh", &
-                  "cos","cosh","exp","log","log10","sin","sinh","sqrt", &
-                  "tan","tanh","size","sum","product", "norm1", "norm2","minval", &
-                  "maxval","minloc","maxloc","mean","sd","cumsum","diff", &
-                  "sort","indexx","rank","stdz","median","head","tail", &
-                  "bessel_j0","bessel_j1","bessel_y0","bessel_y1", &
-                  "gamma","log_gamma","cosd","sind","tand", &
-                  "acosd","asind","atand","spacing","skew","kurt","print_stats")
-               if (have_second) then
-                  print*, "Error: function '"//trim(id)//"' takes one argument"
-                  eval_error = .true.;  f = [bad_value]
-               else
-                  if (index('size sum product norm1 norm2 minval maxval minloc' // &
-                            ' maxlocmean sd median print_stats skew kurt', &
-                             trim(id)) > 0) then
-                     f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
-                  else
-                     f = apply_vec_func(id, arg1)
-                  end if
-               end if
-
-            case default                                  ! subscript  x(i)
-               if (have_second) then
-                  print*, "Error: function '"//trim(id)//"' not defined"
-                  eval_error = .true.;  f = [bad_value]
-               else
-                  vvar = get_variable(id)
-                  if (.not. eval_error) then
-                     if (any(abs(arg1 - nint(arg1)) > tol)) then
-                        print*, "Error: non-integer subscript for '"//trim(id)//"'"
-                        eval_error = .true.;  f = [bad_value]
-                     else
-                        idxv = nint(arg1)
-                        if (any(idxv < 1) .or. any(idxv > size(vvar))) then
-                           print*, "Error: index out of bounds for '"//trim(id)//"'"
-                           eval_error = .true.;  f = [bad_value]
-                        else
-                           allocate(f(size(idxv)));  f = vvar(idxv)
-                        end if
-                     end if
-                  else
-                     f = [bad_value]
-                  end if
-               end if
-            end select
-
-         else                                            ! plain variable
-            f = get_variable(id)
-         end if
-
-      else
-         print*, "Error: unexpected character '"//curr_char//"'"
+   case ("abs","acos","acosh","asin","asinh","atan","atanh","cos","cosh", &
+         "exp","log","log10","sin","sinh","sqrt","tan","tanh","size", &
+         "sum","product", "norm1", "norm2","minval","maxval","minloc", &
+         "maxloc","mean","sd","cumsum","diff","sort","indexx","rank", &
+         "stdz","median","head","tail","bessel_j0","bessel_j1", &
+         "bessel_y0","bessel_y1","gamma","log_gamma","cosd","sind","tand", &
+         "acosd","asind","atand","spacing","skew","kurt","print_stats")
+      if (have_second) then
+         print*, "Error: function '"//trim(id)//"' takes one argument"
          eval_error = .true.;  f = [bad_value]
+      else
+         if (index("size sum product norm1 norm2 minval maxval minloc " // &
+          "maxloc mean sd median print_stats skew kurt", trim(id)) > 0) then
+            f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
+         else
+            f = apply_vec_func(id, arg1)
+         end if
+      end if
+
+   case default ! subscript  x(i)
+      if (have_second) then
+         print*, "Error: function '"//trim(id)//"' not defined"
+         eval_error = .true.;  f = [bad_value]
+      else
+         vvar = get_variable(id)
+         if (.not. eval_error) then
+            if (any(abs(arg1 - nint(arg1)) > tol)) then
+               print*, "Error: non-integer subscript for '"//trim(id)//"'"
+                        eval_error = .true.;  f = [bad_value]
+            else
+               idxv = nint(arg1)
+               if (any(idxv < 1) .or. any(idxv > size(vvar))) then
+                  print*, "Error: index out of bounds for '"//trim(id)//"'"
+                  eval_error = .true.;  f = [bad_value]
+               else
+                  allocate(f(size(idxv)));  f = vvar(idxv)
+               end if
+            end if
+         else
+            f = [bad_value]
+         end if
       end if
    end select
+
+else                                            ! plain variable
+   f = get_variable(id)
+end if
+
+else
+   print*, "Error: unexpected character '"//curr_char//"'"
+   eval_error = .true.;  f = [bad_value]
+end if
+end select
 
    !------------- exponentiation ------------------------------------
    call skip_spaces()
@@ -761,10 +759,7 @@ end function parse_factor
       end do
     end function parse_term
 
-    !--------------------------------------------------
-    !--------------------------------------------------
     recursive function parse_expression() result(e)
-    !--------------------------------------------------
     ! Handles:
     !    addition / subtraction        (+  -)
     !    relational comparisons        (<  <=  >  >=  ==  <=)
@@ -773,7 +768,6 @@ end function parse_factor
     !    vector  vector (same size)    size-n array
     !    vector  scalar (or vice-versa) size-n array
     ! If the sizes are incompatible an error is raised.
-    !
       real(kind=dp), allocatable :: e(:), t(:), rhs(:)
       character(len=2)           :: op
       integer :: ne, nt
@@ -864,7 +858,6 @@ end function parse_factor
          call skip_spaces()
       end do
     end function parse_expression
-
   end function evaluate
 
   !------------------------------------------------------------------------
@@ -1026,28 +1019,26 @@ end function parse_factor
     end do
   end subroutine delete_vars
 
-    !--------------------------------------------------
     function rel_compare(op, a, b) result(res)
-    !--------------------------------------------------
     ! Element-wise comparison returning 1.0 or 0.0
       character(len=*), intent(in) :: op
       real(kind=dp),    intent(in) :: a(:), b(:)
       real(kind=dp), allocatable   :: res(:)
       logical, allocatable         :: mask(:)
       integer :: na, nb, n
-
-      na = size(a);  nb = size(b)
+      na = size(a)
+      nb = size(b)
       if (na == nb) then
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
-         case ('< ') ; mask = a <  b
-         case ('<='); mask = a <= b
-         case ('> ') ; mask = a >  b
-         case ('>='); mask = a >= b
-         case ('= ') ; mask = abs(a-b) <= tol
-         case ('=='); mask = abs(a-b) <= tol
-         case ('/='); mask = abs(a-b) >  tol
+            case ('< ') ; mask = a <  b
+            case ('<=') ; mask = a <= b
+            case ('> ') ; mask = a >  b
+            case ('>=') ; mask = a >= b
+            case ('= ') ; mask = abs(a-b) <= tol
+            case ('==') ; mask = abs(a-b) <= tol
+            case ('/=') ; mask = abs(a-b) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
 
@@ -1056,13 +1047,13 @@ end function parse_factor
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
-         case ('< ') ; mask = a <  b(1)
-         case ('<='); mask = a <= b(1)
-         case ('> ') ; mask = a >  b(1)
-         case ('>='); mask = a >= b(1)
-         case ('= ') ; mask = abs(a-b(1)) <= tol
-         case ('=='); mask = abs(a-b(1)) <= tol
-         case ('/='); mask = abs(a-b(1)) >  tol
+            case ('< ') ; mask = a <  b(1)
+            case ('<=') ; mask = a <= b(1)
+            case ('> ') ; mask = a >  b(1)
+            case ('>=') ; mask = a >= b(1)
+            case ('= ') ; mask = abs(a-b(1)) <= tol
+            case ('==') ; mask = abs(a-b(1)) <= tol
+            case ('/=') ; mask = abs(a-b(1)) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
 
@@ -1071,16 +1062,15 @@ end function parse_factor
          n  = nb
          allocate (mask(n), source = .false.)
          select case (op)
-         case ('< ') ; mask = a(1) <  b
-         case ('<='); mask = a(1) <= b
-         case ('> ') ; mask = a(1) >  b
-         case ('>='); mask = a(1) >= b
-         case ('= ') ; mask = abs(a(1)-b) <= tol
-         case ('=='); mask = abs(a(1)-b) <= tol
-         case ('/='); mask = abs(a(1)-b) >  tol
+            case ('< ') ; mask = a(1) <  b
+            case ('<=') ; mask = a(1) <= b
+            case ('> ') ; mask = a(1) >  b
+            case ('>=') ; mask = a(1) >= b
+            case ('= ') ; mask = abs(a(1)-b) <= tol
+            case ('==') ; mask = abs(a(1)-b) <= tol
+            case ('/=') ; mask = abs(a(1)-b) >  tol
          end select
          res = merge(1.0_dp , 0.0_dp , mask)
-
       else
          print*, "Error: size mismatch in relational comparison"
          eval_error = .true.
