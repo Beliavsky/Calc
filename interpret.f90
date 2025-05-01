@@ -873,50 +873,79 @@ end function parse_factor
   end function evaluate
 
   subroutine assign_element(lhs, rval)
-  ! Assign the single-value array rval to the element of variable lhs
-  ! specified by its indices
-    character(len=*), intent(in)                 :: lhs
-    real(kind=dp), allocatable, intent(in)       :: rval(:)
-    character(len=32) :: name
-    character(len=:), allocatable :: idxs
-    integer :: i1, i2, idx, vi
-    real(kind=dp), allocatable :: tmp(:)
+  ! ---------------------------------------------------------------------------
+  ! Generalised element/section assignment.
+  !
+  ! * LHS is of the form  var(indices)  where **indices** may be a scalar
+  !   or a vector.
+  ! * If RVAL has size 1  -> broadcast to every index in INDICES
+  ! * If RVAL size equals size(INDICES) -> element–wise assignment
+  ! * Otherwise → size-mismatch error
+  ! ---------------------------------------------------------------------------
+     character(len=*),           intent(in)  :: lhs
+     real(kind=dp), allocatable, intent(in)  :: rval(:)
 
-    i1 = index(lhs,"(")
-    i2 = index(lhs,")")
-    name = adjustl(lhs(1:i1-1))
-    idxs = lhs(i1+1:i2-1)
+     character(len=32)               :: name
+     character(len=:),  allocatable  :: idx_txt
+     real(kind=dp),     allocatable  :: idx_val(:)
+     integer,           allocatable  :: idx(:)
+     integer :: p_lpar, p_rpar, vi, n_idx
 
-    tmp = evaluate(idxs)
-    if (eval_error .or. size(tmp) /= 1) then
-      eval_error = .true.
-      if (stop_if_error) stop "stopped with evaluation error"
-      return
-    end if
+     ! ---- split "var( … )" into name and index string ---------------------
+     p_lpar = index(lhs, "(")
+     p_rpar = index(lhs, ")")
+     name   = adjustl(lhs(1:p_lpar-1))
+     idx_txt = lhs(p_lpar+1:p_rpar-1)
 
-    idx = int(tmp(1))
-    do vi = 1, n_vars
-      if (vars(vi)%name == name) then
-        if (.not. mutable) then
-           print*, "Error: cannot assign element of '", trim(name), "'mutable is .false."
-           eval_error = .true.
-        else
-           if (idx < 1 .or. idx > size(vars(vi)%val)) then
-              print*, "Error: index out of bounds for '", trim(name), "'"
+     ! ---- evaluate index expression ---------------------------------------
+     idx_val = evaluate(idx_txt)
+     if (eval_error) then
+        if (stop_if_error) stop "stopped with evaluation error"
+        return
+     end if
+
+     ! ---- convert to integer(s) -------------------------------------------
+     if (any(abs(idx_val - nint(idx_val)) > tol)) then
+        print*, "Error: non-integer subscript in assignment to '", trim(name), "'"
+        eval_error = .true.
+        return
+     end if
+     n_idx = size(idx_val)
+     allocate(idx(n_idx))
+     idx = nint(idx_val)
+
+     ! ---- locate the variable ---------------------------------------------
+     do vi = 1, n_vars
+        if (vars(vi)%name == name) then
+           if (.not. mutable) then
+              print*, "Error: cannot assign to '"//trim(name)//"' when mutable=.false."
               eval_error = .true.
-           else
+              return
+           end if
+
+           if (any(idx < 1) .or. any(idx > size(vars(vi)%val))) then
+              print*, "Error: index out of bounds in assignment to '"//trim(name)//"'"
+              eval_error = .true.
+              return
+           end if
+
+           if (size(rval) == 1) then                 ! broadcast scalar
               vars(vi)%val(idx) = rval(1)
+           else if (size(rval) == n_idx) then        ! element-wise vector
+              vars(vi)%val(idx) = rval
+           else
+              print*, "Error: size mismatch in assignment to '" // trim(name) // "'"
+              eval_error = .true.
            end if
            return
         end if
-      end if
-    end do
+     end do
 
-    print*, "Error: undefined variable '", trim(name), "' in assignment"
-    eval_error = .true.
+     ! ---- variable not found ----------------------------------------------
+     print*, "Error: undefined variable '", trim(name), "' in assignment"
+     eval_error = .true.
   end subroutine assign_element
 
-  !------------------------------------------------------------------------
   impure elemental subroutine eval_print(str)
     character(len=*), intent(in) :: str
     real(kind=dp), allocatable :: r(:)
@@ -949,13 +978,13 @@ end function parse_factor
        return
     end if
     if (str == "?vars") then
-      write(*,*) "Defined variables:"
+      write(*, "(a)") "Defined variables:"
       do i = 1, n_vars
         if (size(vars(i)%val) == 1) then
-          write(*,"(a)", advance="no") trim(vars(i)%name)//': '
+          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
           print "(F0.6)", vars(i)%val(1)
         else
-          write(*,"(a)", advance="no") trim(vars(i)%name)//': '
+          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
           write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
           write(*,"(']')")
         end if
@@ -1092,4 +1121,6 @@ end function parse_factor
          res = [bad_value]
       end if
     end function rel_compare
+
+
 end module interpret_mod
