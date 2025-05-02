@@ -661,6 +661,8 @@ recursive function parse_factor() result(f)
                else
                   f = grid(nint(arg1(1)), arg2(1), arg3(1))
                end if
+               call skip_spaces()
+               if (curr_char == ")") call next_char()
             end if
          end if
       end if
