@@ -1,13 +1,18 @@
 program xinterpret
-  use interpret_mod, only: eval_print, tunit, code_transcript_file, vars
+  use interpret_mod, only: eval_print, tunit, code_transcript_file, &
+                           vars, write_code
   use util_mod, only: replace
+  use kind_mod, only: dp
   implicit none
   integer :: i, iostat_err, varu, ipos_comment
   character (len=1000) :: line
-  logical, parameter :: write_vars_at_end = .true.
+  logical, parameter :: write_vars_at_end = .false., &
+                        time_code=.true., run_sample_code=.false.
   character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
-  open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
-  if (.true.) then
+  real(kind=dp) :: t1, t2
+  write_code = .true.
+  if (write_code) open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
+  if (run_sample_code) then
      call eval_print("n = 10")
      call eval_print("y = [1, 2, 3]")
      call eval_print("z = n * y")
@@ -35,7 +40,12 @@ program xinterpret
         line = line(:ipos_comment-1)
      end if
      line = replace(line, "**", "^")
+     if (time_code) call cpu_time(t1)
      call eval_print(trim(line))
+     if (time_code) then
+        call cpu_time(t2)
+        print "(a, f0.4)", "time: ",t2-t1
+     end if
   end do
   if (write_vars_at_end) then
      open (newunit=varu, file=vars_file, action="write", status="replace")
@@ -44,4 +54,5 @@ program xinterpret
            trim(vars(i)%name), vars(i)%val
      end do
   end if
+  if (write_code) print "(a)", "wrote code to " // trim(code_transcript_file)
 end program xinterpret
