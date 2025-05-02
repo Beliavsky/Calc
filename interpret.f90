@@ -176,6 +176,7 @@ end subroutine slice_array
     case ("maxval")  ; r = maxval(arr)
     case ("minloc")  ; r = minloc(arr, dim=1)
     case ("maxloc")  ; r = maxloc(arr, dim=1)
+    case ("count")   ; r = real(count(arr /= 0.0_dp), dp)
     case ("median")  ; r = median(arr)
     case ("mean")    ; r = mean(arr)
     case ("sd")      ; r = sd(arr)
@@ -237,7 +238,7 @@ end subroutine slice_array
     case default
       print*, "Error in apply_vec_func: function '", trim(fname), "' not defined"
       eval_error = .true.
-      res = bad_value
+      res = [bad_value]
     end select
   end function apply_vec_func
 
@@ -665,7 +666,7 @@ recursive function parse_factor() result(f)
    case ("abs","acos","acosh","asin","asinh","atan","atanh","cos","cosh", &
          "exp","log","log10","sin","sinh","sqrt","tan","tanh","size", &
          "sum","product", "norm1", "norm2","minval","maxval","minloc", &
-         "maxloc","mean","sd","cumsum","diff","sort","indexx","rank", &
+         "maxloc","count","mean","sd","cumsum","diff","sort","indexx","rank", &
          "stdz","median","head","tail","bessel_j0","bessel_j1", &
          "bessel_y0","bessel_y1","gamma","log_gamma","cosd","sind","tand", &
          "acosd","asind","atand","spacing","skew","kurt","print_stats")
@@ -674,7 +675,7 @@ recursive function parse_factor() result(f)
          eval_error = .true.;  f = [bad_value]
       else
          if (index("size sum product norm1 norm2 minval maxval minloc " // &
-          "maxloc mean sd median print_stats skew kurt", trim(id)) > 0) then
+          "maxloc count mean sd median print_stats skew kurt", trim(id)) > 0) then
             f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
          else
             f = apply_vec_func(id, arg1)
