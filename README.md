@@ -13,7 +13,7 @@ r^3                                 ! exponentiation of a scalar
 ! Creating vectors (array literals, arange, grid)
 ! ────────────────────────────────
 y = [1, 2, 3, 4, 5]                 ! literal real-vector (commas or blanks both work)
-v = 10 * arange(10)                 ! 0-based sequence [0,1,…,9] scaled by 10
+v = 10 * arange(10)                 ! 1-based sequence [1,2,…,10] scaled by 10
 t = grid(11, 0.0, 0.1)              ! uniform grid: 11 points starting 0.0, step 0.1
 
 ! ────────────────────────────────
