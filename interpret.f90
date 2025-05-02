@@ -4,10 +4,10 @@ module interpret_mod
                        print_stats, skew, kurtosis
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
-                       is_numeral, is_letter
+                       is_numeral, is_letter, zeros, ones
   use random_mod, only: random_normal, runif
   use qsort_mod, only: sorted, indexx, rank, median
-  use iso_fortran_env
+  use iso_fortran_env, only: compiler_options, compiler_version
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, &
@@ -618,50 +618,50 @@ recursive function parse_factor() result(f)
                  f = pack(arg1, arg2 /= 0.0_dp)
               end if
 
-            case ("runif","rnorm","arange")                       ! one-arg
+            case ("runif","rnorm","arange","zeros","ones") ! one-arg
                if (have_second) then
                   print*, "Error: function takes one argument"
                   eval_error = .true.;  f = [bad_value]
                else
                   nsize = nint(arg1(1))
-                  if (id == "runif") then
-                     f = runif(nsize)
-                  else if (id == "rnorm") then
-                     f = random_normal(nsize)
-                  else
-                     f = arange(nsize)
-                  end if
+                  select case (id)
+                     case ("runif") ; f = runif(nsize)
+                     case ("rnorm") ; f = random_normal(nsize)
+                     case ("arange"); f = arange(nsize)
+                     case ("zeros") ; f = zeros(nsize)
+                     case ("ones")  ; f = ones(nsize)
+                  end select
                end if
 
-   case ("grid") !  grid(n,x0,xh)
-   if (.not. have_second) then
-      ! we have only one argument so far  need two more
-      print*, "Error: grid(n,x0,xh) needs three arguments"
-      eval_error = .true.;  f = [bad_value]
-   else
-      ! arg1 and arg2 have already been parsed --> read arg3
-      call skip_spaces()
-      if (curr_char /= ",") then
+   case ("grid") ! grid(n,x0,xh)
+      if (.not. have_second) then
+         ! we have only one argument so far  need two more
          print*, "Error: grid(n,x0,xh) needs three arguments"
          eval_error = .true.;  f = [bad_value]
       else
-         call next_char()
+         ! arg1 and arg2 have already been parsed --> read arg3
          call skip_spaces()
-         ! ---------------- third argument ----------------
-         arg3 = parse_expression()
-         if (eval_error) then
-            f = [bad_value]
+         if (curr_char /= ",") then
+            print*, "Error: grid(n,x0,xh) needs three arguments"
+            eval_error = .true.;  f = [bad_value]
          else
-            ! ---- scalar-checks and the actual call -------
-            if (size(arg1) /= 1 .or. size(arg2) /= 1 .or. size(arg3) /= 1) then
-               print*, "Error: grid arguments must be scalars"
-               eval_error = .true.;  f = [bad_value]
+            call next_char()
+            call skip_spaces()
+            ! ---------------- third argument ----------------
+            arg3 = parse_expression()
+            if (eval_error) then
+               f = [bad_value]
             else
-               f = grid(nint(arg1(1)), arg2(1), arg3(1))
+            ! ---- scalar-checks and the actual call -------
+               if (size(arg1) /= 1 .or. size(arg2) /= 1 .or. size(arg3) /= 1) then
+                  print*, "Error: grid arguments must be scalars"
+                  eval_error = .true.;  f = [bad_value]
+               else
+                  f = grid(nint(arg1(1)), arg2(1), arg3(1))
+               end if
             end if
          end if
       end if
-   end if
 
    case ("abs","acos","acosh","asin","asinh","atan","atanh","cos","cosh", &
          "exp","log","log10","sin","sinh","sqrt","tan","tanh","size", &
@@ -671,7 +671,7 @@ recursive function parse_factor() result(f)
          "bessel_y0","bessel_y1","gamma","log_gamma","cosd","sind","tand", &
          "acosd","asind","atand","spacing","skew","kurt","print_stats")
       if (have_second) then
-         print*, "Error: function '"//trim(id)//"' takes one argument"
+         print "(a)", "Error: function '" // trim(id) // "' takes one argument"
          eval_error = .true.;  f = [bad_value]
       else
          if (index("size sum product norm1 norm2 minval maxval minloc " // &
