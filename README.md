@@ -35,7 +35,7 @@ v(3:9:2)                            ! Fortran-style slice: start 3, stop 9, stri
 x  = runif(10)                      ! 10 iid uniform(0,1) deviates
 x0 = runif()                        ! single uniform deviate (same as runif(1))
 rn = rnorm(5)                       ! 5 iid standard-normal deviates
-rnorm(10^3)                         ! 1000 iid normals; large vectors are summarised
+rnorm(10^3)                         ! 1000 iid normals; large vectors are summarized
 
 ! ────────────────────────────────
 ! Descriptive statistics
