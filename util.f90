@@ -4,7 +4,7 @@ implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
-   is_alphanumeric
+   is_alphanumeric, zeros, ones
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -44,6 +44,7 @@ elemental logical function matched_brackets(s) result(is_valid)
 end function matched_brackets
 
 function arange(n) result(vec)
+! return an array of 1.0 through n inclusive
 integer, intent(in) :: n
 real(kind=dp) :: vec(n)
 integer :: i
@@ -53,6 +54,7 @@ end do
 end function arange
 
 function grid(n, x0, xh) result(vec)
+! return a grid of n values starting at x0 with increment of xh
 integer, intent(in) :: n
 real(kind=dp) :: vec(n)
 real(kind=dp), intent(in) :: x0, xh
@@ -65,9 +67,7 @@ end do
 end function grid
 
 pure function head(x, n) result(y)
-!=====================================================================
 !  First n (default 5) elements of a real(kind=dp) vector
-!---------------------------------------------------------------------
    real(kind=dp), intent(in)          :: x(:)
    integer,        intent(in), optional :: n
    real(kind=dp), allocatable         :: y(:)
@@ -84,9 +84,7 @@ pure function head(x, n) result(y)
 end function head
 
 pure function tail(x, n) result(y)
-!=====================================================================
 !  Last n (default 5) elements of a real(kind=dp) vector
-!---------------------------------------------------------------------
    real(kind=dp), intent(in)          :: x(:)
    integer,        intent(in), optional :: n
    real(kind=dp), allocatable         :: y(:)
@@ -96,9 +94,7 @@ pure function tail(x, n) result(y)
    else
       n_ = 5
    end if
-
    n_ = min(max(n_,0), size(x))
-
    first = size(x) - n_ + 1
    allocate(y(n_))
    if (n_ > 0) y = x(first:)
@@ -125,24 +121,19 @@ else
 end if
 end subroutine print_real
 
-
 function replace(string, old, new) result(string_new)
 ! replace – return a copy of string with every occurrence of old replaced by new
 character(len=*), intent(in) :: string, old, new
 character(len=:), allocatable :: string_new
 integer :: current, pos, len_old
-
 len_old = len_trim(old)
-
 ! nothing to replace – return the original string
 if (len_old == 0) then
    string_new = string
    return
 end if
-
-string_new = ''           ! start with an empty result
+string_new = ""           ! start with an empty result
 current    = 1
-
 do
    pos = index(string(current:), old)
    if (pos == 0) exit
@@ -154,12 +145,14 @@ string_new = string_new // string(current:)
 end function replace
 
 elemental function is_numeral(xchar) result(tf)
+! return .true. if xchar is a numeral '0', '1', ..., '9'
 character (len=1), intent(in) :: xchar
 logical                       :: tf
 tf = xchar >= '0' .and. xchar <= '9'
 end function is_numeral
 
 elemental function is_letter(xchar) result(tf)
+! return .true. if xchar is a lower or upper case letter
 character (len=1), intent(in) :: xchar
 logical                       :: tf
 tf = (xchar >= 'a' .and. xchar <= 'z') .or. &
@@ -167,9 +160,24 @@ tf = (xchar >= 'a' .and. xchar <= 'z') .or. &
 end function is_letter
 
 elemental function is_alphanumeric(xchar) result(tf)
+! return .true. if xchar is a numeral or letter
 character (len=1), intent(in) :: xchar
 logical                       :: tf
 tf = is_letter(xchar) .or. is_numeral(xchar)
 end function is_alphanumeric
+
+pure function zeros(n) result(v)
+! return a vector of n zeros
+integer, intent(in) :: n
+real(kind=dp), allocatable :: v(:)
+allocate (v(n), source=0.0_dp)
+end function zeros
+
+pure function ones(n) result(v)
+! return a vector of n ones
+integer, intent(in) :: n
+real(kind=dp), allocatable :: v(:)
+allocate (v(n), source=1.0_dp)
+end function ones
 
 end module util_mod
