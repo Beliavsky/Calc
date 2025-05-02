@@ -77,10 +77,11 @@ end function cov
 function cumsum(x) result(y)
 ! return the cumulative sum of x
 real(kind=dp), intent(in) :: x(:)
-real(kind=dp) :: y(size(x))
-integer :: i, n
+real(kind=dp), allocatable :: y(:)
+integer :: i, n, ierr
 n = size(x)
-if (n < 1) return
+allocate (y(n), stat=ierr)
+if (n < 1 .or. ierr /= 0) return
 y(1) = x(1)
 do i=2,n
    y(i) = y(i-1) + x(i)
