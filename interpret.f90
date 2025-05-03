@@ -1019,7 +1019,10 @@ impure elemental subroutine eval_print(line)
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,'(a)') line
-
+   if (line == "clear") then
+      call clear()
+      return
+   end if
    call split_by_semicolon(line, n, parts, suppress)
 
    do k = 1, n
@@ -1298,7 +1301,7 @@ contains
       allocate(tmp(size(parts)))
       tmp = parts                             ! old contents, padded
       call move_alloc(tmp, parts)             ! now PARTS has the new length
-      parts = [parts, '']                     ! add a new blank slot
+      parts = [character (len=len(parts)) :: parts, '']  ! add a new blank slot
       suppress = [suppress, .false.]
    end subroutine enlarge_parts
 end subroutine split_by_semicolon
