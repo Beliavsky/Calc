@@ -3,7 +3,7 @@ module plot_mod
   use util_mod, only: arange
   implicit none
   private
-  public :: plot, use_windows
+  public :: plot, use_windows, plot_to_label
 
   !── Named executables for each platform
   character(len=*), parameter :: gnuplot_cmd_win  = "wgnuplot"
@@ -166,5 +166,63 @@ contains
     end if
 
   end subroutine plot_2d
+
+pure function plot_to_label(s, print_x) result(label)
+  ! converts a string such as 'plot(x,sin(x))' or 'plot(sin(x))' to 'sin(x)'
+  character(len=*), intent(in)      :: s
+  logical         , intent(in), optional :: print_x
+  character(len=:), allocatable     :: label
+  character(len=:), allocatable     :: inner, first, second
+  integer                           :: i, i1, i2, commapos
+  logical                           :: print_x_
+  if (present(print_x)) then
+     print_x_ = print_x
+  else
+     print_x_ = .false.
+  end if
+  ! Look for “plot(”
+  i1 = index(s, "plot(")
+  if (i1 == 0) then
+    ! not a plot call → return trimmed input
+    label = trim(s)
+    return
+  end if
+
+  ! Find the last “)” in the string
+  i2 = 0
+  do i = len(s), 1, -1
+    if (s(i:i) == ')') then
+      i2 = i
+      exit
+    end if
+  end do
+  if (i2 <= i1 + 4) then
+    ! malformed → just return trimmed input
+    label = trim(s)
+    return
+  end if
+
+  ! Extract the text between the parentheses
+  inner = s(i1+5:i2-1)
+
+  ! Look for a comma separating two arguments
+  commapos = index(inner, ",")
+
+  if (commapos > 0) then
+    ! two arguments → second vs first
+    second = trim(adjustl(inner(commapos+1:)))
+    if (print_x_) then
+       first  = trim(inner(:commapos-1))
+       label  = second // " vs. " // first
+    else
+       label = second
+    end if
+  else
+    ! single argument → just that
+    label = trim(inner)
+  end if
+
+end function plot_to_label
+
 
 end module plot_mod
