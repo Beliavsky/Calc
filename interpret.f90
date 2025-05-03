@@ -12,8 +12,8 @@ module interpret_mod
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, write_code, &
-     code_transcript_file, clear, vars, mutable, slice_array
-
+     code_transcript_file, clear, vars, mutable, slice_array, &
+     split_by_semicolon, delete_vars
 
   integer, parameter :: max_vars = 100
   integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
@@ -28,7 +28,7 @@ module interpret_mod
   logical, save :: write_code = .true., eval_error = .false.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
-  logical, parameter :: stop_if_error = .false.
+  logical, parameter :: stop_if_error = .false., echo_code = .true.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
 contains
@@ -1005,79 +1005,77 @@ end function parse_factor
      eval_error = .true.
   end subroutine assign_element
 
-  impure elemental subroutine eval_print(str)
-    character(len=*), intent(in) :: str
-    real(kind=dp), allocatable :: r(:)
-    integer, allocatable :: rint(:)
-    integer :: i, rsize
-    if (write_code) write (tunit, "(a)") str
-    if (str == "clear") then
-       call clear()
-       return
-    else if (str == "print_compiler_version()") then
-       print "(a)", trim(compiler_version())
-       return
-    else if (str == "print_compiler_info()") then
-       print "(a)", trim(compiler_version())
-       print "(a)", trim(compiler_options())
-       return
-    else if (index(str, 'del ') == 1) then
-       call delete_vars(str(5:))
-       return
-    else if (str == "") then
-       return
-    else if (.not. matched_parentheses(str)) then
-       print*,"mismatched parentheses"
-       return
-    else if (.not. matched_brackets(str)) then
-       print*,"mismatched brackets"
-       return
-    else if (index(str, "**") /= 0) then
-       print*,"use ^ instead of ** for exponentiaton"
-       return
-    end if
-    if (str == "?vars") then
-      write(*, "(a)") "Defined variables:"
-      do i = 1, n_vars
-        if (size(vars(i)%val) == 1) then
-          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
-          print "(F0.6)", vars(i)%val(1)
-        else
-          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
-          write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
-          write(*,"(']')")
-        end if
-      end do
-      return
-    end if
-    r = evaluate(str)
-    if (eval_error) then
-       if (stop_if_error) stop "stopped with evaluation error"
-       return
-    end if
-    if (index(trim(str),"print_stats") == 1) return 
-    write(*,"(/,'> ',a)") trim(str)
-    rsize = size(r)
-    rint = nint(r)
-    if (rsize < 2) then
-      if (rsize == 0) then
-         print*
-      else if (all(abs(r - rint) <= tol)) then
-         print "(i0)", rint
-      else
-         call print_real(r(1))
+impure elemental subroutine eval_print(line)
+   character(len=*), intent(in) :: line
+   ! --------------------------------------------------------------
+   ! 1.  split the input at *top‑level* semicolons
+   ! --------------------------------------------------------------
+   integer                       :: n, k, rsize
+   character(len=:), allocatable :: parts(:)
+   logical       , allocatable   :: suppress(:)
+   real(dp)      , allocatable   :: r(:)
+   integer       , allocatable   :: rint(:)
+
+   ! write to transcript just once, for the whole input line
+   if (write_code) write(tunit,'(a)') line
+
+   call split_by_semicolon(line, n, parts, suppress)
+
+   do k = 1, n
+      if (trim(parts(k)) == '') cycle          ! blank segment
+
+      ! ---------- syntax checks exactly as before ----------
+      if (.not. matched_parentheses(parts(k))) then
+         print*, "mismatched parentheses" ; cycle
       end if
-    else if (rsize <= max_print) then
-      if (all(abs(r - rint) <= tol)) then
-         write(*,'("[",*(i0,:," "),"]")', advance="no") rint
-      else
-         write(*,'("[",*(F0.6,:," "),"]")', advance="no") r
+      if (.not. matched_brackets(parts(k))) then
+         print*, "mismatched brackets"    ; cycle
       end if
-      print "(']')"
-    else
-      call print_stats(r)
-    end if
-  end subroutine eval_print
+      if (index(parts(k),'**') /= 0) then
+         print*, "use ^ instead of ** for exponentiation" ; cycle
+      end if
+
+      ! ------------------------------------------------------
+      r = evaluate(parts(k))
+      if (eval_error) then
+         if (stop_if_error) stop "stopped with evaluation error"
+         cycle
+      end if
+      if (index(trim(parts(k)),'print_stats') == 1) cycle
+
+      ! ---------- echo only when the segment is *not* suppressed ----------
+      if (.not. suppress(k)) then
+         if (echo_code) write(*,'(/,"> ",a)') trim(parts(k))
+         rsize = size(r)
+         if (rsize == 0) then
+            print*
+         else
+            rint = nint(r)
+            select case (rsize)
+            case (1)
+               if (abs(r(1)-rint(1)) <= tol) then
+                  print "(i0)", rint
+               else
+                  call print_real(r(1))
+               end if
+            case default
+                if (rsize <= max_print) then
+                   if (all(abs(r-rint) <= tol)) then
+                      ! integers ---------------------------------------------------
+                      write(*,'("[",*(i0,:,", "))', advance="no") rint   ! open ‘[’ but no LF
+                   else
+                      ! reals -------------------------------------------------------
+                      write(*,'("[",*(F0.6,:,", "))', advance="no") r    ! ditto
+                   end if
+                   print "(']')"            ! print the closing bracket and terminate the line
+                else
+                   call print_stats(r)
+                end if
+            end select
+         end if
+      end if
+   end do
+end subroutine eval_print
 
   subroutine delete_vars(list_str)
   ! Remove all variables named in the comma-separated list_str
@@ -1226,5 +1224,82 @@ end function parse_factor
      allocate(res(n))
      res = merge(t, f, lmask)   ! use intrinsic MERGE now that shapes match
   end function merge_array
+
+subroutine split_by_semicolon(line, n, parts, suppress)
+!  Break LINE into statements separated by *top‑level* semicolons.
+!  parts(i)   = i‑th statement (trimmed)
+!  suppress(i)= .true. if that statement ended with a ';'
+   character(len=*), intent(in)  :: line
+   integer           , intent(out) :: n
+   character(len=:),  allocatable  :: parts(:)
+   logical           , allocatable  :: suppress(:)
+
+   character(len=:), allocatable :: buf
+   integer :: i, depth_par, depth_br
+
+   buf        = ''
+   depth_par  = 0      ! '(' … ')'
+   depth_br   = 0      ! '[' … ']'
+   n          = 0
+
+   do i = 1, len_trim(line)
+      select case (line(i:i))
+      case ('('); depth_par = depth_par + 1
+      case (')'); depth_par = depth_par - 1
+      case ('['); depth_br  = depth_br  + 1
+      case (']'); depth_br  = depth_br  - 1
+      case (';')
+         if (depth_par==0 .and. depth_br==0) then
+            call append_statement(buf, .true.)
+            buf = ''
+            cycle
+         end if
+      end select
+      buf = buf // line(i:i)
+   end do
+
+   ! last (or only) statement
+   if (len_trim(buf) > 0) then
+      call append_statement(buf, .false.)
+   else if (len_trim(line) > 0 .and. line(len_trim(line):len_trim(line)) == ';') then
+      call append_statement('', .true.)
+   end if
+
+contains
+   subroutine append_statement(txt, semi)
+      character(len=*), intent(in) :: txt
+      logical        , intent(in) :: semi
+      integer :: newlen
+
+      newlen = max( len_trim(txt), merge(0, len(parts(1)), allocated(parts)) )
+
+      ! ---- grow / (re)allocate PARTS ------------------------------------
+      if (.not. allocated(parts)) then
+         allocate(character(len=newlen) :: parts(1))
+         allocate(suppress(1))
+      else if (len(parts(1)) < newlen) then
+         call enlarge_parts(newlen)
+      else
+         parts   = [character (len=len(parts)) :: parts, '']                     ! extend by one element
+         suppress = [suppress, .false.]
+      end if
+
+      ! ---- store the new statement --------------------------------------
+      n              = n + 1
+      parts(n)       = adjustl(trim(txt))
+      suppress(n)    = semi
+   end subroutine append_statement
+
+   subroutine enlarge_parts(newlen)
+      integer, intent(in) :: newlen
+      character(len=newlen), allocatable :: tmp(:)
+
+      allocate(tmp(size(parts)))
+      tmp = parts                             ! old contents, padded
+      call move_alloc(tmp, parts)             ! now PARTS has the new length
+      parts = [parts, '']                     ! add a new blank slot
+      suppress = [suppress, .false.]
+   end subroutine enlarge_parts
+end subroutine split_by_semicolon
 
 end module interpret_mod
