@@ -31,6 +31,7 @@ module interpret_mod
   logical, parameter :: stop_if_error = .false., echo_code = .true.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
+  character (len=:), allocatable :: line_cp
 contains
 
 subroutine slice_array(name, idxs, result)
@@ -721,7 +722,7 @@ recursive function parse_factor() result(f)
                   eval_error = .true.
                   f = [bad_value]
                else
-                  call plot(arg1, arg2)         ! <-- actual drawing
+                  call plot(arg1, arg2, title=line_cp)         ! <-- actual drawing
                   allocate(f(0))                ! return “nothing”
                end if
 
@@ -1008,14 +1009,14 @@ end function parse_factor
 impure elemental subroutine eval_print(line)
    character(len=*), intent(in) :: line
    ! --------------------------------------------------------------
-   ! 1.  split the input at *top‑level* semicolons
+   ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
    integer                       :: n, k, rsize
    character(len=:), allocatable :: parts(:)
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:)
    integer       , allocatable   :: rint(:)
-
+   line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,'(a)') line
 
