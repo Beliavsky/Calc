@@ -1024,20 +1024,22 @@ impure elemental recursive subroutine eval_print(line)
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
 
-  if (len_trim(line) >= 2 .and. line(1:1) == '*') then
-    ! find first space after the count
-    p = index(line(2:), ' ')
-    if (p > 0) then
-      ! parse the count expression between column 2 and p
-      tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
-      if (.not. eval_error .and. size(tmp)==1) then
-        repeat_count = int(tmp(1))
-        rest = line(p+1:)           ! the code to repeat
-        do i = 1, repeat_count
-          call eval_print(rest)         ! recursive call; will split again
-        end do
-        return                         ! done with this line
-      end if
+   if (len_trim(line) >= 2) then
+     if (line(1:1) == '*') then
+     ! find first space after the count
+     p = index(line(2:), ' ')
+       if (p > 0) then
+       ! parse the count expression between column 2 and p
+         tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
+         if (.not. eval_error .and. size(tmp)==1) then
+           repeat_count = int(tmp(1))
+           rest = line(p+1:)           ! the code to repeat
+           do i = 1, repeat_count
+             call eval_print(rest)         ! recursive call; will split again
+           end do
+           return                         ! done with this line
+         end if
+       end if
     end if
   end if
 ! ——————————————————— new “del” command —————————————————————
