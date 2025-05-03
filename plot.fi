@@ -1,0 +1,2 @@
+x = arange(1000)/100;
+plot(x,bessel_j0(x))
