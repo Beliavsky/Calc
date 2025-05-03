@@ -1,5 +1,5 @@
 # Calc
-Interpreter in Fortran that can handle scalars and 1D arrays. Some code the interpreter accepts is
+Interpreter in Fortran that can handle scalars and 1D arrays, with plotting using gnuplot. Some code the interpreter accepts is
 
 ```
 ! ────────────────────────────────
