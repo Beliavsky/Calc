@@ -7,13 +7,13 @@ program xinterpret
   integer :: i, iostat_err, varu, ipos_comment
   character (len=1000) :: line
   logical, parameter :: write_vars_at_end = .false., &
-                        time_code=.true., run_sample_code=.false.
+                        time_code=.false., run_sample_code=.true.
   character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
   real(kind=dp) :: t1, t2
   write_code = .true.
   if (write_code) open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
   if (run_sample_code) then
-     call eval_print("n = 10")
+     call eval_print("n = 20")
      call eval_print("y = [1, 2, 3]")
      call eval_print("z = n * y")
      call eval_print("w = [10 20 30] + y")
@@ -27,6 +27,7 @@ program xinterpret
      call eval_print("v(3:9:2)")
      call eval_print("rnorm(5)")
      call eval_print("rnorm(10^3)")
+     call eval_print("?vars")
   end if
   do
      write (*,"('> ')", advance="no")
