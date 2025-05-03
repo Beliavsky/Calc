@@ -1,5 +1,6 @@
 module plot_mod
   use kind_mod, only: dp
+  use util_mod, only: arange
   implicit none
   private
   public :: plot, use_windows
@@ -12,14 +13,22 @@ module plot_mod
   logical :: use_windows = .true.
 
   interface plot
-    module procedure plot_1d, plot_2d
+    module procedure plot_1d, plot_2d, plot_y
   end interface
 
 contains
 
+  subroutine plot_y(y, title, xlabel, ylabel, style, data_file, script_file)
+    ! Plot a single series y(:) versus x(:)
+    real(kind=dp), intent(in)                ::  y(:)
+    character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
+    character(len=*), intent(in), optional   :: data_file, script_file
+    call plot_1d(arange(size(y)), y, title, xlabel, ylabel, style, data_file, &
+                 script_file)
+  end subroutine plot_y
+
   subroutine plot_1d(x, y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot a single series y(:) versus x(:)
-    implicit none
     real(kind=dp), intent(in)               :: x(:), y(:)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
     character(len=*), intent(in), optional   :: data_file, script_file
@@ -87,7 +96,6 @@ contains
 
   subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot multiple series (columns of y(:,j)) versus x(:)
-    implicit none
     real(kind=dp), intent(in)               :: x(:), y(:, :)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
     character(len=*), intent(in), optional   :: data_file, script_file
