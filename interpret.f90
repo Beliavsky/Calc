@@ -8,7 +8,7 @@ module interpret_mod
   use random_mod, only: random_normal, runif
   use qsort_mod, only: sorted, indexx, rank, median
   use iso_fortran_env, only: compiler_options, compiler_version
-  use plot_mod, only: plot
+  use plot_mod, only: plot, plot_to_label
   implicit none
   private
   public :: evaluate, eval_print, set_variable, tunit, write_code, &
@@ -19,7 +19,7 @@ module interpret_mod
   integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
 
   type :: var_t
-    character(len=32) :: name = ''
+    character(len=32) :: name = ""
     real(kind=dp), allocatable :: val(:)
   end type var_t
 
@@ -32,6 +32,7 @@ module interpret_mod
   logical, parameter :: stop_if_error = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
+  logical, save :: print_array_as_int_if_possible = .false.
   character (len=:), allocatable :: line_cp
 contains
 
@@ -715,14 +716,14 @@ recursive function parse_factor() result(f)
 
             case ("plot")
                if (.not. have_second) then
-                  call plot(arg1, title=line_cp)
+                  call plot(arg1, title=plot_to_label(line_cp))
                   allocate (f(0))
                else if (size(arg1) /= size(arg2)) then
                   print*, "Error: plot() arguments must have same size"
                   eval_error = .true.
                   f = [bad_value]
                else
-                  call plot(arg1, arg2, title=line_cp)         ! <-- actual drawing
+                  call plot(arg1, arg2, title=plot_to_label(line_cp))         ! <-- actual drawing
                   allocate(f(0))                ! return “nothing”
                end if
 
@@ -1017,6 +1018,8 @@ impure elemental recursive subroutine eval_print(line)
    real(dp)      , allocatable   :: r(:), tmp(:)
    integer       , allocatable   :: rint(:)
    integer                       :: p, repeat_count
+   logical :: print_array_as_int
+   character (len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
@@ -1039,7 +1042,7 @@ impure elemental recursive subroutine eval_print(line)
   end if
 ! ——————————————————— new “del” command —————————————————————
 trimmed_line = adjustl(line)
-if (len_trim(trimmed_line) >= 3 .and. trimmed_line(1:3) == "del") then
+if (trimmed_line == "del") then
 
   ! everything after “del”
   p = index(trimmed_line, ' ')
@@ -1137,11 +1140,14 @@ end if
                end if
             case default
                 if (rsize <= max_print) then
-                   if (all(abs(r-rint) <= tol)) then
-                      ! integers ---------------------------------------------------
-                      write(*,'("[",*(i0,:,", "))', advance="no") rint   ! open ‘[’ but no LF
+                   if (print_array_as_int_if_possible) then
+                      print_array_as_int = all(abs(r-rint) <= tol)
                    else
-                      ! reals -------------------------------------------------------
+                      print_array_as_int = .false.
+                   end if
+                   if (print_array_as_int) then
+                      write(*,fmt_real_array, advance="no") rint   ! open ‘[’ but no LF
+                   else
                       write(*,'("[",*(F0.6,:,", "))', advance="no") r    ! ditto
                    end if
                    print "(']')"            ! print the closing bracket and terminate the line
@@ -1192,7 +1198,7 @@ subroutine delete_vars(list_str)
         do j_var = i_var, n_vars-1
           vars(j_var) = vars(j_var+1)
         end do
-        vars(n_vars)%name = ''
+        vars(n_vars)%name = ""
         if (allocated(vars(n_vars)%val)) deallocate(vars(n_vars)%val)
         n_vars = n_vars - 1
         found = .true.
@@ -1311,7 +1317,7 @@ end subroutine delete_vars
 
 subroutine split_by_semicolon(line, n, parts, suppress)
 !  Break LINE into statements separated by *top‑level* semicolons.
-!  parts(i)   = i‑th statement (trimmed)
+!  parts(i)   = i-th statement (trimmed)
 !  suppress(i)= .true. if that statement ended with a ';'
    character(len=*), intent(in)  :: line
    integer           , intent(out) :: n
@@ -1319,9 +1325,9 @@ subroutine split_by_semicolon(line, n, parts, suppress)
    logical           , allocatable  :: suppress(:)
 
    character(len=:), allocatable :: buf
-   integer :: i, depth_par, depth_br
+   integer :: i, depth_par, depth_br, ntrim
 
-   buf        = ''
+   buf        = ""
    depth_par  = 0      ! '(' … ')'
    depth_br   = 0      ! '[' … ']'
    n          = 0
@@ -1335,7 +1341,7 @@ subroutine split_by_semicolon(line, n, parts, suppress)
       case (';')
          if (depth_par==0 .and. depth_br==0) then
             call append_statement(buf, .true.)
-            buf = ''
+            buf = ""
             cycle
          end if
       end select
@@ -1345,8 +1351,11 @@ subroutine split_by_semicolon(line, n, parts, suppress)
    ! last (or only) statement
    if (len_trim(buf) > 0) then
       call append_statement(buf, .false.)
-   else if (len_trim(line) > 0 .and. line(len_trim(line):len_trim(line)) == ';') then
-      call append_statement('', .true.)
+   else
+      ntrim = len_trim(line)
+      if (ntrim > 0) then
+         if (line(ntrim:ntrim) == ";") call append_statement("", .true.)
+      end if
    end if
 
 contains
@@ -1364,7 +1373,7 @@ contains
       else if (len(parts(1)) < newlen) then
          call enlarge_parts(newlen)
       else
-         parts   = [character (len=len(parts)) :: parts, '']                     ! extend by one element
+         parts   = [character (len=len(parts)) :: parts, ""]                     ! extend by one element
          suppress = [suppress, .false.]
       end if
 
@@ -1381,7 +1390,7 @@ contains
       allocate(tmp(size(parts)))
       tmp = parts                             ! old contents, padded
       call move_alloc(tmp, parts)             ! now PARTS has the new length
-      parts = [character (len=len(parts)) :: parts, '']  ! add a new blank slot
+      parts = [character (len=len(parts)) :: parts, ""]  ! add a new blank slot
       suppress = [suppress, .false.]
    end subroutine enlarge_parts
 end subroutine split_by_semicolon
