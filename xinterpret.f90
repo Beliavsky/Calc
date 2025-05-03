@@ -8,7 +8,7 @@ program xinterpret
   integer :: i, iostat_err, varu, ipos_comment
   character (len=1000) :: line
   logical, parameter :: write_vars_at_end = .false., &
-                        time_code=.false., run_sample_code=.true.
+                        time_code=.false., run_sample_code=.false.
   character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
   real(kind=dp) :: t1, t2
   use_windows = windows()
