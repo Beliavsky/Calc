@@ -1016,17 +1016,32 @@ impure elemental subroutine eval_print(line)
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:)
    integer       , allocatable   :: rint(:)
+   integer                       :: i
    line_cp = line
    ! write to transcript just once, for the whole input line
-   if (write_code) write(tunit,'(a)') line
-   if (line == "clear") then
+   if (write_code) write(tunit,"(a)") line
+   if (adjustl(line) == "clear") then
       call clear()
       return
    end if
+    if (adjustl(line) == "?vars") then
+      write(*,*) "Defined variables:"
+      do i = 1, n_vars
+        if (size(vars(i)%val) == 1) then
+          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
+          print "(F0.6)", vars(i)%val(1)
+        else
+          write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
+          write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
+          write(*,"(']')")
+        end if
+      end do
+      return
+    end if
    call split_by_semicolon(line, n, parts, suppress)
 
    do k = 1, n
-      if (trim(parts(k)) == '') cycle          ! blank segment
+      if (parts(k) == "") cycle          ! blank segment
 
       ! ---------- syntax checks exactly as before ----------
       if (.not. matched_parentheses(parts(k))) then
