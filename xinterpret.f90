@@ -1,6 +1,6 @@
 program xinterpret
   use interpret_mod, only: eval_print, tunit, code_transcript_file, &
-                           vars, write_code
+                           vars, write_code, echo_code
   use util_mod, only: replace
   use kind_mod, only: dp
   implicit none
@@ -29,6 +29,7 @@ program xinterpret
      call eval_print("rnorm(10^3)")
      call eval_print("?vars")
   end if
+  echo_code = .false.
   do
      write (*,"('> ')", advance="no")
      read (*,"(a)", iostat=iostat_err) line
