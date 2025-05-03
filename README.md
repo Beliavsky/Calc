@@ -79,8 +79,8 @@ y >= 4                              ! “greater-or-equal” test
 ! ────────────────────────────────
 ! Two-vector functions
 ! ────────────────────────────────
-cor(x, sort(x))                   ! Pearson correlation of two equal-length vectors
-cov(x, sort(x))                   ! covariance
+cor(x, sort(x))                     ! Pearson correlation of two equal-length vectors
+cov(x, sort(x))                     ! covariance
 dot(y, v(1:size(y)))                ! dot product of two length-5 vectors
 min(y, v(1:size(y)))                ! element-wise minima between two vectors
 max(x, 0.5)                         ! element-wise maximum with a scalar
