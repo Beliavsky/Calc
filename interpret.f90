@@ -712,11 +712,10 @@ recursive function parse_factor() result(f)
          end if
       end if
 
-            case ("plot")                       ! 2-argument statement
+            case ("plot")
                if (.not. have_second) then
-                  print*, "Error: plot() needs two arguments"
-                  eval_error = .true.
-                  f = [bad_value]
+                  call plot(arg1, title=line_cp)
+                  allocate (f(0))
                else if (size(arg1) /= size(arg2)) then
                   print*, "Error: plot() arguments must have same size"
                   eval_error = .true.
