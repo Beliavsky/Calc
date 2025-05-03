@@ -124,3 +124,23 @@ A sample session is
 
 > q
 ```
+
+The semicolon `;` is the continuation character, as in Fortran. It suppresses output when it appears at the end of the line, as in Matlab. Iteration is done by starting a line with `*n`, which means execute the rest of the line n times. Thus the code
+
+```
+a = 3
+x = 1
+*5  x = (x + a/x)/2 ! Newton's method for square root
+```
+will perform 5 Newton iterations to compute the square root of 3, giving
+
+```
+> 2
+1.750000
+1.732143
+1.732051
+1.732051
+```
+
+
+
