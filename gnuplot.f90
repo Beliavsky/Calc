@@ -19,7 +19,6 @@ contains
 
   subroutine plot_1d(x, y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot a single series y(:) versus x(:)
-    use kind_mod, only: dp
     implicit none
     real(kind=dp), intent(in)               :: x(:), y(:)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
@@ -70,7 +69,7 @@ contains
         write(unit_script,"(A)") "set ylabel '"//trim(ylabel)//"'"
       end if
       write(unit_script,"(A)") "set grid"
-      write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st)
+      write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " notitle"
       write(unit_script,"(A)") "pause -1"
     close(unit_script)
 
@@ -88,7 +87,6 @@ contains
 
   subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot multiple series (columns of y(:,j)) versus x(:)
-    use kind_mod, only: dp
     implicit none
     real(kind=dp), intent(in)               :: x(:), y(:, :)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
