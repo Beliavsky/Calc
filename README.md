@@ -141,6 +141,12 @@ will perform 5 Newton iterations to compute the square root of 3, giving
 1.732051
 1.732051
 ```
+Plotting with gnuplot is possible with code such as
 
+```
+x = arange(1000)/100;
+plot(x,bessel_j0(x))
+```
 
+![Alt text](bessel_j0.png)
 
