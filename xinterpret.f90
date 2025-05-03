@@ -1,15 +1,17 @@
 program xinterpret
   use interpret_mod, only: eval_print, tunit, code_transcript_file, &
                            vars, write_code, echo_code
-  use util_mod, only: replace
+  use util_mod, only: replace, windows
   use kind_mod, only: dp
+  use plot_mod, only: use_windows
   implicit none
   integer :: i, iostat_err, varu, ipos_comment
   character (len=1000) :: line
   logical, parameter :: write_vars_at_end = .false., &
-                        time_code=.false., run_sample_code=.true.
+                        time_code=.false., run_sample_code=.false.
   character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
   real(kind=dp) :: t1, t2
+  use_windows = windows()
   write_code = .true.
   if (write_code) open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
   if (run_sample_code) then
