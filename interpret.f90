@@ -1006,24 +1006,42 @@ end function parse_factor
      eval_error = .true.
   end subroutine assign_element
 
-impure elemental subroutine eval_print(line)
+impure elemental recursive subroutine eval_print(line)
    character(len=*), intent(in) :: line
    ! --------------------------------------------------------------
    ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
    integer                       :: n, k, rsize, i, nsize
-   character(len=:), allocatable :: parts(:)
+   character(len=:), allocatable :: parts(:), rest
    logical       , allocatable   :: suppress(:)
-   real(dp)      , allocatable   :: r(:)
+   real(dp)      , allocatable   :: r(:), tmp(:)
    integer       , allocatable   :: rint(:)
+   integer                       :: p, repeat_count
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
+
+  if (len_trim(line) >= 2 .and. line(1:1) == '*') then
+    ! find first space after the count
+    p = index(line(2:), ' ')
+    if (p > 0) then
+      ! parse the count expression between column 2 and p
+      tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
+      if (.not. eval_error .and. size(tmp)==1) then
+        repeat_count = int(tmp(1))
+        rest = line(p+1:)           ! the code to repeat
+        do i = 1, repeat_count
+          call eval_print(rest)         ! recursive call; will split again
+        end do
+        return                         ! done with this line
+      end if
+    end if
+  end if
    if (adjustl(line) == "clear") then
       call clear()
       return
    end if
-    if (adjustl(line) == "?vars") then
+   if (adjustl(line) == "?vars") then
       write(*,*) "Defined variables:"
       do i = 1, n_vars
         nsize = size(vars(i)%val)
@@ -1039,7 +1057,7 @@ impure elemental subroutine eval_print(line)
         end if
       end do
       return
-    end if
+   end if
    call split_by_semicolon(line, n, parts, suppress)
 
    do k = 1, n
