@@ -4,7 +4,7 @@ module interpret_mod
                        print_stats, skew, kurtosis
   use util_mod , only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
-                       is_numeral, is_letter, zeros, ones
+                       is_numeral, is_letter, zeros, ones, replace
   use random_mod, only: random_normal, runif
   use qsort_mod, only: sorted, indexx, rank, median
   use iso_fortran_env, only: compiler_options, compiler_version
@@ -1012,7 +1012,7 @@ impure elemental recursive subroutine eval_print(line)
    ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
    integer                       :: n, k, rsize, i, nsize
-   character(len=:), allocatable :: parts(:), rest
+   character(len=:), allocatable :: parts(:), rest, trimmed_line, tail
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:), tmp(:)
    integer       , allocatable   :: rint(:)
@@ -1037,6 +1037,44 @@ impure elemental recursive subroutine eval_print(line)
       end if
     end if
   end if
+! ——————————————————— new “del” command —————————————————————
+trimmed_line = adjustl(line)
+if (len_trim(trimmed_line) >= 3 .and. trimmed_line(1:3) == "del") then
+
+  ! everything after “del”
+  p = index(trimmed_line, ' ')
+  if (p > 0) then
+    tail = adjustl(trimmed_line(p+1:))
+
+    ! turn *any* spaces into commas...
+    tail = replace(tail, ' ', ',')
+    ! ...and collapse any duplicate commas
+    do while (index(tail, ',,') > 0)
+      i = index(tail, ',,')
+      tail = tail(1:i-1)//','//tail(i+2:)
+    end do
+
+    ! strip any leading or trailing commas
+    do while (len_trim(tail)>0 .and. tail(1:1)==',')
+      tail = tail(2:)
+    end do
+    do while (len_trim(tail)>0 .and. tail(len_trim(tail):len_trim(tail))==',')
+      tail = tail(:len_trim(tail)-1)
+    end do
+
+    if (len_trim(tail) > 0) then
+      call delete_vars(tail)
+    else
+      print*, "Error: no variables specified in 'del'"
+    end if
+  else
+    print*, "Error: no variables specified in 'del'"
+  end if
+
+  return
+end if
+! ————————————————————————— end “del” —————————————————————
+
    if (adjustl(line) == "clear") then
       call clear()
       return
