@@ -1154,48 +1154,55 @@ end if
    end do
 end subroutine eval_print
 
-  subroutine delete_vars(list_str)
-  ! Remove all variables named in the comma-separated list_str
-  ! from storage, warning on missing names
-    character(len=*), intent(in) :: list_str
-    character(len=32) :: nm
-    integer :: start, pos, len_list, i_var, j_var
-    logical :: found
+subroutine delete_vars(list_str)
+  ! Remove all variables named in list_str, where names may be
+  ! separated by commas and/or spaces.  Warn on any name not defined.
+  character(len=*), intent(in) :: list_str
+  character(len=32) :: nm
+  integer :: start, pos, len_list, i_var, j_var
+  logical :: found
 
-    start = 1
-    len_list = len_trim(list_str)
-    do while (start <= len_list)
-      ! find next comma
-      pos = index(list_str(start:), ',')
-      if (pos > 0) then
-        nm = adjustl(trim(list_str(start:start+pos-2)))
-        start = start + pos
-      else
-        nm = adjustl(trim(list_str(start:len_list)))
-        start = len_list + 1
-      end if
+  start    = 1
+  len_list = len_trim(list_str)
 
-      ! try to find and delete nm
-      found = .false.
-      do i_var = 1, n_vars
-        if (vars(i_var)%name == nm) then
-          ! deallocate storage
-          if (allocated(vars(i_var)%val)) deallocate(vars(i_var)%val)
-          ! shift the rest down
-          do j_var = i_var, n_vars-1
-            vars(j_var) = vars(j_var+1)
-          end do
-          vars(n_vars)%name = ''
-          if (allocated(vars(n_vars)%val)) deallocate(vars(n_vars)%val)
-          n_vars = n_vars - 1
-          found = .true.
-          exit
-        end if
-      end do
-
-      if (.not. found) print*, "Warning: variable '", trim(nm), "' not defined"
+  do while (start <= len_list)
+    ! skip any leading commas or spaces
+    do while (start <= len_list .and. &
+             (list_str(start:start)==',' .or. list_str(start:start)==' '))
+      start = start + 1
     end do
-  end subroutine delete_vars
+    if (start > len_list) exit
+
+    ! find end of this token (up to next comma or space)
+    pos = start
+    do while (pos <= len_list)
+      if (list_str(pos:pos)==',' .or. list_str(pos:pos)==' ') exit
+      pos = pos + 1
+    end do
+
+    ! extract the variable name
+    nm = adjustl( trim( list_str(start:pos-1) ) )
+    start = pos + 1
+
+    ! try to delete it
+    found = .false.
+    do i_var = 1, n_vars
+      if (vars(i_var)%name == nm) then
+        if (allocated(vars(i_var)%val)) deallocate(vars(i_var)%val)
+        do j_var = i_var, n_vars-1
+          vars(j_var) = vars(j_var+1)
+        end do
+        vars(n_vars)%name = ''
+        if (allocated(vars(n_vars)%val)) deallocate(vars(n_vars)%val)
+        n_vars = n_vars - 1
+        found = .true.
+        exit
+      end if
+    end do
+
+    if (.not. found) print "(a)", "Warning: variable '" // trim(nm) // "' not defined"
+  end do
+end subroutine delete_vars
 
     function rel_compare(op, a, b) result(res)
     ! Element-wise comparison returning 1.0 or 0.0
