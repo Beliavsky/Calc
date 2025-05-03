@@ -13,7 +13,7 @@ module interpret_mod
   private
   public :: evaluate, eval_print, set_variable, tunit, write_code, &
      code_transcript_file, clear, vars, mutable, slice_array, &
-     split_by_semicolon, delete_vars
+     split_by_semicolon, delete_vars, echo_code
 
   integer, parameter :: max_vars = 100
   integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
@@ -25,10 +25,11 @@ module interpret_mod
 
   type(var_t) :: vars(max_vars)
   integer :: n_vars = 0, tunit
-  logical, save :: write_code = .true., eval_error = .false.
+  logical, save :: write_code = .true., eval_error = .false., &
+     echo_code = .true.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
-  logical, parameter :: stop_if_error = .false., echo_code = .true.
+  logical, parameter :: stop_if_error = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
   character (len=:), allocatable :: line_cp
