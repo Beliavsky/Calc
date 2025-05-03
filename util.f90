@@ -4,7 +4,7 @@ implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
-   is_alphanumeric, zeros, ones
+   is_alphanumeric, zeros, ones, windows
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -179,5 +179,12 @@ integer, intent(in) :: n
 real(kind=dp), allocatable :: v(:)
 allocate (v(n), source=1.0_dp)
 end function ones
+
+function windows() result(tf)
+logical :: tf
+character (len=1000) :: pathstring
+call get_environment_variable("PATH", pathstring)
+tf = pathstring(1:1) /= "/"
+end function windows
 
 end module util_mod
