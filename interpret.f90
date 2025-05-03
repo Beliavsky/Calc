@@ -1011,12 +1011,11 @@ impure elemental subroutine eval_print(line)
    ! --------------------------------------------------------------
    ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
-   integer                       :: n, k, rsize
+   integer                       :: n, k, rsize, i, nsize
    character(len=:), allocatable :: parts(:)
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:)
    integer       , allocatable   :: rint(:)
-   integer                       :: i
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
@@ -1027,13 +1026,16 @@ impure elemental subroutine eval_print(line)
     if (adjustl(line) == "?vars") then
       write(*,*) "Defined variables:"
       do i = 1, n_vars
-        if (size(vars(i)%val) == 1) then
+        nsize = size(vars(i)%val)
+        if (nsize == 1) then
           write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
           print "(F0.6)", vars(i)%val(1)
-        else
+        else if (nsize <= max_print) then 
           write(*,"(a)", advance="no") trim(vars(i)%name) // ": "
           write(*,'("[",*(F0.6,:,", "))', advance="no") vars(i)%val
           write(*,"(']')")
+        else
+          write(*,"(a,': array(',i0,')')") trim(vars(i)%name), nsize
         end if
       end do
       return
