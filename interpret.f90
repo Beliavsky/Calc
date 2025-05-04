@@ -579,8 +579,8 @@ recursive function parse_factor() result(f)
                   print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
                                            size(arg1), size(arg2), " must be equal"
                   eval_error = .true.;  f = [bad_value]
-               else if (id == "cor" .or. id == "cov" .and. size(arg1) < 2) then
-                  print*, "Error: function array arguments must have sizes > 1"
+               else if ((id == "cor" .or. id == "cov") .and. size(arg1) < 2) then
+                  print*, "Error: function array arguments must have sizes > 1, sizes are ", size(arg1), size(arg2)
                   eval_error = .true.;  f = [bad_value]
                else if (id == "dot") then
                   f = [dot_product(arg1, arg2)]
@@ -1121,14 +1121,16 @@ if (index(adj_line,"do") == 1) then
 
    loop_depth = loop_depth + 1
    loop_var  (loop_depth) = lhs
-   read(rhs(1:p_com1-1),*) loop_start(loop_depth)
-   if (p_com2==0) then
-      read(rhs(p_com1+1:),*) loop_end(loop_depth)
-      loop_step(loop_depth) = 1
-   else
-      read(rhs(p_com1+1:p_com2-1),*) loop_end(loop_depth)
-      read(rhs(p_com2+1:),       *) loop_step(loop_depth)
-   end if
+
+loop_start(loop_depth) = parse_int_scalar(rhs(1:p_com1-1))          ! 1st field
+
+if (p_com2 == 0) then                                               ! 2nd field form
+   loop_end (loop_depth) = parse_int_scalar(rhs(p_com1+1:))
+   loop_step(loop_depth) = 1
+else                                                                ! 3nd field form
+   loop_end (loop_depth) = parse_int_scalar(rhs(p_com1+1:p_com2-1))
+   loop_step(loop_depth) = parse_int_scalar(rhs(p_com2+1:))
+end if
 
    loop_body(loop_depth) = ""   ! empty buffer, start collecting
    return                       ! finished with the DO line
@@ -1525,5 +1527,18 @@ subroutine run_loop_body(body)
    end do
    in_loop_execute = .false.         ! <<< back to normal typing mode
 end subroutine run_loop_body
+
+integer function parse_int_scalar(txt) result(iv)
+   character(len=*), intent(in) :: txt
+   real(dp), allocatable        :: tmp(:)
+
+   tmp = evaluate(txt)
+   if (eval_error .or. size(tmp) /= 1) then
+      print *, "Error: bad scalar expression in DO header: '", trim(txt), "'"
+      iv = 0        ! any value – the loop will not run anyway
+      return
+   end if
+   iv = nint(tmp(1))
+end function parse_int_scalar
 
 end module interpret_mod
