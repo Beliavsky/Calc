@@ -3,6 +3,11 @@ Interpreter in Fortran that can handle scalars and 1D arrays, with plotting usin
 
 ```
 ! ────────────────────────────────
+! General
+! ────────────────────────────────
+run("code.txt")                     ! run the code in file code.txt
+ 
+! ────────────────────────────────
 ! Basic scalars & arithmetic
 ! ────────────────────────────────
 n = 10                              ! define an integer/real scalar variable
