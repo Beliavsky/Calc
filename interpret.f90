@@ -1059,7 +1059,7 @@ contains
          print "(a)", trim(compiler_options())
          return
       end if
-!   trimmed = adjustl(line)
+
       if (adjustl(line) == "exit") then
          exit_loop = .true.
          return
