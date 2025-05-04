@@ -13,7 +13,7 @@ module interpret_mod
    private
    public :: evaluate, eval_print, set_variable, tunit, write_code, &
              code_transcript_file, clear, vars, mutable, slice_array, &
-             split_by_semicolon, delete_vars, echo_code
+             split_by_semicolon, delete_vars, echo_code, run
 
    integer, parameter :: max_vars = 100, len_name = 32
    integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
@@ -29,6 +29,7 @@ module interpret_mod
                     echo_code = .true.
    character(len=1) :: curr_char
    character(len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
+   character(len=*), parameter :: comment_char = "!"
    logical, parameter :: stop_if_error = .false., debug_eval = .false.
    real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
@@ -1092,6 +1093,23 @@ contains
 
       adj_line = adjustl(line)
 
+      ! ─── run("file") : execute the contents of a text file ───
+      if (index(adj_line,'run(') == 1) then
+         block
+         integer :: p1, p2
+         character(len=:), allocatable :: fn
+         p1 = index(adj_line,'("') + 2
+         p2 = index(adj_line, '")') - 1
+         if (p1 > 2 .and. p2 >= p1) then
+            fn = adj_line(p1:p2)
+            call run(fn)
+         else
+            print *, "Error: run() expects a filename in double quotes"
+         end if
+         return
+         end block
+      end if
+
       if (in_loop_execute) then
          p_lpar = index(adj_line, "(")
          if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
@@ -1658,5 +1676,36 @@ contains
       end if
       iv = nint(tmp(1))
    end function parse_int_scalar
+
+   subroutine run(filename)
+      !  Read the text file FILENAME line-by-line and feed every line to the
+      !  interpreter as if the user had typed it.
+      character(len=*), intent(in) :: filename
+      character(len=1000) :: ln
+      integer :: u, ios, comment_pos, neval
+      logical :: verbose_
+      verbose_ = .true.
+      if (verbose_) neval = 0
+      open(newunit=u, file=trim(filename), status='old', action='read', iostat=ios)
+      if (ios /= 0) then
+         write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(filename), ios
+         return
+      end if
+
+      do                                   ! read until EOF
+         read(u,'(A)', iostat=ios) ln
+         if (ios /= 0) exit
+         if (len_trim(ln) == 0) cycle       ! ignore blank lines
+         comment_pos = index(ln, comment_char)
+         if (comment_pos > 0) ln = ln(1:max(1,comment_pos-1))
+         if (ln /= comment_char) then
+            if (verbose_ .and. neval > 0) print "(/,a)", trim(ln)
+            call eval_print(ln)
+            if (verbose_) neval = neval + 1
+         end if
+         if (stop_if_error .and. eval_error) exit
+      end do
+      close(u)
+   end subroutine run
 
 end module interpret_mod
