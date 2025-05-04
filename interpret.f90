@@ -15,11 +15,11 @@ module interpret_mod
              code_transcript_file, clear, vars, mutable, slice_array, &
              split_by_semicolon, delete_vars, echo_code
 
-   integer, parameter :: max_vars = 100
+   integer, parameter :: max_vars = 100, len_name = 32
    integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
 
    type :: var_t
-      character(len=32) :: name = ""
+      character(len=len_name) :: name = ""
       real(kind=dp), allocatable :: val(:)
    end type var_t
 
@@ -42,7 +42,7 @@ module interpret_mod
 !── Maximum nesting and a fixed buffer for every loop level
    integer, parameter :: max_loop_depth = 8
    character(len=4096), save :: loop_body(max_loop_depth) = ""   ! collected lines
-   character(len=32), save :: loop_var(max_loop_depth) = ""   ! i , j , ...
+   character(len=len_name), save :: loop_var(max_loop_depth) = ""   ! i , j , ...
    integer, save :: loop_start(max_loop_depth) = 0
    integer, save :: loop_end(max_loop_depth) = 0
    integer, save :: loop_step(max_loop_depth) = 1
@@ -155,7 +155,7 @@ contains
       character(len=*), intent(in) :: name
       real(kind=dp), intent(in) :: val(:)
       integer :: i
-      character(len=32) :: nm
+      character(len=len_name) :: nm
 
       nm = adjustl(name)
       do i = 1, n_vars
@@ -375,7 +375,7 @@ contains
       function parse_identifier() result(name_out)
          ! Read an alphanumeric identifier from the current cursor
          ! and return it as name_out
-         character(len=32) :: name_out
+         character(len=len_name) :: name_out
          integer :: i
          call skip_spaces()
          i = 0
@@ -464,7 +464,7 @@ contains
          real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
          real(kind=dp), allocatable :: exponent(:), vvar(:)
          integer, allocatable :: idxv(:)
-         character(len=32) :: id
+         character(len=len_name) :: id
          character(len=:), allocatable :: idxs
          integer :: nsize, pstart, pend, depth, n1, n2
          logical :: is_neg, have_second
@@ -969,7 +969,7 @@ contains
       character(len=*), intent(in)  :: lhs
       real(kind=dp), allocatable, intent(in)  :: rval(:)
 
-      character(len=32)               :: name
+      character(len=len_name)               :: name
       character(len=:), allocatable  :: idx_txt
       real(kind=dp), allocatable  :: idx_val(:)
       integer, allocatable  :: idx(:)
@@ -1373,7 +1373,7 @@ contains
       ! Remove all variables named in list_str, where names may be
       ! separated by commas and/or spaces.  Warn on any name not defined.
       character(len=*), intent(in) :: list_str
-      character(len=32) :: nm
+      character(len=len_name) :: nm
       integer :: start, pos, len_list, i_var, j_var
       logical :: found
 
@@ -1432,11 +1432,11 @@ contains
          n = na
          allocate (mask(n), source=.false.)
          select case (op)
-         case ("<"); mask = a < b
+         case ("<") ; mask = a < b
          case ("<="); mask = a <= b
-         case (">"); mask = a > b
+         case (">") ; mask = a > b
          case (">="); mask = a >= b
-         case ("="); mask = abs(a - b) <= tol
+         case ("=") ; mask = abs(a - b) <= tol
          case ("=="); mask = abs(a - b) <= tol
          case ("/="); mask = abs(a - b) > tol
          end select
