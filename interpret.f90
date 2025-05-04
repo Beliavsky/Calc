@@ -34,6 +34,20 @@ module interpret_mod
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
   logical, save :: print_array_as_int_if_possible = .false.
   character (len=:), allocatable :: line_cp
+  logical, parameter :: debug_loop = .false.
+logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
+
+!––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
+!── Maximum nesting and a fixed buffer for every loop level
+integer, parameter :: max_loop_depth = 8
+character(len=4096), save :: loop_body (max_loop_depth) = ""   ! collected lines
+character(len=32  ), save :: loop_var  (max_loop_depth) = ""   ! i , j , ...
+integer,            save :: loop_start(max_loop_depth) = 0
+integer,            save :: loop_end  (max_loop_depth) = 0
+integer,            save :: loop_step (max_loop_depth) = 1
+integer,            save :: loop_depth = 0                     ! current level
+!––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
 contains
 
 subroutine slice_array(name, idxs, result)
@@ -1012,7 +1026,7 @@ impure elemental recursive subroutine eval_print(line)
    ! --------------------------------------------------------------
    ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
-   integer                       :: n, k, rsize, i, nsize
+   integer                       :: n, k, rsize, i, nsize, ivar
    character(len=:), allocatable :: parts(:), rest, trimmed_line, tail
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:), tmp(:)
@@ -1020,6 +1034,8 @@ impure elemental recursive subroutine eval_print(line)
    integer                       :: p, repeat_count
    logical :: print_array_as_int
    character (len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
+   character(len=:), allocatable :: lhs, rhs
+   integer :: p_eq, p_com1, p_com2
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
@@ -1042,6 +1058,92 @@ impure elemental recursive subroutine eval_print(line)
        end if
     end if
   end if
+
+!─────────────────────────────
+!  Loop handling
+!─────────────────────────────
+select case (adjustl(line))
+case default
+   ! nothing – fall through
+case ("end do","enddo","enddo;","end do;")
+   if (loop_depth == 0) then
+      print *, "Error: 'end do' without matching 'do'"
+      return
+   end if
+
+! execute the collected body
+do ivar = loop_start(loop_depth),  &
+           loop_end  (loop_depth),  &
+           loop_step (loop_depth)
+
+   call set_variable(loop_var(loop_depth), [real(ivar,dp)])  ! i = ivar
+   if (debug_loop) then
+      print*,"loop_depth =", loop_depth
+      print*,"calling run_loop body with '" // trim(loop_body(loop_depth)) // "'"
+   end if
+   call run_loop_body(loop_body(loop_depth))                 ! body lines
+end do
+! final Fortran value = last value + step
+call set_variable(loop_var(loop_depth), [real(ivar,dp)])
+
+   ! pop one level
+   loop_body (loop_depth) = ""
+   loop_var  (loop_depth) = ""
+   loop_depth = loop_depth - 1
+   return
+end select
+
+!------------  Is this the beginning of a DO block?  -----------------
+if (index(adjustl(line),"do") == 1) then
+   if (loop_depth >= max_loop_depth) then
+      print *, "Error: loop nesting deeper than ", max_loop_depth
+      return
+   end if
+
+   ! Parse  “do  i = 1 , 5 , 2”   (step is optional)
+
+   p_eq   = index(line,"=")
+   p_com1 = index(line,",")
+   if (p_eq==0 .or. p_com1==0) then
+      print *, "Error: malformed DO header: ", trim(line)
+      return
+   end if
+
+   lhs = adjustl(line(3:p_eq-1))              ! variable name
+   rhs = adjustl(line(p_eq+1:))
+
+   p_com1 = index(rhs,",")
+   p_com2 = index(rhs(p_com1+1:),",")
+   if (p_com2>0) p_com2 = p_com1 + p_com2
+
+   loop_depth = loop_depth + 1
+   loop_var  (loop_depth) = lhs
+   read(rhs(1:p_com1-1),*) loop_start(loop_depth)
+   if (p_com2==0) then
+      read(rhs(p_com1+1:),*) loop_end(loop_depth)
+      loop_step(loop_depth) = 1
+   else
+      read(rhs(p_com1+1:p_com2-1),*) loop_end(loop_depth)
+      read(rhs(p_com2+1:),       *) loop_step(loop_depth)
+   end if
+
+   loop_body(loop_depth) = ""   ! empty buffer, start collecting
+   return                       ! finished with the DO line
+end if
+
+!---------------- Collect body lines while inside a loop -------------
+if (loop_depth > 0 .and. .not. in_loop_execute) then
+   ! still *building* the body – keep buffering
+   loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line('a')
+   if (debug_loop) then
+      print "(a)", "here loop_body(loop_depth) = '" // trim(loop_body(loop_depth)) // "'"
+      print "(a)", "line = '" // trim(line) // "'"
+   end if
+   return
+end if
+
+! end of loop handling
+
 ! ——————————————————— new “del” command —————————————————————
 trimmed_line = adjustl(line)
 if (trimmed_line == "del") then
@@ -1396,5 +1498,27 @@ contains
       suppress = [suppress, .false.]
    end subroutine enlarge_parts
 end subroutine split_by_semicolon
+
+subroutine run_loop_body(body)
+   character(len=*), intent(in) :: body
+   character(len=:), allocatable :: line
+   integer :: p1, p2, nlen
+   in_loop_execute = .true.          ! >>> tell eval_print to *execute*
+   nlen = len_trim(body)
+   p1   = 1
+   do
+      p2 = index(body(p1:), new_line('a'))             ! next newline
+      if (p2 == 0) then
+         line = body(p1:nlen)
+      else
+         line = body(p1:p1+p2-2)
+      end if
+      if (debug_loop) print "(a)", "calling eval_print with line = '" // trim(line) // "'"
+      call eval_print(line)                            ! ← recursion
+      if (p2 == 0) exit
+      p1 = p1 + p2
+   end do
+   in_loop_execute = .false.         ! <<< back to normal typing mode
+end subroutine run_loop_body
 
 end module interpret_mod
