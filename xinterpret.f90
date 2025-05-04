@@ -5,14 +5,25 @@ program xinterpret
   use kind_mod, only: dp
   use plot_mod, only: use_windows
   implicit none
-  integer :: i, iostat_err, varu, ipos_comment
-  character (len=1000) :: line
+  integer :: i, iostat_err, varu, ipos_comment, narg
+  character (len=1000) :: line, arg
   logical, parameter :: write_vars_at_end = .false., &
                         time_code=.false., run_sample_code=.false.
   character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
   real(kind=dp) :: t1, t2
   use_windows = windows()
+  narg = command_argument_count()
+  if (narg > 1) then
+    print *, "Error: only 0 or 1 command line arguments supported"
+    stop
+  else if (narg == 1) then
+    call get_command_argument(1, arg)
+    call eval_print("run(" // '"' // trim(adjustl(arg)) // '"' // ")")
+    stop
+  end if 
   write_code = .true.
+  ! Get the first command-line argument
+  call get_command_argument(1, arg)
   if (write_code) open (newunit=tunit, file=code_transcript_file, action="write", status="replace")
   if (run_sample_code) then
      call eval_print("n = 20")
