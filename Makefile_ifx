@@ -1,6 +1,6 @@
 executables = xinterpret_ifx.exe
 FC     = ifx
-FFLAGS = /nologo /Zi /Od /check:all /traceback /fpe-all:0 /warn:all /assume:protect_parens /implicitnone /stand:f23
+FFLAGS = /nologo -Wl,--stack,134217728 /Zi /Od /check:all /traceback /fpe-all:0 /warn:all /assume:protect_parens /implicitnone /stand:f23
 obj    = kind.obj util.obj gnuplot.obj constants.obj qsort.obj random.obj stats.obj interpret.obj xinterpret.obj
 
 all: $(executables)
