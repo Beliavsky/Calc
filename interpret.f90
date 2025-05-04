@@ -707,7 +707,7 @@ recursive function parse_factor() result(f)
          end if
       end if
 
-   case ("merge")                 ! *** NEW branch ***
+   case ("merge")
       if (.not. have_second) then
          print*, "Error: merge() needs three arguments"
          eval_error = .true.;  f = [bad_value]
@@ -1069,12 +1069,49 @@ impure elemental recursive subroutine eval_print(line)
     end if
   end if
 
+   if (loop_depth > 0 .and. .not. in_loop_execute) then
+     select case (adjustl(line))
+     case ("end do","enddo","enddo;","end do;")
+       !–– let the end‑do fall through into the loop‑handler below ––
+     case default
+       loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line('a')
+       return
+     end select
+   end if
+
+  adj_line = adjustl(line)
+
+  if (in_loop_execute) then
+    p_lpar = index(adj_line, '(')
+    if (p_lpar > 0 .and. trim(adj_line(1:p_lpar-1)) == 'if') then
+
+      ! find matching “)”
+      p_rpar = p_lpar
+      depth  = 1
+      do while (p_rpar < len_trim(adj_line) .and. depth > 0)
+        p_rpar = p_rpar + 1
+        select case (adj_line(p_rpar:p_rpar))
+        case ('('); depth = depth + 1
+        case (')'); depth = depth - 1
+        end select
+      end do
+
+      cond_txt = adjustl(adj_line(p_lpar+1:p_rpar-1))
+      then_txt = adjustl(adj_line(p_rpar+1:))
+
+      tmp = evaluate(cond_txt)
+      if (.not. eval_error .and. size(tmp)==1) then
+        if (tmp(1) /= 0.0_dp) call eval_print(then_txt)
+      end if
+
+      return
+    end if
+  end if
+
 !─────────────────────────────
 !  Loop handling
 !─────────────────────────────
 select case (adjustl(line))
-case default
-   ! nothing – fall through
 case ("end do","enddo","enddo;","end do;")
    if (loop_depth == 0) then
       print *, "Error: 'end do' without matching 'do'"
@@ -1094,7 +1131,8 @@ case ("end do","enddo","enddo;","end do;")
    call set_variable(loop_var(loop_depth), [real(ivar,dp)])
    loop_depth = loop_depth - 1
    return
-
+case default
+   ! nothing – fall through
 end select
 
 adj_line = adjustl(line)
@@ -1199,7 +1237,7 @@ end if
 !---------------- Collect body lines while inside a loop -------------
 if (loop_depth > 0 .and. .not. in_loop_execute) then
    ! still *building* the body – keep buffering
-   loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line('a')
+   loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line("a")
    if (debug_loop) then
       print "(a)", "here loop_body(loop_depth) = '" // trim(loop_body(loop_depth)) // "'"
       print "(a)", "line = '" // trim(line) // "'"
@@ -1209,7 +1247,6 @@ end if
 
 ! end of loop handling
 
-! ——————————————————— new “del” command —————————————————————
 trimmed_line = adjustl(line)
 if (trimmed_line == "del") then
 
@@ -1572,14 +1609,14 @@ subroutine run_loop_body(body)
    nlen = len_trim(body)
    p1   = 1
    do
-      p2 = index(body(p1:), new_line('a'))             ! next newline
+      p2 = index(body(p1:), new_line("a"))             ! next newline
       if (p2 == 0) then
          line = body(p1:nlen)
       else
          line = body(p1:p1+p2-2)
       end if
       if (debug_loop) print "(a)", "calling eval_print with line = '" // trim(line) // "'"
-      call eval_print(line)                            ! ← recursion
+      call eval_print(line)                            ! recursion
       if (exit_loop) then
          in_loop_execute = .false.
          return
