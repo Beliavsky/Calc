@@ -1051,6 +1051,14 @@ contains
       line_cp = line
       ! write to transcript just once, for the whole input line
       if (write_code) write (tunit, "(a)") line
+      if (adjustl(line) == "compiler_version()") then
+         print "(a)", trim(compiler_version())
+         return
+      else if (adjustl(line) == "compiler_info()") then
+         print "(a)", trim(compiler_version())
+         print "(a)", trim(compiler_options())
+         return
+      end if
 !   trimmed = adjustl(line)
       if (adjustl(line) == "exit") then
          exit_loop = .true.
