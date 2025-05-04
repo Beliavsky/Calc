@@ -34,9 +34,9 @@ module interpret_mod
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
   logical, save :: print_array_as_int_if_possible = .false.
   character (len=:), allocatable :: line_cp
-  logical, parameter :: debug_loop = .false., debug_if = .true.
+  logical, parameter :: debug_loop = .false., debug_if = .false.
 logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
-logical, save :: exit_loop = .false.
+logical, save :: exit_loop = .false., cycle_loop = .false.
 
 !––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
 !── Maximum nesting and a fixed buffer for every loop level
@@ -1069,15 +1069,21 @@ impure elemental recursive subroutine eval_print(line)
     end if
   end if
 
-   if (loop_depth > 0 .and. .not. in_loop_execute) then
-     select case (adjustl(line))
-     case ("end do","enddo","enddo;","end do;")
-       !–– let the end‑do fall through into the loop‑handler below ––
-     case default
-       loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line('a')
-       return
-     end select
-   end if
+if (loop_depth > 0 .and. .not. in_loop_execute) then ! commented out -- later remove
+  block
+  character(len=:), allocatable :: tl
+  tl = adjustl(line)
+  if ( index(tl, "do ") == 1    &  ! a “do i=…” header
+    .or. trim(tl)   == "end do" &
+    .or. trim(tl)   == "enddo"  ) then
+    ! fall through into the normal do/end-do handlers
+  else
+    ! buffer everything else
+    loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line('a')
+    return
+  end if
+  end block
+end if
 
   adj_line = adjustl(line)
 
@@ -1107,6 +1113,11 @@ impure elemental recursive subroutine eval_print(line)
       return
     end if
   end if
+
+   if (in_loop_execute .and. adjustl(line) == "cycle") then
+      cycle_loop = .true.
+      return        ! skip everything else in this iteration
+   end if
 
 !─────────────────────────────
 !  Loop handling
@@ -1233,19 +1244,6 @@ end if
       end if
    end if
 end if
-
-!---------------- Collect body lines while inside a loop -------------
-if (loop_depth > 0 .and. .not. in_loop_execute) then
-   ! still *building* the body – keep buffering
-   loop_body(loop_depth) = trim(loop_body(loop_depth)) // trim(line) // new_line("a")
-   if (debug_loop) then
-      print "(a)", "here loop_body(loop_depth) = '" // trim(loop_body(loop_depth)) // "'"
-      print "(a)", "line = '" // trim(line) // "'"
-   end if
-   return
-end if
-
-! end of loop handling
 
 trimmed_line = adjustl(line)
 if (trimmed_line == "del") then
@@ -1617,6 +1615,13 @@ subroutine run_loop_body(body)
       end if
       if (debug_loop) print "(a)", "calling eval_print with line = '" // trim(line) // "'"
       call eval_print(line)                            ! recursion
+      if (cycle_loop) then
+        ! — we’ve seen a “cycle” in this iteration,
+        !   so drop the rest of the body and go back to the DO
+        cycle_loop      = .false.
+        in_loop_execute = .false.
+        return
+      end if
       if (exit_loop) then
          in_loop_execute = .false.
          return
