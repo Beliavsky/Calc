@@ -212,7 +212,7 @@ contains
 
    function apply_vec_func(fname, arr) result(res)
       ! Apply a function that takes an array and returns an array
-      character(len=*), intent(in)       :: fname
+      character(len=*), intent(in)    :: fname
       real(kind=dp), intent(in)       :: arr(:)
       real(kind=dp), allocatable :: res(:)
 
@@ -281,9 +281,9 @@ contains
       ! look for an *assignment* = that is **not** part of >= <= == <=
       eqpos = 0
       do i = 1, lenstr
-         if (expr(i:i) == '=') then
-            if (i > 1 .and. any(expr(i - 1:i - 1) == ['>', '<', '!', '=', '/'])) cycle
-            if (i < lenstr .and. expr(i + 1:i + 1) == '=') cycle
+         if (expr(i:i) == "=") then
+            if (i > 1 .and. any(expr(i - 1:i - 1) == [">", "<", "!", "=", "/"])) cycle
+            if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
             eqpos = i
             exit                       ! first qualifying = wins
          end if
@@ -295,7 +295,7 @@ contains
          rhs = expr(eqpos + 1:)
          res = evaluate(rhs)           ! recursive call
          if (.not. eval_error) then
-            if (index(lhs, '(') > 0 .and. index(lhs, ')') > index(lhs, '(')) then
+            if (index(lhs, "(") > 0 .and. index(lhs, ")") > index(lhs, "(")) then
                call assign_element(lhs, res)   ! element assignment  a(i)=
             else
                call set_variable(lhs, res)   ! wholevariable assignment
@@ -363,7 +363,7 @@ contains
          real(kind=dp) :: tmp
          call skip_spaces()
          i = 0
-         do while (is_numeral(curr_char) .or. curr_char == '.')
+         do while (is_numeral(curr_char) .or. curr_char == ".")
             i = i + 1
             buf(i:i) = curr_char
             call next_char()
@@ -406,8 +406,9 @@ contains
          v = [bad_value]
       end function get_variable
 
-      !parse_array
       recursive function parse_array() result(arr)
+         ! Parse a bracketed array literal (e.g. '[1,2,3]') and return its elements
+         ! as a 1-D real(kind=dp) allocatable array.
          real(kind=dp), allocatable :: arr(:), tmp(:), elem(:)
          integer :: total, ne
 
@@ -416,7 +417,7 @@ contains
          call skip_spaces()
 
          ! empty array literal []
-         if (curr_char == ']') then
+         if (curr_char == "]") then
             allocate (arr(0))
             call next_char()
             return
@@ -452,9 +453,13 @@ contains
       end function parse_array
 
       recursive function parse_factor() result(f)
-!--------------------------------------------------------------------
+         ! Parse a single factor in an expression, handling:
+         !   - numeric literals
+         !   - parenthesized sub‑expressions
+         !   - array literals
+         !   - identifiers (variable lookup, function calls, slicing)
+         !   - unary +/– and exponentiation.
          real(kind=dp), allocatable :: f(:) ! result
-
          !===================  locals  =====================================
          real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
          real(kind=dp), allocatable :: exponent(:), vvar(:)
@@ -468,8 +473,8 @@ contains
          call skip_spaces()
 
          !---------------- unary  -----------------------------------------
-         if (curr_char == '+' .or. curr_char == '-') then
-            is_neg = (curr_char == '-')
+         if (curr_char == "+" .or. curr_char == "-") then
+            is_neg = (curr_char == "-")
             call next_char()
             f = parse_factor()
             if (.not. eval_error .and. is_neg) f = -f
@@ -1051,9 +1056,9 @@ contains
          return
       end if
       if (len_trim(line) >= 2) then
-         if (line(1:1) == '*') then
+         if (line(1:1) == "*") then
             ! find first space after the count
-            p = index(line(2:), ' ')
+            p = index(line(2:), " ")
             if (p > 0) then
                ! parse the count expression between column 2 and p
                tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
@@ -1069,7 +1074,7 @@ contains
          end if
       end if
 
-      if (loop_depth > 0 .and. .not. in_loop_execute) then ! commented out -- later remove
+      if (loop_depth > 0 .and. .not. in_loop_execute) then
          block
             character(len=:), allocatable :: tl
             tl = adjustl(line)
@@ -1079,7 +1084,7 @@ contains
                ! fall through into the normal do/end-do handlers
             else
                ! buffer everything else
-               loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line)//new_line('a')
+               loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line)//new_line("a")
                return
             end if
          end block
@@ -1088,8 +1093,8 @@ contains
       adj_line = adjustl(line)
 
       if (in_loop_execute) then
-         p_lpar = index(adj_line, '(')
-         if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == 'if') then
+         p_lpar = index(adj_line, "(")
+         if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
             ! find matching “)”
             p_rpar = p_lpar
@@ -1097,8 +1102,8 @@ contains
             do while (p_rpar < len_trim(adj_line) .and. depth > 0)
                p_rpar = p_rpar + 1
                select case (adj_line(p_rpar:p_rpar))
-               case ('('); depth = depth + 1
-               case (')'); depth = depth - 1
+               case ("("); depth = depth + 1
+               case (")"); depth = depth - 1
                end select
             end do
 
@@ -1151,13 +1156,13 @@ contains
 ! if (index(adj_line,'if') == 1 .and. len_trim(adj_line) > 4 .and.    &
 !     adj_line(3:3) == '(' ) then
 
-      p_lpar = index(adj_line, '(')                ! first left parenthesis
+      p_lpar = index(adj_line, "(")                ! first left parenthesis
       if (debug_if .and. p_lpar > 0) then
          print *, "testing for one-line if, p_lpar =", p_lpar
          print *, "adj_line = '"//trim(adj_line)//"'"
          print *
       end if
-      if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == 'if') then
+      if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
          ! — locate the matching right parenthesis —
          p_rpar = p_lpar
@@ -1165,8 +1170,8 @@ contains
          do while (p_rpar < len_trim(adj_line) .and. depth > 0)
             p_rpar = p_rpar + 1
             select case (adj_line(p_rpar:p_rpar))
-            case ('('); depth = depth + 1
-            case (')'); depth = depth - 1
+            case ("("); depth = depth + 1
+            case (")"); depth = depth - 1
             end select
          end do
          if (depth /= 0) then
@@ -1249,23 +1254,23 @@ contains
       if (trimmed_line == "del") then
 
          ! everything after “del”
-         p = index(trimmed_line, ' ')
+         p = index(trimmed_line, " ")
          if (p > 0) then
             tail = adjustl(trimmed_line(p + 1:))
 
             ! turn *any* spaces into commas...
-            tail = replace(tail, ' ', ',')
+            tail = replace(tail, " ", ",")
             ! ...and collapse any duplicate commas
-            do while (index(tail, ',,') > 0)
-               i = index(tail, ',,')
-               tail = tail(1:i - 1)//','//tail(i + 2:)
+            do while (index(tail, ",,") > 0)
+               i = index(tail, ",,")
+               tail = tail(1:i - 1)//","//tail(i + 2:)
             end do
 
             ! strip any leading or trailing commas
-            do while (len_trim(tail) > 0 .and. tail(1:1) == ',')
+            do while (len_trim(tail) > 0 .and. tail(1:1) == ",")
                tail = tail(2:)
             end do
-            do while (len_trim(tail) > 0 .and. tail(len_trim(tail):len_trim(tail)) == ',')
+            do while (len_trim(tail) > 0 .and. tail(len_trim(tail):len_trim(tail)) == ",")
                tail = tail(:len_trim(tail) - 1)
             end do
 
@@ -1315,7 +1320,7 @@ contains
          if (.not. matched_brackets(parts(k))) then
             print *, "mismatched brackets"; cycle
          end if
-         if (index(parts(k), '**') /= 0) then
+         if (index(parts(k), "**") /= 0) then
             print *, "use ^ instead of ** for exponentiation"; cycle
          end if
 
@@ -1325,7 +1330,7 @@ contains
             if (stop_if_error) stop "stopped with evaluation error"
             cycle
          end if
-         if (index(trim(parts(k)), 'print_stats') == 1) cycle
+         if (index(trim(parts(k)), "print_stats") == 1) cycle
 
          ! ---------- echo only when the segment is *not* suppressed ----------
          if (.not. suppress(k)) then
@@ -1378,7 +1383,7 @@ contains
       do while (start <= len_list)
          ! skip any leading commas or spaces
          do while (start <= len_list .and. &
-                   (list_str(start:start) == ',' .or. list_str(start:start) == ' '))
+                   (list_str(start:start) == "," .or. list_str(start:start) == " "))
             start = start + 1
          end do
          if (start > len_list) exit
@@ -1386,7 +1391,7 @@ contains
          ! find end of this token (up to next comma or space)
          pos = start
          do while (pos <= len_list)
-            if (list_str(pos:pos) == ',' .or. list_str(pos:pos) == ' ') exit
+            if (list_str(pos:pos) == "," .or. list_str(pos:pos) == " ") exit
             pos = pos + 1
          end do
 
@@ -1538,11 +1543,11 @@ contains
 
       do i = 1, len_trim(line)
          select case (line(i:i))
-         case ('('); depth_par = depth_par + 1
-         case (')'); depth_par = depth_par - 1
-         case ('['); depth_br = depth_br + 1
-         case (']'); depth_br = depth_br - 1
-         case (';')
+         case ("("); depth_par = depth_par + 1
+         case (")"); depth_par = depth_par - 1
+         case ("["); depth_br = depth_br + 1
+         case ("]"); depth_br = depth_br - 1
+         case (";")
             if (depth_par == 0 .and. depth_br == 0) then
                call append_statement(buf, .true.)
                buf = ""
@@ -1564,6 +1569,9 @@ contains
 
    contains
       subroutine append_statement(txt, semi)
+         ! Append the trimmed statement TXT to the PARTS array, marking it as
+         ! suppressed (SEMI=.true.) if it ended with a top-level semicolon,
+         ! growing the buffer as needed
          character(len=*), intent(in) :: txt
          logical, intent(in) :: semi
          integer :: newlen
@@ -1577,7 +1585,7 @@ contains
          else if (len(parts(1)) < newlen) then
             call enlarge_parts(newlen)
          else
-            parts = [character(len=len(parts)) :: parts, ""]                     ! extend by one element
+            parts = [character(len=len(parts)) :: parts, ""] ! extend by one element
             suppress = [suppress, .false.]
          end if
 
@@ -1588,6 +1596,8 @@ contains
       end subroutine append_statement
 
       subroutine enlarge_parts(newlen)
+         ! Resize the PARTS and SUPPRESS arrays to length NEWLEN, preserving
+         ! existing contents and adding an extra slot for a new statement.
          integer, intent(in) :: newlen
          character(len=newlen), allocatable :: tmp(:)
 
@@ -1600,6 +1610,8 @@ contains
    end subroutine split_by_semicolon
 
    subroutine run_loop_body(body)
+      ! Execute the buffered DO‑loop BODY one line at a time by calling
+      ! eval_print, handling CYCLE and EXIT via cycle_loop and exit_loop flags.
       character(len=*), intent(in) :: body
       character(len=:), allocatable :: line
       integer :: p1, p2, nlen
@@ -1633,6 +1645,8 @@ contains
    end subroutine run_loop_body
 
    integer function parse_int_scalar(txt) result(iv)
+      ! Evaluate the expression txt as a single real(dp), round to the
+      ! nearest integer, and return for use in parsing do-loop bounds.
       character(len=*), intent(in) :: txt
       real(dp), allocatable        :: tmp(:)
 
