@@ -1684,7 +1684,7 @@ contains
       character(len=1000) :: ln
       integer :: u, ios, comment_pos, neval
       logical :: verbose_
-      verbose_ = .true.
+      verbose_ = .false.
       if (verbose_) neval = 0
       open(newunit=u, file=trim(filename), status='old', action='read', iostat=ios)
       if (ios /= 0) then
@@ -1699,7 +1699,8 @@ contains
          comment_pos = index(ln, comment_char)
          if (comment_pos > 0) ln = ln(1:max(1,comment_pos-1))
          if (ln /= comment_char) then
-            if (verbose_ .and. neval > 0) print "(/,a)", trim(ln)
+            if (verbose_ .and. neval > 0) print "(/)"
+            if (verbose_) print "(a)", trim(ln)
             call eval_print(ln)
             if (verbose_) neval = neval + 1
          end if
