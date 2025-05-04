@@ -29,13 +29,14 @@ module interpret_mod
      echo_code = .true.
   character(len=1) :: curr_char
   character (len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
-  logical, parameter :: stop_if_error = .false.
+  logical, parameter :: stop_if_error = .false., debug_eval = .false.
   real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
   logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
   logical, save :: print_array_as_int_if_possible = .false.
   character (len=:), allocatable :: line_cp
-  logical, parameter :: debug_loop = .false.
+  logical, parameter :: debug_loop = .false., debug_if = .true.
 logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
+logical, save :: exit_loop = .false.
 
 !––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
 !── Maximum nesting and a fixed buffer for every loop level
@@ -314,7 +315,10 @@ end subroutine slice_array
        ! return an empty result to signal failure
        res = [real(kind=dp) ::] 
     end if
-
+    if (debug_eval) then
+       print "(a)", "in evaluate, str = '" // trim(str) // "'"
+       print*,"res =",res
+    end if
   contains
 
     !--------------------------------------------------
@@ -909,21 +913,21 @@ end function parse_factor
             if (curr_char == "=") then
                op = "<=";  call next_char()
             else
-               op = "< "
+               op = "<"
             end if
          case (">")
             call next_char()
             if (curr_char == "=") then
                op = ">=";  call next_char()
             else
-               op = "> "
+               op = ">"
             end if
          case ("=")
             call next_char()
             if (curr_char == "=") then
                op = "==";  call next_char()
             else
-               op = "= "
+               op = "="
             end if
          case ("/")
             call next_char()
@@ -1032,14 +1036,20 @@ impure elemental recursive subroutine eval_print(line)
    real(dp)      , allocatable   :: r(:), tmp(:)
    integer       , allocatable   :: rint(:)
    integer                       :: p, repeat_count
-   logical :: print_array_as_int
+   logical :: print_array_as_int, run_then
    character (len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
    character(len=:), allocatable :: lhs, rhs
    integer :: p_eq, p_com1, p_com2
+   integer :: p_lpar, p_rpar, depth
+   character(len=:), allocatable :: cond_txt, then_txt
    line_cp = line
    ! write to transcript just once, for the whole input line
    if (write_code) write(tunit,"(a)") line
-
+!   trimmed = adjustl(line)
+   if (adjustl(line) == "exit") then
+      exit_loop = .true.
+      return
+   end if
    if (len_trim(line) >= 2) then
      if (line(1:1) == '*') then
      ! find first space after the count
@@ -1071,30 +1081,78 @@ case ("end do","enddo","enddo;","end do;")
       return
    end if
 
-! execute the collected body
-print*
-do ivar = loop_start(loop_depth),  &
-           loop_end  (loop_depth),  &
-           loop_step (loop_depth)
-   call set_variable(loop_var(loop_depth), [real(ivar,dp)])  ! i = ivar
-   if (debug_loop) then
-      print*,"loop_depth =", loop_depth
-      print*,"calling run_loop body with '" // trim(loop_body(loop_depth)) // "'"
-   end if
-   call run_loop_body(loop_body(loop_depth))                 ! body lines
-end do
-! final Fortran value = last value + step
-call set_variable(loop_var(loop_depth), [real(ivar,dp)])
+   print*
+   do ivar = loop_start(loop_depth), loop_end(loop_depth), loop_step(loop_depth)
+      call set_variable(loop_var(loop_depth), [real(ivar,dp)])
+      call run_loop_body(loop_body(loop_depth))
+      if (exit_loop) then        ! ← exit from the DO
+        exit
+      end if
+   end do
 
-   ! pop one level
-   loop_body (loop_depth) = ""
-   loop_var  (loop_depth) = ""
+   exit_loop = .false.          ! clear the flag for next loop
+   call set_variable(loop_var(loop_depth), [real(ivar,dp)])
    loop_depth = loop_depth - 1
    return
+
 end select
 
-!------------  Is this the beginning of a DO block?  -----------------
 adj_line = adjustl(line)
+!──────────────────────────  one‑line IF  ──────────────────────────
+! if (index(adj_line,'if') == 1 .and. len_trim(adj_line) > 4 .and.    &
+!     adj_line(3:3) == '(' ) then
+
+p_lpar = index(adj_line, '(')                ! first left parenthesis
+if (debug_if .and. p_lpar > 0) then
+   print*,"testing for one-line if, p_lpar =", p_lpar
+   print*,"adj_line = '" // trim(adj_line) // "'"
+   print*
+end if
+if (p_lpar > 0 .and. trim(adj_line(1:p_lpar-1)) == 'if') then
+
+   ! — locate the matching right parenthesis —
+   p_rpar = p_lpar
+   depth  = 1
+   do while (p_rpar < len_trim(adj_line) .and. depth > 0)
+      p_rpar = p_rpar + 1
+      select case (adj_line(p_rpar:p_rpar))
+      case ('('); depth = depth + 1
+      case (')'); depth = depth - 1
+      end select
+   end do
+   if (depth /= 0) then
+      print*, "Error: mismatched parentheses in IF statement"
+      return
+   end if
+
+   ! — split into  condition  and  consequent —
+   cond_txt = adjustl(adj_line(p_lpar+1:p_rpar-1))
+   then_txt = adjustl(adj_line(p_rpar+1:))
+
+   if (len_trim(then_txt) == 0) then
+      print*, "Error: null statement after IF"
+      return
+   end if
+
+   ! — evaluate the condition (must be scalar) —
+   tmp = evaluate(cond_txt)
+   if (debug_if) then
+      print*,"tmp, cond_txt =", tmp, "'" // trim(cond_txt) // "'"
+   end if
+   if (eval_error) return
+   if (size(tmp) /= 1) then
+      print*, "Error: IF condition must be scalar"
+      return
+   end if
+   run_then = (tmp(1) /= 0.0_dp)
+
+   ! — execute the single statement if TRUE —
+   if (run_then) call eval_print(then_txt)
+   return                                    ! one‑line IF handled
+end if
+!───────────────────────────────────────────────────────────────────
+
+!------------  Is this the beginning of a DO block?  -----------------
 if (index(adj_line,"do") == 1) then
    if (len_trim(adj_line) > 2) then
       if (adj_line(3:3) == " ") then
@@ -1131,7 +1189,7 @@ else                                                                ! 3nd field 
    loop_end (loop_depth) = parse_int_scalar(rhs(p_com1+1:p_com2-1))
    loop_step(loop_depth) = parse_int_scalar(rhs(p_com2+1:))
 end if
-
+   call set_variable(loop_var(loop_depth), [real(loop_start(loop_depth), dp)])
    loop_body(loop_depth) = ""   ! empty buffer, start collecting
    return                       ! finished with the DO line
       end if
@@ -1334,11 +1392,11 @@ end subroutine delete_vars
          n  = na
          allocate (mask(n), source = .false.)
          select case (op)
-            case ("< ") ; mask = a <  b
+            case ("<") ; mask = a <  b
             case ("<=") ; mask = a <= b
-            case ("> ") ; mask = a >  b
+            case (">") ; mask = a >  b
             case (">=") ; mask = a >= b
-            case ("= ") ; mask = abs(a-b) <= tol
+            case ("=") ; mask = abs(a-b) <= tol
             case ("==") ; mask = abs(a-b) <= tol
             case ("/=") ; mask = abs(a-b) >  tol
          end select
@@ -1522,6 +1580,10 @@ subroutine run_loop_body(body)
       end if
       if (debug_loop) print "(a)", "calling eval_print with line = '" // trim(line) // "'"
       call eval_print(line)                            ! ← recursion
+      if (exit_loop) then
+         in_loop_execute = .false.
+         return
+      end if
       if (p2 == 0) exit
       p1 = p1 + p2
    end do
