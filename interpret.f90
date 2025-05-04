@@ -1027,7 +1027,7 @@ impure elemental recursive subroutine eval_print(line)
    ! 1.  split the input at *top-level* semicolons
    ! --------------------------------------------------------------
    integer                       :: n, k, rsize, i, nsize, ivar
-   character(len=:), allocatable :: parts(:), rest, trimmed_line, tail
+   character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line
    logical       , allocatable   :: suppress(:)
    real(dp)      , allocatable   :: r(:), tmp(:)
    integer       , allocatable   :: rint(:)
@@ -1072,10 +1072,10 @@ case ("end do","enddo","enddo;","end do;")
    end if
 
 ! execute the collected body
+print*
 do ivar = loop_start(loop_depth),  &
            loop_end  (loop_depth),  &
            loop_step (loop_depth)
-
    call set_variable(loop_var(loop_depth), [real(ivar,dp)])  ! i = ivar
    if (debug_loop) then
       print*,"loop_depth =", loop_depth
@@ -1094,7 +1094,10 @@ call set_variable(loop_var(loop_depth), [real(ivar,dp)])
 end select
 
 !------------  Is this the beginning of a DO block?  -----------------
-if (index(adjustl(line),"do") == 1) then
+adj_line = adjustl(line)
+if (index(adj_line,"do") == 1) then
+   if (len_trim(adj_line) > 2) then
+      if (adj_line(3:3) == " ") then
    if (loop_depth >= max_loop_depth) then
       print *, "Error: loop nesting deeper than ", max_loop_depth
       return
@@ -1129,6 +1132,8 @@ if (index(adjustl(line),"do") == 1) then
 
    loop_body(loop_depth) = ""   ! empty buffer, start collecting
    return                       ! finished with the DO line
+      end if
+   end if
 end if
 
 !---------------- Collect body lines while inside a loop -------------
