@@ -6,6 +6,7 @@ Interpreter in Fortran that can handle scalars and 1D arrays, with plotting usin
 ! General
 ! ────────────────────────────────
 run("code.txt")                     ! run the code in file code.txt
+calc code.txt                       ! run the code in code.txt assuming calc is the executable
  
 ! ────────────────────────────────
 ! Basic scalars & arithmetic
