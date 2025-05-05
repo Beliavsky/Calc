@@ -30,7 +30,7 @@ module interpret_mod
    character(len=1) :: curr_char
    character(len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
    character(len=*), parameter :: comment_char = "!"
-   logical, parameter :: stop_if_error = .false., debug_eval = .false.
+   logical, parameter :: stop_if_error = .false., debug_eval = .false., debug_arg = .false.
    real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
    logical, save :: print_array_as_int_if_possible = .true.
@@ -274,21 +274,47 @@ contains
       character(len=:), allocatable :: expr, lhs, rhs
       integer                      :: pos, lenstr      ! parser cursor & length
       integer                      :: i, eqpos         ! scan index & "=" position
+      integer :: depth_b, depth_p
       !------------------------------------------------------------------
 
       ! prepare the string for parsing
       call init_evaluator(trim(str), expr, lenstr, pos)
 
       ! look for an *assignment* = that is **not** part of >= <= == <=
+!------------------------------------------------------------------
+!  find a top‑level “=” that is **not** part of  >= <= == /=  etc.
+!------------------------------------------------------------------
       eqpos = 0
+      depth_p = 0          ! nesting level ()
+      depth_b = 0          ! nesting level []
+
       do i = 1, lenstr
-         if (expr(i:i) == "=") then
-            if (i > 1 .and. any(expr(i - 1:i - 1) == [">", "<", "!", "=", "/"])) cycle
-            if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
-            eqpos = i
-            exit                       ! first qualifying = wins
-         end if
+         select case (expr(i:i))
+         case ("("); depth_p = depth_p + 1
+         case (")"); if (depth_p > 0) depth_p = depth_p - 1
+         case ("["); depth_b = depth_b + 1
+         case ("]"); if (depth_b > 0) depth_b = depth_b - 1
+         case ("=")
+            if (depth_p == 0 .and. depth_b == 0) then
+               if (i > 1) then
+                  if (any(expr(i - 1:i - 1) == [">", "<", "!", "=", "/"])) cycle
+               end if
+               if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
+               eqpos = i
+               exit                            ! first *top‑level* “=” wins
+            end if
+         end select
       end do
+
+!       eqpos = 0
+!       do i = 1, lenstr
+!          if (expr(i:i) == "=") then
+!             if (i > 1 .and. any(expr(i - 1:i - 1) == [">", "<", "!", "=", "/"])) cycle
+!             if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
+!             eqpos = i
+!             exit                       ! first qualifying = wins
+!          end if
+!       end do
 
       ! assignment found  evaluate RHS then store
       if (eqpos > 0) then
@@ -360,10 +386,10 @@ contains
          character(len=*), intent(in) :: tok                           !   the
          integer :: l                                                  !   text
          l = len_trim(tok)                                             !   TOK
-         if (pos-1+l-1 > lenstr) then                                  !   starts
+         if (pos - 1 + l - 1 > lenstr) then                                  !   starts
             at_token = .false.                                         !   at the
          else                                                          !   current
-            at_token = (expr(pos-1:pos-2+l) == tok)                    !   cursor
+            at_token = (expr(pos - 1:pos - 2 + l) == tok)                    !   cursor
          end if
       end function at_token
 
@@ -375,7 +401,6 @@ contains
          end do
       end subroutine advance_token
       !---------------------------------------------------------------
-
 
       function parse_number() result(num)
          ! Read a numeric literal starting at the current cursor
@@ -492,7 +517,8 @@ contains
          integer :: nsize, pstart, pend, depth, n1, n2
          logical :: is_neg, have_second
          logical :: toplevel_colon, toplevel_comma
-
+         integer :: save_pos                     ! NEW
+         character(len=len_name) :: look_name    ! NEW
          call skip_spaces()
          !-------------- logical NOT ---------------------------------
          if (at_token('.not.')) then
@@ -505,7 +531,6 @@ contains
             end if
             return
          end if
-
 
          !---------------- unary  -----------------------------------------
          if (curr_char == "+" .or. curr_char == "-") then
@@ -600,20 +625,191 @@ contains
                      f = [bad_value]; return
                   end if
 
+! after ARG1 has been parsed
                   call skip_spaces()
                   have_second = .false.
+
                   if (curr_char == ",") then
-                     have_second = .true.
-                     call next_char()
-                     arg2 = parse_expression()
-                     if (eval_error) then
-                        f = [bad_value]; return
+                     if (any(trim(id) == [character(len=len_name) :: &
+                                          "sum", "product", "minval", "maxval"])) then
+                        !------------------------------------------------------------
+                        !  *These four* need named optional arguments – keep the
+                        !  original look‑ahead that enforces  name = expr
+                        !------------------------------------------------------------
+                        save_pos = pos
+                        call next_char()      ! skip the comma temporarily
+                        call skip_spaces()
+                        if (is_letter(curr_char)) then
+                           look_name = parse_identifier()
+                           call skip_spaces()
+                           if (curr_char /= "=") then
+                              print *, "Error: optional argument after ',' must be named"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           ! restore the comma so that the ordinary   ,name=expr   loop
+                           ! (a few lines below) can consume it
+                           pos = save_pos
+                           curr_char = ","
+                        else
+                           print *, "Error: optional argument after ',' must be named"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                     else
+                        !------------------------------------------------------------
+                        !  All other routines: the comma simply introduces a *second
+                        !  positional* argument.
+                        !------------------------------------------------------------
+                        call next_char()          ! consume ','
+                        call skip_spaces()
+                        arg2 = parse_expression()
+                        have_second = .true.
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
                      end if
                   end if
+
                   if (curr_char == ")") call next_char()
 
                   !------------- dispatch -----------------------------------------
+                  if (debug_arg) print *, "trim(id) = '"//trim(id)//"'"
                   select case (trim(id))
+
+                     !================================================================
+                     !  SUM / PRODUCT / MINVAL / MAXVAL
+                     !  – optional named arguments in any order
+                     !        dim = 1      and/or     mask = logical array
+                     !================================================================
+                  case ("sum", "product", "minval", "maxval")
+                     if (debug_arg) print *, 'entered case ("sum", "product", "minval", "maxval")'
+                     block
+                        !---- local to this block only ---------------------------
+                        logical                     :: have_dim, have_mask
+                        real(dp), allocatable      :: mask_arr(:)
+                        logical, allocatable       :: lmask(:)
+                        real(dp), allocatable      :: tmp(:)
+                        character(len=len_name)     :: name_tok
+                        integer                     :: dim_val
+
+                        have_dim = .false.
+                        have_mask = .false.
+                        dim_val = 1           ! only value supported now
+
+                        !---------------------------------------------------------
+                        ! first positional argument already parsed  →  ARG1
+                        ! now parse any  , name = expr  pairs
+                        do
+                           call skip_spaces()
+                           if (curr_char /= ",") exit
+                           call next_char(); call skip_spaces()
+
+                           if (.not. is_letter(curr_char)) then
+                              print *, "Error: expected named argument after ','"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           name_tok = parse_identifier()
+                           call skip_spaces()
+                           if (curr_char /= "=") then
+                              print *, "Error: expected '=' after '"//trim(name_tok)//"'"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           call next_char(); call skip_spaces()
+
+                           tmp = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]; return
+                           end if
+
+                           select case (trim(name_tok))
+                           case ("mask")
+                              if (have_mask) then
+                                 print *, "Error: duplicate mask= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              mask_arr = tmp
+                              have_mask = .true.
+
+                           case ("dim")
+                              if (have_dim) then
+                                 print *, "Error: duplicate dim= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: dim= must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              dim_val = nint(tmp(1))
+                              have_dim = .true.
+
+                           case default
+                              print *, "Error: unknown named argument '"//trim(name_tok)//"'"
+                              eval_error = .true.; f = [bad_value]; return
+                           end select
+                        end do
+! -- eat any white-space and the final right-parenthesis -----------------
+                        call skip_spaces()
+                        if (curr_char == ")") then          ! make absolutely sure the ')' itself
+                           call next_char()                 ! is consumed (curr_char -> next char)
+                        end if
+
+                        if (have_dim .and. dim_val /= 1) then
+                           print *, "Error: only dim=1 is allowed for 1D argument"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        !---- build logical mask ---------------------------------
+                        if (have_mask) then
+                           if (size(mask_arr) == 1) then
+                              allocate (lmask(size(arg1)))
+                              lmask = mask_arr(1) /= 0.0_dp
+                           else if (size(mask_arr) == size(arg1)) then
+                              allocate (lmask(size(arg1)))
+                              lmask = mask_arr /= 0.0_dp
+                           else
+                              print "(a,i0,1x,i0)", "Error: mask size mismatch in "//trim(id) &
+                                 //", sizes of arg1 and mask are ", size(arg1), size(mask_arr)
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+
+                           if (size(lmask) /= size(arg1)) then
+                              print *, "Error: mask must match array size in "//trim(id)
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end if
+
+                        !---- intrinsic call -------------------------------------
+                        select case (trim(id))
+                        case ("sum")
+                           if (have_mask) then
+                              f = [sum(arg1, mask=lmask)]
+                           else
+                              f = [sum(arg1)]
+                           end if
+
+                        case ("product")
+                           if (have_mask) then
+                              ! PRODUCT(mask=…) is F2003; use PACK for portability
+                              f = [product(pack(arg1, lmask))]
+                           else
+                              f = [product(arg1)]
+                           end if
+
+                        case ("minval")
+                           if (have_mask) then
+                              f = [minval(arg1, mask=lmask)]
+                           else
+                              f = [minval(arg1)]
+                           end if
+
+                        case ("maxval")
+                           if (have_mask) then
+                              f = [maxval(arg1, mask=lmask)]
+                           else
+                              f = [maxval(arg1)]
+                           end if
+                        end select
+                     end block
 
                   case ("cor", "cov", "dot") ! correlation, covariance, dot product
                      if (.not. have_second) then
@@ -748,7 +944,7 @@ contains
 
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
-                        "sum", "product", "norm1", "norm2", "minval", "maxval", "minloc", &
+                        "norm1", "norm2", "minloc", &
                         "maxloc", "count", "mean", "sd", "cumsum", "diff", "sort", "indexx", "rank", &
                         "stdz", "median", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
@@ -1132,6 +1328,7 @@ contains
       integer :: p_eq, p_com1, p_com2
       integer :: p_lpar, p_rpar, depth
       character(len=:), allocatable :: cond_txt, then_txt
+      if (debug_arg) print *, "in eval_print, line = '"//trim(line)//"'"
       line_cp = line
       ! write to transcript just once, for the whole input line
       if (write_code) write (tunit, "(a)") line
@@ -1588,12 +1785,12 @@ contains
 
    function logical_binary(op, a, b) result(res)
       character(len=*), intent(in) :: op               ! ".and." / ".or."
-      real(dp),         intent(in) :: a(:), b(:)
+      real(dp), intent(in) :: a(:), b(:)
       real(dp), allocatable        :: res(:)
       logical, allocatable         :: mask(:)
       integer :: na, nb, n
 
-      na = size(a);  nb = size(b)
+      na = size(a); nb = size(b)
       select case (op)
       case ('.and.', '.or.')
       case default
@@ -1612,26 +1809,26 @@ contains
          print *, "Error: size mismatch in logical "//trim(op)
          eval_error = .true.; res = [bad_value]; return
       end if
-      allocate(mask(n))
+      allocate (mask(n))
 
       ! -------- build element‑wise truth masks ---------------------
       if (na == 1) then
          mask = (a(1) /= 0.0_dp)
       else
-         mask = (a     /= 0.0_dp)
+         mask = (a /= 0.0_dp)
       end if
 
       if (op == '.and.') then
          if (nb == 1) then
             mask = mask .and. (b(1) /= 0.0_dp)
          else
-            mask = mask .and. (b     /= 0.0_dp)
+            mask = mask .and. (b /= 0.0_dp)
          end if
       else                            ! ".or."
          if (nb == 1) then
-            mask = mask .or.  (b(1) /= 0.0_dp)
+            mask = mask .or. (b(1) /= 0.0_dp)
          else
-            mask = mask .or.  (b     /= 0.0_dp)
+            mask = mask .or. (b /= 0.0_dp)
          end if
       end if
 
