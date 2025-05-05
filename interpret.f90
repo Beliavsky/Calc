@@ -1102,19 +1102,19 @@ contains
       adj_line = adjustl(line)
 
       ! ─── run("file") : execute the contents of a text file ───
-      if (index(adj_line,'run(') == 1) then
+      if (index(adj_line, 'run(') == 1) then
          block
-         integer :: p1, p2
-         character(len=:), allocatable :: fn
-         p1 = index(adj_line,'("') + 2
-         p2 = index(adj_line, '")') - 1
-         if (p1 > 2 .and. p2 >= p1) then
-            fn = adj_line(p1:p2)
-            call run(fn)
-         else
-            print *, "Error: run() expects a filename in double quotes"
-         end if
-         return
+            integer :: p1, p2
+            character(len=:), allocatable :: fn
+            p1 = index(adj_line, '("') + 2
+            p2 = index(adj_line, '")') - 1
+            if (p1 > 2 .and. p2 >= p1) then
+               fn = adj_line(p1:p2)
+               call run(fn)
+            else
+               print *, "Error: run() expects a filename in double quotes"
+            end if
+            return
          end block
       end if
 
@@ -1277,40 +1277,37 @@ contains
       end if
 
       trimmed_line = adjustl(line)
-      if (trimmed_line == "del") then
 
-         ! everything after “del”
-         p = index(trimmed_line, " ")
-         if (p > 0) then
-            tail = adjustl(trimmed_line(p + 1:))
+      if (len_trim(trimmed_line) >= 3 .and. trimmed_line(1:3) == "del" &
+          .and. (len_trim(trimmed_line) == 3 &  ! just "del"
+                 .or. trimmed_line(4:4) == " " &  ! "del a b"
+                 .or. trimmed_line(4:4) == ",")) then ! "del,a,b"
 
-            ! turn *any* spaces into commas...
-            tail = replace(tail, " ", ",")
-            ! ...and collapse any duplicate commas
-            do while (index(tail, ",,") > 0)
-               i = index(tail, ",,")
-               tail = tail(1:i - 1)//","//tail(i + 2:)
-            end do
+         ! everything *after* "del"
+         tail = adjustl(trimmed_line(4:))
 
-            ! strip any leading or trailing commas
-            do while (len_trim(tail) > 0 .and. tail(1:1) == ",")
-               tail = tail(2:)
-            end do
-            do while (len_trim(tail) > 0 .and. tail(len_trim(tail):len_trim(tail)) == ",")
-               tail = tail(:len_trim(tail) - 1)
-            end do
+         ! turn any spaces into commas, collapse duplicate commas,
+         ! and strip leading/trailing commas exactly as before
+         tail = replace(tail, " ", ",")
+         do while (index(tail, ",,") > 0)
+            i = index(tail, ",,")
+            tail = tail(1:i - 1)//","//tail(i + 2:)
+         end do
+         do while (len_trim(tail) > 0 .and. tail(1:1) == ",")
+            tail = tail(2:)
+         end do
+         do while (len_trim(tail) > 0 .and. tail(len_trim(tail):len_trim(tail)) == ",")
+            tail = tail(:len_trim(tail) - 1)
+         end do
 
-            if (len_trim(tail) > 0) then
-               call delete_vars(tail)
-            else
-               print *, "Error: no variables specified in 'del'"
-            end if
+         if (len_trim(tail) > 0) then
+            call delete_vars(tail)
          else
             print *, "Error: no variables specified in 'del'"
          end if
-
          return
       end if
+
 ! ————————————————————————— end “del” —————————————————————
 
       if (adjustl(line) == "clear") then
@@ -1458,11 +1455,11 @@ contains
          n = na
          allocate (mask(n), source=.false.)
          select case (op)
-         case ("<") ; mask = a < b
+         case ("<"); mask = a < b
          case ("<="); mask = a <= b
-         case (">") ; mask = a > b
+         case (">"); mask = a > b
          case (">="); mask = a >= b
-         case ("=") ; mask = abs(a - b) <= tol
+         case ("="); mask = abs(a - b) <= tol
          case ("=="); mask = abs(a - b) <= tol
          case ("/="); mask = abs(a - b) > tol
          end select
@@ -1694,18 +1691,18 @@ contains
       logical :: verbose_
       verbose_ = .false.
       if (verbose_) neval = 0
-      open(newunit=u, file=trim(filename), status='old', action='read', iostat=ios)
+      open (newunit=u, file=trim(filename), status='old', action='read', iostat=ios)
       if (ios /= 0) then
-         write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(filename), ios
+         write (*, '("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(filename), ios
          return
       end if
 
       do                                   ! read until EOF
-         read(u,'(A)', iostat=ios) ln
+         read (u, '(A)', iostat=ios) ln
          if (ios /= 0) exit
          if (len_trim(ln) == 0) cycle       ! ignore blank lines
          comment_pos = index(ln, comment_char)
-         if (comment_pos > 0) ln = ln(1:max(1,comment_pos-1))
+         if (comment_pos > 0) ln = ln(1:max(1, comment_pos - 1))
          if (ln /= comment_char) then
             if (verbose_ .and. neval > 0) print "(/)"
             if (verbose_) print "(a)", trim(ln)
@@ -1714,7 +1711,7 @@ contains
          end if
          if (stop_if_error .and. eval_error) exit
       end do
-      close(u)
+      close (u)
    end subroutine run
 
 end module interpret_mod
