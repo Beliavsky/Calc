@@ -11,9 +11,8 @@ module interpret_mod
    use plot_mod, only: plot, plot_to_label
    implicit none
    private
-   public :: evaluate, eval_print, set_variable, tunit, write_code, &
-             code_transcript_file, clear, vars, mutable, slice_array, &
-             split_by_semicolon, delete_vars, echo_code, run
+   public :: eval_print, tunit, code_transcript_file, vars, write_code, &
+             echo_code
 
    integer, parameter :: max_vars = 100, len_name = 32
    integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
