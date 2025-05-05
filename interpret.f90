@@ -4,7 +4,7 @@ module interpret_mod
                         print_stats, skew, kurtosis
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
-                       is_numeral, is_letter, zeros, ones, replace
+                       is_numeral, is_letter, zeros, ones, replace, rep
    use random_mod, only: random_normal, runif
    use qsort_mod, only: sorted, indexx, rank, median
    use iso_fortran_env, only: compiler_options, compiler_version
@@ -646,6 +646,32 @@ contains
                         ! for which mask(i) is .true.  Here we treat nonzero arg2 as .true.
                         f = pack(arg1, arg2 /= 0.0_dp)
                      end if
+
+               !---------------------------------------------------------------
+               case ("rep")
+                  !  rep(v , n)  =  v repeated n times
+                  if (.not. have_second) then
+                     print *, "Error: rep() needs two arguments"
+                     eval_error = .true.
+                     f = [bad_value]
+                  else                           ! we already have arg1 and arg2
+                     if (size(arg2) /= 1) then
+                        print *, "Error: second argument of rep() must be scalar"
+                        eval_error = .true.
+                        f = [bad_value]
+                     else
+                        nsize = nint(arg2(1))
+                        if (nsize < 0) then
+                           print *, "Error: rep() count must be non‑negative"
+                           eval_error = .true.
+                           f = [bad_value]
+                        else
+                           f = rep(arg1, nsize)   ! <<< external function call
+                        end if
+                     end if
+                  end if
+               !---------------------------------------------------------------
+
 
                   case ("runif", "rnorm", "arange", "zeros", "ones") ! one-arg
                      if (have_second) then
