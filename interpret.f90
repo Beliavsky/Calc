@@ -29,13 +29,11 @@ module interpret_mod
    character(len=1) :: curr_char
    character(len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
    character(len=*), parameter :: comment_char = "!"
-   logical, parameter :: stop_if_error = .false., debug_eval = .false., debug_arg = .false.
-   logical, parameter :: debug_dim_val = .false.
+   logical, parameter :: stop_if_error = .false.
    real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
    logical, save :: print_array_as_int_if_possible = .true.
    character(len=:), allocatable :: line_cp
-   logical, parameter :: debug_loop = .false., debug_if = .false.
    logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
    logical, save :: exit_loop = .false., cycle_loop = .false.
 
@@ -342,10 +340,6 @@ contains
          ! return an empty result to signal failure
          res = [real(kind=dp) ::]
       end if
-      if (debug_eval) then
-         print "(a)", "in evaluate, str = '"//trim(str)//"'"
-         print *, "res =", res
-      end if
    contains
 
       !--------------------------------------------------
@@ -520,7 +514,6 @@ contains
          character(len=len_name) :: look_name    ! NEW
          have_dim = .false.
          dim_val = 1
-         if (debug_dim_val) print*,"dim_val =", dim_val
          call skip_spaces()
          !-------------- logical NOT ---------------------------------
          if (at_token('.not.')) then
@@ -675,10 +668,6 @@ contains
                                  eval_error = .true.; f = [bad_value]; return
                               end if
                               dim_val = nint(tmp(1))
-                              if (debug_dim_val) then
-                                 print*,"tmp(1), dim_val =", tmp(1), dim_val
-                                 print*,"size(tmp), tmp =",size(tmp), tmp
-                              end if
                               have_dim = .true.
                               call skip_spaces()
                            end if
@@ -700,7 +689,6 @@ contains
                   if (curr_char == ")") call next_char()
 
                   !------------- dispatch -----------------------------------------
-                  if (debug_arg) print *, "trim(id) = '"//trim(id)//"'"
                   select case (trim(id))
 
                      !================================================================
@@ -709,7 +697,6 @@ contains
                      !        dim = 1      and/or     mask = logical array
                      !================================================================
                   case ("sum", "product", "minval", "maxval")
-                     if (debug_arg) print *, 'entered case ("sum", "product", "minval", "maxval")'
                      block
                         !---- local to this block only ---------------------------
                         logical                     :: have_mask
@@ -764,7 +751,6 @@ contains
                                  eval_error = .true.; f = [bad_value]; return
                               end if
                               dim_val = nint(tmp(1))
-                              if (debug_dim_val) print*,"tmp(1), dim_val =", tmp(1), dim_val
                               have_dim = .true.
 
                            case default
@@ -1353,7 +1339,6 @@ contains
       integer :: p_eq, p_com1, p_com2
       integer :: p_lpar, p_rpar, depth
       character(len=:), allocatable :: cond_txt, then_txt
-      if (debug_arg) print *, "in eval_print, line = '"//trim(line)//"'"
       line_cp = line
       ! write to transcript just once, for the whole input line
       if (write_code) write (tunit, "(a)") line
@@ -1489,11 +1474,6 @@ contains
 !     adj_line(3:3) == '(' ) then
 
       p_lpar = index(adj_line, "(")                ! first left parenthesis
-      if (debug_if .and. p_lpar > 0) then
-         print *, "testing for one-line if, p_lpar =", p_lpar
-         print *, "adj_line = '"//trim(adj_line)//"'"
-         print *
-      end if
       if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
          ! — locate the matching right parenthesis —
@@ -1522,9 +1502,6 @@ contains
 
          ! — evaluate the condition (must be scalar) —
          tmp = evaluate(cond_txt)
-         if (debug_if) then
-            print *, "tmp, cond_txt =", tmp, "'"//trim(cond_txt)//"'"
-         end if
          if (eval_error) return
          if (size(tmp) /= 1) then
             print *, "Error: IF condition must be scalar"
@@ -2007,7 +1984,6 @@ contains
          else
             line = body(p1:p1 + p2 - 2)
          end if
-         if (debug_loop) print "(a)", "calling eval_print with line = '"//trim(line)//"'"
          call eval_print(line)                            ! recursion
          if (cycle_loop) then
             ! — we’ve seen a “cycle” in this iteration,
