@@ -1036,7 +1036,7 @@ contains
       ! --------------------------------------------------------------
       ! 1.  split the input at *top-level* semicolons
       ! --------------------------------------------------------------
-      integer                       :: n, k, rsize, i, nsize, ivar
+      integer                       :: n, k, rsize, i, nsize, ivar, nlen_tail
       character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line
       logical, allocatable   :: suppress(:)
       real(dp), allocatable   :: r(:), tmp(:)
@@ -1291,16 +1291,17 @@ contains
          tail = replace(tail, " ", ",")
          do while (index(tail, ",,") > 0)
             i = index(tail, ",,")
-            tail = tail(1:i - 1)//","//tail(i + 2:)
+            tail = tail(1:i - 1) // "," // tail(i + 2:)
          end do
-         do while (len_trim(tail) > 0 .and. tail(1:1) == ",")
+         nlen_tail = len_trim(tail)
+         do while (nlen_tail > 0 .and. tail(1:1) == ",")
             tail = tail(2:)
          end do
-         do while (len_trim(tail) > 0 .and. tail(len_trim(tail):len_trim(tail)) == ",")
+         do while (len_trim(tail) > 0 .and. tail(nlen_tail:nlen_tail) == ",")
             tail = tail(:len_trim(tail) - 1)
          end do
 
-         if (len_trim(tail) > 0) then
+         if (nlen_tail > 0) then
             call delete_vars(tail)
          else
             print *, "Error: no variables specified in 'del'"
