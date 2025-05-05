@@ -33,7 +33,7 @@ module interpret_mod
    logical, parameter :: stop_if_error = .false., debug_eval = .false.
    real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
-   logical, save :: print_array_as_int_if_possible = .false.
+   logical, save :: print_array_as_int_if_possible = .true.
    character(len=:), allocatable :: line_cp
    logical, parameter :: debug_loop = .false., debug_if = .false.
    logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
@@ -355,6 +355,28 @@ contains
          end do
       end subroutine skip_spaces
 
+      !---------------------------------------------------------------
+      logical function at_token(tok)                                   ! TRUE if
+         character(len=*), intent(in) :: tok                           !   the
+         integer :: l                                                  !   text
+         l = len_trim(tok)                                             !   TOK
+         if (pos-1+l-1 > lenstr) then                                  !   starts
+            at_token = .false.                                         !   at the
+         else                                                          !   current
+            at_token = (expr(pos-1:pos-2+l) == tok)                    !   cursor
+         end if
+      end function at_token
+
+      subroutine advance_token(n)                                      ! skip the
+         integer, intent(in) :: n                                      ! next N
+         integer :: k                                                  ! letters
+         do k = 1, n                                                   ! (calls
+            call next_char()                                           ! next_char)
+         end do
+      end subroutine advance_token
+      !---------------------------------------------------------------
+
+
       function parse_number() result(num)
          ! Read a numeric literal starting at the current cursor
          ! and return it as a one-element array num
@@ -472,6 +494,18 @@ contains
          logical :: toplevel_colon, toplevel_comma
 
          call skip_spaces()
+         !-------------- logical NOT ---------------------------------
+         if (at_token('.not.')) then
+            call advance_token(5)                ! consume ".not."
+            f = parse_factor()                   ! recurse on the operand
+            if (.not. eval_error) then
+               f = merge(1.0_dp, 0.0_dp, f == 0.0_dp)   ! element-wise .not.
+            else
+               f = [bad_value]
+            end if
+            return
+         end if
+
 
          !---------------- unary  -----------------------------------------
          if (curr_char == "+" .or. curr_char == "-") then
@@ -874,7 +908,12 @@ contains
          end do
       end function parse_term
 
-      recursive function parse_expression() result(e)
+      !===============================================================
+      recursive function parse_relational() result(e)
+         ! *** This is the old body of parse_expression ***
+         ! (addition / subtraction + the existing relational chain)
+         ! Paste the *whole* original code of parse_expression here
+         ! up to its END FUNCTION, but DO NOT include any .and./.or.
          ! Handles:
          !    addition / subtraction        (+  -)
          !    relational comparisons        (<  <=  >  >=  ==  <=)
@@ -972,7 +1011,34 @@ contains
             e = rel_compare(op, e, rhs)    ! perform comparison
             call skip_spaces()
          end do
+      end function parse_relational
+
+      recursive function parse_logical_and() result(e)
+         real(dp), allocatable :: e(:), rhs(:)
+         e = parse_relational()
+         call skip_spaces()
+         do while (.not. eval_error .and. at_token('.and.'))
+            call advance_token(5)
+            rhs = parse_relational()
+            if (eval_error) exit
+            e = logical_binary('.and.', e, rhs)
+            call skip_spaces()
+         end do
+      end function parse_logical_and
+
+      recursive function parse_expression() result(e)   !  top level  (= .or.)
+         real(dp), allocatable :: e(:), rhs(:)
+         e = parse_logical_and()
+         call skip_spaces()
+         do while (.not. eval_error .and. at_token('.or.'))
+            call advance_token(4)
+            rhs = parse_logical_and()
+            if (eval_error) exit
+            e = logical_binary('.or.', e, rhs)
+            call skip_spaces()
+         end do
       end function parse_expression
+
    end function evaluate
 
    subroutine assign_element(lhs, rval)
@@ -1519,6 +1585,58 @@ contains
          res = [bad_value]
       end if
    end function rel_compare
+
+   function logical_binary(op, a, b) result(res)
+      character(len=*), intent(in) :: op               ! ".and." / ".or."
+      real(dp),         intent(in) :: a(:), b(:)
+      real(dp), allocatable        :: res(:)
+      logical, allocatable         :: mask(:)
+      integer :: na, nb, n
+
+      na = size(a);  nb = size(b)
+      select case (op)
+      case ('.and.', '.or.')
+      case default
+         print *, "Error: logical operator '"//trim(op)//"' not recognised"
+         eval_error = .true.; res = [bad_value]; return
+      end select
+
+      ! -------- conformability & broadcasting ----------------------
+      if (na == nb) then
+         n = na
+      else if (na == 1) then
+         n = nb
+      else if (nb == 1) then
+         n = na
+      else
+         print *, "Error: size mismatch in logical "//trim(op)
+         eval_error = .true.; res = [bad_value]; return
+      end if
+      allocate(mask(n))
+
+      ! -------- build element‑wise truth masks ---------------------
+      if (na == 1) then
+         mask = (a(1) /= 0.0_dp)
+      else
+         mask = (a     /= 0.0_dp)
+      end if
+
+      if (op == '.and.') then
+         if (nb == 1) then
+            mask = mask .and. (b(1) /= 0.0_dp)
+         else
+            mask = mask .and. (b     /= 0.0_dp)
+         end if
+      else                            ! ".or."
+         if (nb == 1) then
+            mask = mask .or.  (b(1) /= 0.0_dp)
+         else
+            mask = mask .or.  (b     /= 0.0_dp)
+         end if
+      end if
+
+      res = merge(1.0_dp, 0.0_dp, mask)              ! back to 0/1 numbers
+   end function logical_binary
 
    function merge_array(t_source, f_source, mask_val) result(res)
   !! Elemental-style MERGE for the interpreter.
