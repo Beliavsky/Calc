@@ -31,6 +31,7 @@ module interpret_mod
    character(len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
    character(len=*), parameter :: comment_char = "!"
    logical, parameter :: stop_if_error = .false., debug_eval = .false., debug_arg = .false.
+   logical, parameter :: debug_dim_val = .false.
    real(kind=dp), parameter :: bad_value = -999.0_dp, tol = 1.0e-6_dp
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
    logical, save :: print_array_as_int_if_possible = .true.
@@ -514,11 +515,13 @@ contains
          integer, allocatable :: idxv(:)
          character(len=len_name) :: id
          character(len=:), allocatable :: idxs
-         integer :: nsize, pstart, pend, depth, n1, n2
+         integer :: nsize, pstart, pend, depth, n1, n2, dim_val
          logical :: is_neg, have_second
-         logical :: toplevel_colon, toplevel_comma
-         integer :: save_pos                     ! NEW
+         logical :: toplevel_colon, toplevel_comma, have_dim
          character(len=len_name) :: look_name    ! NEW
+         have_dim = .false.
+         dim_val = 1
+         if (debug_dim_val) print*,"dim_val =", dim_val
          call skip_spaces()
          !-------------- logical NOT ---------------------------------
          if (at_token('.not.')) then
@@ -633,32 +636,57 @@ contains
                      if (any(trim(id) == [character(len=len_name) :: &
                                           "sum", "product", "minval", "maxval"])) then
                         !------------------------------------------------------------
-                        !  *These four* need named optional arguments – keep the
-                        !  original look‑ahead that enforces  name = expr
+                        !  2nd *token* can be either
+                        !     • a positional DIM value       →  sum(x , 1)
+                        !     • a named argument             →  sum(x , mask = …)
                         !------------------------------------------------------------
-                        save_pos = pos
-                        call next_char()      ! skip the comma temporarily
-                        call skip_spaces()
-                        if (is_letter(curr_char)) then
-                           look_name = parse_identifier()
+                        block
+                           integer :: save_pos
+                           logical :: is_name_eq
+                           real(kind=dp), allocatable :: tmp(:)
+                           save_pos = pos          ! index **after** the comma
+                           call next_char()          ! step over ‘,’
                            call skip_spaces()
-                           if (curr_char /= "=") then
-                              print *, "Error: optional argument after ',' must be named"
-                              eval_error = .true.; f = [bad_value]; return
-                           end if
-                           ! restore the comma so that the ordinary   ,name=expr   loop
-                           ! (a few lines below) can consume it
-                           pos = save_pos
-                           curr_char = ","
-                        else
-                           print *, "Error: optional argument after ',' must be named"
-                           eval_error = .true.; f = [bad_value]; return
-                        end if
 
+                           !–– look ahead:  identifier followed by '='  ? ––
+                           is_name_eq = .false.
+                           if (is_letter(curr_char)) then
+                              look_name = parse_identifier()
+                              call skip_spaces()
+                              if (curr_char == "=") is_name_eq = .true.
+                           end if
+
+                           if (is_name_eq) then
+                              !–– restore → named‑argument loop will handle it ––
+                              pos = save_pos
+                              curr_char = ","
+                           else
+                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
+                              !  **Positional DIM value**
+                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
+                              pos = save_pos          ! we already skipped the comma
+                              call next_char()
+                              call skip_spaces()
+                              tmp = parse_expression()               ! DIM expression
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: dim argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              dim_val = nint(tmp(1))
+                              if (debug_dim_val) then
+                                 print*,"tmp(1), dim_val =", tmp(1), dim_val
+                                 print*,"size(tmp), tmp =",size(tmp), tmp
+                              end if
+                              have_dim = .true.
+                              call skip_spaces()
+                           end if
+                        end block
                      else
                         !------------------------------------------------------------
-                        !  All other routines: the comma simply introduces a *second
-                        !  positional* argument.
+                        !  Any other routine – 2‑nd positional argument as before
                         !------------------------------------------------------------
                         call next_char()          ! consume ','
                         call skip_spaces()
@@ -685,16 +713,13 @@ contains
                      if (debug_arg) print *, 'entered case ("sum", "product", "minval", "maxval")'
                      block
                         !---- local to this block only ---------------------------
-                        logical                     :: have_dim, have_mask
+                        logical                     :: have_mask
                         real(dp), allocatable      :: mask_arr(:)
                         logical, allocatable       :: lmask(:)
                         real(dp), allocatable      :: tmp(:)
                         character(len=len_name)     :: name_tok
-                        integer                     :: dim_val
 
-                        have_dim = .false.
                         have_mask = .false.
-                        dim_val = 1           ! only value supported now
 
                         !---------------------------------------------------------
                         ! first positional argument already parsed  →  ARG1
@@ -740,6 +765,7 @@ contains
                                  eval_error = .true.; f = [bad_value]; return
                               end if
                               dim_val = nint(tmp(1))
+                              if (debug_dim_val) print*,"tmp(1), dim_val =", tmp(1), dim_val
                               have_dim = .true.
 
                            case default
@@ -754,7 +780,7 @@ contains
                         end if
 
                         if (have_dim .and. dim_val /= 1) then
-                           print *, "Error: only dim=1 is allowed for 1D argument"
+                           print *, "Error: only dim=1 is allowed for 1D argument, dim_val =",dim_val
                            eval_error = .true.; f = [bad_value]; return
                         end if
 
