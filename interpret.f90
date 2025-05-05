@@ -647,31 +647,23 @@ contains
                         f = pack(arg1, arg2 /= 0.0_dp)
                      end if
 
-               !---------------------------------------------------------------
-               case ("rep")
-                  !  rep(v , n)  =  v repeated n times
-                  if (.not. have_second) then
-                     print *, "Error: rep() needs two arguments"
-                     eval_error = .true.
-                     f = [bad_value]
-                  else                           ! we already have arg1 and arg2
-                     if (size(arg2) /= 1) then
-                        print *, "Error: second argument of rep() must be scalar"
+                     !---------------------------------------------------------------
+                  case ("rep")
+                     !  rep(v , n)  =  v repeated n times
+                     if (.not. have_second) then
+                        print *, "Error: rep() needs two arguments"
                         eval_error = .true.
                         f = [bad_value]
-                     else
-                        nsize = nint(arg2(1))
-                        if (nsize < 0) then
-                           print *, "Error: rep() count must be non‑negative"
+                     else                           ! we already have arg1 and arg2
+                        if (size(arg2) /= 1) then
+                           print *, "Error: second argument of rep() must be scalar"
                            eval_error = .true.
                            f = [bad_value]
                         else
-                           f = rep(arg1, nsize)   ! <<< external function call
+                           f = rep(arg1, nint(arg2(1)))
                         end if
                      end if
-                  end if
-               !---------------------------------------------------------------
-
+                     !---------------------------------------------------------------
 
                   case ("runif", "rnorm", "arange", "zeros", "ones") ! one-arg
                      if (have_second) then
@@ -1317,7 +1309,7 @@ contains
          tail = replace(tail, " ", ",")
          do while (index(tail, ",,") > 0)
             i = index(tail, ",,")
-            tail = tail(1:i - 1) // "," // tail(i + 2:)
+            tail = tail(1:i - 1)//","//tail(i + 2:)
          end do
          nlen_tail = len_trim(tail)
          do while (nlen_tail > 0 .and. tail(1:1) == ",")
