@@ -4,7 +4,12 @@ implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
-   is_alphanumeric, zeros, ones, windows
+   is_alphanumeric, zeros, ones, windows, rep, matrix, read_vec
+
+interface rep
+   module procedure rep_vec
+end interface rep
+
 contains
 
 elemental logical function matched_parentheses(s) result(is_valid)
@@ -181,10 +186,110 @@ allocate (v(n), source=1.0_dp)
 end function ones
 
 function windows() result(tf)
+! test if the operating system is Windows by checking if the path starts with /
 logical :: tf
 character (len=1000) :: pathstring
 call get_environment_variable("PATH", pathstring)
 tf = pathstring(1:1) /= "/"
 end function windows
+
+function rep_vec(x, n) result(y)
+! repeat a 1D array to get a new 1D array
+real(kind=dp), intent(in)  :: x(:)  ! array to copy
+integer      , intent(in)  :: n     ! number of copies
+real(kind=dp), allocatable :: y(:)
+integer :: i, j, nx, ny
+nx = size(x)
+ny = n*nx
+if (ny < 1) then
+   allocate (y(0))
+   return
+end if
+allocate (y(ny))
+j = 1
+do i=1,n
+   y(j:j+nx-1) = x
+   j = j + nx
+end do
+end function rep_vec
+
+function matrix(x) result(xmat)
+! convert scalar to 1x1 matrix
+real(kind=dp), intent(in) :: x
+real(kind=dp)             :: xmat(1,1)
+xmat = x
+end function matrix
+
+subroutine read_vec(file, x, icol)
+!─────────────────────────────────────────────────────────────────────────────
+!  Read the real-valued ICOL-th column of text file FILE into X(:).
+!  Leading "header" lines that cannot be read as reals are ignored.
+!  Reading stops when, after data have started, a record is encountered
+!  from which the ICOL-th real value cannot be obtained.
+!
+   character(len=*),               intent(in)  :: file
+   real   (kind=dp), allocatable,  intent(out) :: x(:)
+   integer,               optional, intent(in) :: icol
+
+   integer            :: u, ios, j, ic, n
+   character(len=1000) :: line          ! complete input record
+   real(dp)           :: val
+   character (len=1)  :: dummy
+   logical            :: found_data
+   real(dp), allocatable :: tmp(:)
+   integer            :: comment_pos
+
+!–––– column choice ––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+   if (present(icol)) then
+      ic = icol
+   else
+      ic = 1
+   end if
+
+!–––– open the file ––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+   open(newunit=u, file=trim(file), action='read', status='old', iostat=ios)
+   if (ios /= 0) then
+      write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(file), ios
+      allocate(x(0));  return
+   end if
+
+!–––– initialise ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+   allocate(x(0))
+   n          = 0
+   found_data = .false.
+
+!–––– main loop ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+   do
+      read(u,'(A)', iostat=ios) line
+      if (ios /= 0) exit                         ! EOF / read error → done
+      if (line == '') cycle                      ! skip blank lines
+
+      ! strip “!” comments
+      comment_pos = index(line,'!')
+      if (comment_pos > 0) line = line(:comment_pos-1)
+      if (len_trim(line) == 0) cycle
+
+      ! attempt to read ICOL‑th real value
+      read(line,*, iostat=ios) (dummy, j=1,ic-1), val
+      if (ios /= 0) then
+         if (.not. found_data) then
+            cycle                                ! still in the header part
+         else
+            exit                                 ! data had started → stop
+         end if
+      end if
+
+      ! got a value – store it
+      found_data = .true.
+      n = n + 1
+      if (allocated(tmp)) deallocate(tmp) 
+      allocate(tmp(n))
+      if (n > 1) tmp(1:n-1) = x
+      tmp(n) = val
+      call move_alloc(tmp, x)
+   end do
+
+   close(u)
+end subroutine read_vec
 
 end module util_mod
