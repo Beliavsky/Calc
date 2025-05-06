@@ -4,7 +4,8 @@ module interpret_mod
                         print_stats, skew, kurtosis
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
-                       is_numeral, is_letter, zeros, ones, replace, rep
+                       is_numeral, is_letter, zeros, ones, replace, &
+                       rep, read_vec
    use random_mod, only: random_normal, runif
    use qsort_mod, only: sorted, indexx, rank, median
    use iso_fortran_env, only: compiler_options, compiler_version
@@ -34,8 +35,9 @@ module interpret_mod
    logical, parameter :: mutable = .true.   ! when .false., no reassignments allowed
    logical, save :: print_array_as_int_if_possible = .true.
    character(len=:), allocatable :: line_cp
-   logical, save :: in_loop_execute = .false.   ! TRUE only inside run_loop_body
+   logical, save :: in_loop_execute = .false.   ! .true. only inside run_loop_body
    logical, save :: exit_loop = .false., cycle_loop = .false.
+   logical, parameter :: debug_read = .false.
 
 !––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
 !── Maximum nesting and a fixed buffer for every loop level
@@ -559,6 +561,106 @@ contains
                   call next_char()                   !  consume "("
                   call skip_spaces()
 
+!=================================================================
+!  read("file.txt" [, col | col = n])
+!      → calls  read_vec(file , f , icol = n)
+!
+!  • first argument must be a double‑quoted file name
+!  • second argument is optional; if omitted defaults to column 1
+!    It can be given positionally ( e.g. read("f.txt",3) )
+!    or by keyword         ( e.g. read("f.txt", col = 3) )
+!=================================================================
+                  if (trim(id) == "read") then
+                     block
+                        character(len=:), allocatable :: fname
+                        integer                       :: icol
+                        real(dp), allocatable         :: tmp(:)
+                        integer                       :: q1, q2, save_pos
+                        character(len=len_name)       :: kw
+
+                        icol = 1                     ! default column
+                        call skip_spaces()
+
+                        ! ---- first argument : a quoted string --------------------
+                        if (curr_char /= '"') then
+                           print *, "Error: read(): first argument must be a quoted file name"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        q1 = pos - 1                 ! opening quote location in EXPR
+                        q2 = q1
+                        if (debug_read) print *, "q1, q2 =", q1, q2
+                        do
+                           q2 = q2 + 1
+                           if (q2 > lenstr) then
+                              print *, "Error: unmatched quote in read()"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           if (expr(q2:q2) == '"') exit
+                        end do
+                        fname = expr(q1 + 1:q2 - 1)      ! file name without quotes
+                        if (debug_read) then
+                           print *, "fname =", trim(fname)
+                        end if
+                        ! advance cursor to first char after closing quote
+                        pos = q2 + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        call skip_spaces()
+
+                        ! ---- optional  ,  [col =] n  -----------------------------
+                        if (curr_char == ",") then
+                           call next_char(); call skip_spaces()
+
+                           save_pos = pos
+                           if (is_letter(curr_char)) then
+                              kw = parse_identifier()
+                              call skip_spaces()
+                              if (trim(kw) == "col") then      ! got keyword
+                                 if (curr_char == "=") then
+                                    call next_char()
+                                    call skip_spaces()
+                                 end if
+                              else                              ! unknown keyword
+                                 print *, "Error: unknown keyword '"//trim(kw)//"' in read()"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           else
+                              ! no keyword → rewind; treat as positional
+                              pos = save_pos
+                              curr_char = expr(pos - 1:pos - 1)
+                           end if
+
+                           tmp = parse_expression()
+                           if (eval_error) return
+                           if (size(tmp) /= 1) then
+                              print *, "Error: col argument must be scalar"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           icol = nint(tmp(1))
+                           call skip_spaces()
+                        end if
+
+                        ! ---- closing parenthesis ---------------------------------
+                        if (curr_char /= ")") then
+                           print *, "Error: expected ')' at end of read()"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        call next_char()                      ! consume ')'
+                        if (debug_read) then
+                           print *, "icol, fname =", icol, trim(fname)
+                        end if
+                        ! ---- actually read the file --------------------------------
+                        call read_vec(fname, f, icol=icol)
+                        if (debug_read) print*,"f =",f
+                        return
+                     end block
+                  end if
+!=================================================================
+
                   !============ ZERO-ARGUMENT SPECIAL CASE ======================
                   if (curr_char == ")") then         !  e.g. runif()
                      call next_char()                !  consume ")"
@@ -765,7 +867,7 @@ contains
                         end if
 
                         if (have_dim .and. dim_val /= 1) then
-                           print *, "Error: only dim=1 is allowed for 1D argument, dim_val =",dim_val
+                           print *, "Error: only dim=1 is allowed for 1D argument, dim_val =", dim_val
                            eval_error = .true.; f = [bad_value]; return
                         end if
 
