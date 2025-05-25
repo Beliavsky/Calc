@@ -48,6 +48,8 @@ rnorm(10^3)                         ! 1000 iid normals; large vectors are summar
 ! ────────────────────────────────
 sum(x)                              ! sum of elements
 mean(x)                             ! arithmetic mean
+geomean(x)                          ! geometric mean = product(x) ^ (1/size(x))
+harmean(x)                          ! harmonic mean  = size(x) / sum(1/x)
 sd(x)                               ! sample standard deviation
 [mean(x) sd(x) minval(x) maxval(x)] ! combining multiple scalar results in a vector
 median(x)                           ! sample median
