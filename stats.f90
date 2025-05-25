@@ -3,7 +3,7 @@ use kind_mod, only: dp
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
-          print_stats, skew, kurtosis
+          print_stats, skew, kurtosis, cummin, cummax, cummean
 contains
 
 function standardize(x) result(y)
@@ -88,6 +88,48 @@ do i=2,n
    y(i) = y(i-1) + x(i)
 end do
 end function cumsum
+
+function cummean(x) result(y)
+! return the cumulative mean of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), allocatable :: y(:)
+integer :: i, n, ierr
+n = size(x)
+allocate (y(n), stat=ierr)
+if (n < 1 .or. ierr /= 0) return
+y = cumsum(x)
+do i=2,n
+   y(i) = y(i)/i
+end do
+end function cummean
+
+function cummin(x) result(y)
+! return the cumulative minimum of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), allocatable :: y(:)
+integer :: i, n, ierr
+n = size(x)
+allocate (y(n), stat=ierr)
+if (n < 1 .or. ierr /= 0) return
+y(1) = x(1)
+do i=2,n
+   y(i) = min(y(i-1), x(i))
+end do
+end function cummin
+
+function cummax(x) result(y)
+! return the cumulative maximum of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), allocatable :: y(:)
+integer :: i, n, ierr
+n = size(x)
+allocate (y(n), stat=ierr)
+if (n < 1 .or. ierr /= 0) return
+y(1) = x(1)
+do i=2,n
+   y(i) = max(y(i-1), x(i))
+end do
+end function cummax
 
 function cumprod(x) result(y)
 ! return the cumulative sum of x
