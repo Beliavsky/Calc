@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, cumsum, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
@@ -249,6 +249,7 @@ contains
       case ("atand"); res = atand(arr)
       case ("spacing"); res = spacing(arr)
       case ("cumsum"); res = cumsum(arr)
+      case ("cumprod"); res = cumprod(arr)
       case ("diff"); res = diff(arr)
       case ("head"); res = head(arr)
       case ("tail"); res = tail(arr)
@@ -1058,8 +1059,8 @@ contains
 
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
-                        "norm1", "norm2", "minloc", &
-                        "maxloc", "count", "mean", "sd", "cumsum", "diff", "sort", "indexx", "rank", &
+                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "sd", "cumsum", &
+                        "cumprod", "diff", "sort", "indexx", "rank", &
                         "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
