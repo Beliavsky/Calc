@@ -2,11 +2,12 @@ module stats_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: mean, sd, cor, cov, cumsum, diff, standardize, &
+public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis
 contains
 
 function standardize(x) result(y)
+! shift and scale x so it has mean 0 and variance 1
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp)             :: y(size(x))
 real(kind=dp)             :: sumsq
@@ -88,6 +89,20 @@ do i=2,n
 end do
 end function cumsum
 
+function cumprod(x) result(y)
+! return the cumulative sum of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), allocatable :: y(:)
+integer :: i, n, ierr
+n = size(x)
+allocate (y(n), stat=ierr)
+if (n < 1 .or. ierr /= 0) return
+y(1) = x(1)
+do i=2,n
+   y(i) = y(i-1) * x(i)
+end do
+end function cumprod
+
 function diff(x) result(y)
 ! return the consecutive differences of x
 real(kind=dp), intent(in) :: x(:)
@@ -100,12 +115,12 @@ end function diff
 
 subroutine print_stats(x)
 real(kind=dp), intent(in) :: x(:)
-integer :: n
+integer :: n, ierr
 n = size(x)
 print "(*(a10))", "size", "mean", "sd", "skew", "kurt", "min", "max", "first", "last"
 if (n > 0) then
-   print "(i10, *(f10.4))", n, mean(x), sd(x), skew(x), kurtosis(x), minval(x), &
-                            maxval(x), x(1), x(n)
+   write (*, "(i10, *(f10.4))", iostat=ierr) n, mean(x), sd(x), &
+      skew(x), kurtosis(x), minval(x), maxval(x), x(1), x(n)
 else
    print "(i10)", n
 end if
