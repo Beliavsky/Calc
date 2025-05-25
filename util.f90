@@ -4,7 +4,8 @@ implicit none
 private
 public :: matched_parentheses, matched_brackets, arange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
-   is_alphanumeric, zeros, ones, windows, rep, matrix, read_vec
+   is_alphanumeric, zeros, ones, windows, rep, matrix, read_vec, &
+   reverse
 
 interface rep
    module procedure rep_vec
@@ -245,16 +246,15 @@ subroutine read_vec(file, x, icol)
    else
       ic = 1
    end if
-
+   allocate(x(0))
 !–––– open the file ––––––––––––––––––––––––––––––––––––––––––––––––––––––––
    open(newunit=u, file=trim(file), action='read', status='old', iostat=ios)
    if (ios /= 0) then
       write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(file), ios
-      allocate(x(0));  return
+      return
    end if
 
 !–––– initialise ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-   allocate(x(0))
    n          = 0
    found_data = .false.
 
@@ -269,7 +269,7 @@ subroutine read_vec(file, x, icol)
       if (comment_pos > 0) line = line(:comment_pos-1)
       if (len_trim(line) == 0) cycle
 
-      ! attempt to read ICOL‑th real value
+      ! attempt to read ICOL-th real value
       read(line,*, iostat=ios) (dummy, j=1,ic-1), val
       if (ios /= 0) then
          if (.not. found_data) then
@@ -288,8 +288,20 @@ subroutine read_vec(file, x, icol)
       tmp(n) = val
       call move_alloc(tmp, x)
    end do
-
    close(u)
+   if (size(x) == 0) then
+      print "(a,i0,a)", "could not read real data from column ", ic, &
+      " of file " // trim(file)
+   end if
 end subroutine read_vec
+
+function reverse(arr) result(res)
+    real(kind=dp), intent(in) :: arr(:)
+    real(kind=dp), allocatable :: res(:)
+    integer :: n
+    n = size(arr)
+    allocate(res(n))
+    if (n > 0) res = arr(n:1:-1)
+end function reverse
 
 end module util_mod
