@@ -4,7 +4,7 @@ implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean
+          geomean, harmean
 contains
 
 function standardize(x) result(y)
@@ -29,11 +29,24 @@ mean_val = sum(x) / (max(1, size(x)))
 end function mean
 
 pure function geomean(x) result(geomean_val)
-! Return the geometric mean of x, computed via logs to reduce overflow risk
+! return the geometric mean of x
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: geomean_val
 geomean_val = exp(mean(log(x)))
 end function geomean
+
+pure function harmean(x) result(harmean_val)
+! return the harmonic mean of x
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: harmean_val
+integer :: n
+n = size(x)
+if (n > 0) then
+   harmean_val = n/sum(1/x)
+else
+   harmean_val = 0.0_dp
+end if
+end function harmean
 
 pure function sd(x) result(sd_val)
 ! return the standard deviation of x
