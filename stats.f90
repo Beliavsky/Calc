@@ -3,7 +3,8 @@ use kind_mod, only: dp
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
-          print_stats, skew, kurtosis, cummin, cummax, cummean
+          print_stats, skew, kurtosis, cummin, cummax, cummean, &
+          geomean
 contains
 
 function standardize(x) result(y)
@@ -26,6 +27,24 @@ real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: mean_val
 mean_val = sum(x) / (max(1, size(x)))
 end function mean
+
+pure function geomean(x) result(geomean_val)
+  ! Return the geometric mean of x, computed via logs to reduce overflow risk
+  real(kind=dp), intent(in) :: x(:)
+  real(kind=dp) :: geomean_val
+  integer :: n, i
+  real(kind=dp) :: sumlog
+  n = size(x)
+  if (n == 0) then
+    geomean_val = 1.0_dp
+    return
+  end if
+  sumlog = 0.0_dp
+  do i = 1, n
+    sumlog = sumlog + log(x(i))
+  end do
+  geomean_val = exp(sumlog / n)
+end function geomean
 
 pure function sd(x) result(sd_val)
 ! return the standard deviation of x
