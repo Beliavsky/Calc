@@ -2,7 +2,7 @@ module interpret_mod
    use kind_mod, only: dp
    use stats_mod, only: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
-                        geomean
+                        geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
@@ -202,6 +202,7 @@ contains
       case ("median"); r = median(arr)
       case ("mean"); r = mean(arr)
       case ("geomean"); r = geomean(arr)
+      case ("harmean"); r = harmean(arr)
       case ("sd"); r = sd(arr)
       case ("skew"); r = skew(arr)
       case ("kurt"); r = kurtosis(arr)
@@ -1064,7 +1065,8 @@ contains
 
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
-                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", "sd", "cumsum", &
+                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
+                        "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
                         "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
@@ -1074,7 +1076,8 @@ contains
                         eval_error = .true.; f = [bad_value]
                      else
                         if (index("size sum product norm1 norm2 minval maxval minloc "// &
-                                  "maxloc count mean geomean sd median print_stats skew kurt", trim(id)) > 0) then
+                                  "maxloc count mean geomean harmean sd median print_stats skew kurt", &
+                               trim(id)) > 0) then
                            f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
                         else
                            f = apply_vec_func(id, arg1)
