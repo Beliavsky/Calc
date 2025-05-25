@@ -5,7 +5,7 @@ module interpret_mod
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
-                       rep, read_vec
+                       rep, read_vec, reverse
    use random_mod, only: random_normal, runif
    use qsort_mod, only: sorted, indexx, rank, median
    use iso_fortran_env, only: compiler_options, compiler_version
@@ -256,6 +256,7 @@ contains
       case ("indexx"); res = indexx(arr)
       case ("rank"); res = rank(arr)
       case ("stdz"); res = standardize(arr)
+      case ("reverse"); res = reverse(arr)
       case default
          print *, "Error in apply_vec_func: function '", trim(fname), "' not defined"
          eval_error = .true.
@@ -1059,7 +1060,7 @@ contains
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
                         "norm1", "norm2", "minloc", &
                         "maxloc", "count", "mean", "sd", "cumsum", "diff", "sort", "indexx", "rank", &
-                        "stdz", "median", "head", "tail", "bessel_j0", "bessel_j1", &
+                        "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then
@@ -1438,25 +1439,34 @@ contains
       logical :: print_array_as_int, run_then
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
       character(len=:), allocatable :: lhs, rhs
-      integer :: p_eq, p_com1, p_com2
-      integer :: p_lpar, p_rpar, depth
+      integer :: p_eq, p_com1, p_com2, p_lpar, p_rpar, depth, len_adj
       character(len=:), allocatable :: cond_txt, then_txt
+      adj_line = adjustl(line)
+      len_adj = len_trim(adj_line)
       line_cp = line
       ! write to transcript just once, for the whole input line
       if (write_code) write (tunit, "(a)") line
-      if (adjustl(line) == "compiler_version()") then
+      if (adj_line == "compiler_version()") then
          print "(a)", trim(compiler_version())
          return
-      else if (adjustl(line) == "compiler_info()") then
+      else if (adj_line == "compiler_info()") then
          print "(a)", trim(compiler_version())
          print "(a)", trim(compiler_options())
          return
-      end if
-
-      if (adjustl(line) == "exit") then
+      else if (adj_line == "exit") then
          exit_loop = .true.
          return
+      else if (adj_line == "print") then
+         print*
+         return
+      else if (len_adj > 2) then
+         if (adj_line(1:1) == '"' .and. adj_line(len_adj:len_adj) == '"') then
+            ! if a line just contains a quoted non-empty string, print it after a blank line
+            print "(/,a)",adj_line(2:len_adj-1)
+            return
+         end if
       end if
+
       if (len_trim(line) >= 2) then
          if (line(1:1) == "*") then
             ! find first space after the count
@@ -1491,8 +1501,6 @@ contains
             end if
          end block
       end if
-
-      adj_line = adjustl(line)
 
       ! ─── run("file") : execute the contents of a text file ───
       if (index(adj_line, 'run(') == 1) then
