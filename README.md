@@ -58,6 +58,7 @@ stdz(x)                             ! z-scores (zero mean, unit variance)
 ! Cumulative & difference operations
 ! ────────────────────────────────
 cumsum(y)                           ! running sum
+cumprod(y)                          ! running product
 diff(y)                             ! first difference (y(i+1)-y(i))
 
 ! ────────────────────────────────
