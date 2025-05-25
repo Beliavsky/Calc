@@ -34,7 +34,7 @@ z ^ 2                               ! element-wise power; returns a vector
 ! ────────────────────────────────
 v([2 4 6 8])                        ! arbitrary position lookup (2,4,6,8)
 v(3:9:2)                            ! Fortran-style slice: start 3, stop 9, stride 2
-
+reverse(v)                          ! elements of v in reverse order              
 ! ────────────────────────────────
 ! Random numbers
 ! ────────────────────────────────
