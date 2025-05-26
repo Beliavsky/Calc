@@ -2,8 +2,8 @@ module qsort_mod
    use kind_mod, only : dp
    implicit none
    private
-   public :: indexx, quick_sort_in_place, quick_sort , &
-             sorted, rank, median
+   public :: indexx, quick_sort_in_place, quick_sort, &
+             sorted, rank, median, unique
 
    !–––––––––––––––– generic interfaces –––––––––––––––––––––––––––––––––
    interface indexx
@@ -213,6 +213,25 @@ contains
          med = ( x( ord(n/2) ) + x( ord(n/2 + 1) ) ) / 2
       end if
    end function median_int
-!=======================================================================
+
+pure function unique(x) result(y)
+real(kind=dp), intent(in)  :: x(:)
+real(kind=dp), allocatable :: y(:)
+real(kind=dp), allocatable :: xsort(:)
+integer                    :: i, j, n
+xsort = sorted(x)
+n = size(x)
+allocate (y(n))
+if (n == 0) return
+y(1) = xsort(1)
+j = 1
+do i=2,n
+   if (xsort(i) /= xsort(i-1)) then
+      j = j + 1
+      y(j) = xsort(i)
+   end if
+end do
+y = y(:j)
+end function unique
 
 end module qsort_mod
