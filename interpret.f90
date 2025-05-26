@@ -8,7 +8,7 @@ module interpret_mod
                        is_numeral, is_letter, zeros, ones, replace, &
                        rep, read_vec, reverse
    use random_mod, only: random_normal, runif
-   use qsort_mod, only: sorted, indexx, rank, median
+   use qsort_mod, only: sorted, indexx, rank, median, unique
    use iso_fortran_env, only: compiler_options, compiler_version
    use plot_mod, only: plot, plot_to_label
    implicit none
@@ -262,6 +262,7 @@ contains
       case ("sort"); res = sorted(arr)
       case ("indexx"); res = indexx(arr)
       case ("rank"); res = rank(arr)
+      case ("unique"); res = unique(arr)
       case ("stdz"); res = standardize(arr)
       case ("reverse"); res = reverse(arr)
       case default
@@ -1068,7 +1069,7 @@ contains
                         "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then
