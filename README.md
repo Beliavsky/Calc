@@ -34,7 +34,7 @@ z ^ 2                               ! element-wise power; returns a vector
 ! ────────────────────────────────
 v([2 4 6 8])                        ! arbitrary position lookup (2,4,6,8)
 v(3:9:2)                            ! Fortran-style slice: start 3, stop 9, stride 2
-
+reverse(v)                          ! elements of v in reverse order              
 ! ────────────────────────────────
 ! Random numbers
 ! ────────────────────────────────
@@ -48,6 +48,8 @@ rnorm(10^3)                         ! 1000 iid normals; large vectors are summar
 ! ────────────────────────────────
 sum(x)                              ! sum of elements
 mean(x)                             ! arithmetic mean
+geomean(x)                          ! geometric mean = product(x) ^ (1/size(x))
+harmean(x)                          ! harmonic mean  = size(x) / sum(1/x)
 sd(x)                               ! sample standard deviation
 [mean(x) sd(x) minval(x) maxval(x)] ! combining multiple scalar results in a vector
 median(x)                           ! sample median
@@ -58,6 +60,7 @@ stdz(x)                             ! z-scores (zero mean, unit variance)
 ! Cumulative & difference operations
 ! ────────────────────────────────
 cumsum(y)                           ! running sum
+cumprod(y)                          ! running product
 diff(y)                             ! first difference (y(i+1)-y(i))
 
 ! ────────────────────────────────
