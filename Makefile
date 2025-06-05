@@ -1,5 +1,5 @@
 executables = xinterpret_gfort.exe
-FC     = gfortran
+FC     = gcc
 FFLAGS = -O0 -Wall -Werror=unused-parameter -Werror=unused-variable -Werror=unused-function -Wno-maybe-uninitialized -Wno-surprising -fbounds-check -static -g -fmodule-private
 obj    = kind.o util.o gnuplot.o constants.o qsort.o random.o stats.o interpret.o xinterpret.o
 
