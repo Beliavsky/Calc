@@ -187,7 +187,7 @@ The transpiler:
 
 ### Example: `code.fi` to `tests.f90`
 Current `code.fi`:
-```
+```fortran
 a = 3.0
 b = 1.0
 ! Newton method for square root
@@ -200,7 +200,7 @@ plot(x)
 ```
 
 Transpiled `tests.f90`:
-```
+```fortran
 program session
   use kind_mod, only: dp
   use stats_mod, only: acf, arsim
