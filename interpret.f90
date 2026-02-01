@@ -1849,22 +1849,50 @@ contains
       ! 1.  split the input at *top-level* semicolons
       ! --------------------------------------------------------------
       integer                       :: n, k, rsize, i, nsize, ivar, nlen_tail
-      character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line, part_eval
+      character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line, part_eval, line_eval
       character(len=:), allocatable :: names(:)
       logical, allocatable   :: suppress(:)
       real(dp), allocatable   :: r(:), tmp(:)
       integer, allocatable   :: rint(:)
       integer                       :: p, repeat_count
-      logical :: print_array_as_int, run_then, had_error
+      logical :: print_array_as_int, run_then, had_error, in_quote, comment_only
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
       character(len=:), allocatable :: lhs, rhs
-      integer :: p_eq, p_com1, p_com2, p_lpar, p_rpar, depth, len_adj
+      integer :: p_eq, p_com1, p_com2, p_lpar, p_rpar, depth, len_adj, comment_pos, i_c
       integer :: n_names
       character(len=:), allocatable :: cond_txt, then_txt
-      adj_line = adjustl(line)
+      line_eval = line
+      in_quote = .false.
+      comment_pos = 0
+      comment_only = .false.
+      do i_c = 1, len_trim(line)
+         if (line(i_c:i_c) /= " ") then
+            if (line(i_c:i_c) == comment_char) comment_only = .true.
+            exit
+         end if
+      end do
+      do i_c = 1, len_trim(line_eval)
+         if (line_eval(i_c:i_c) == '"') in_quote = .not. in_quote
+         if (.not. in_quote .and. line_eval(i_c:i_c) == comment_char) then
+            comment_pos = i_c
+            exit
+         end if
+      end do
+      if (comment_pos > 0) then
+         if (comment_pos == 1) then
+            line_eval = ""
+            comment_only = .true.
+         else
+            line_eval = line_eval(1:comment_pos - 1)
+            if (len_trim(line_eval) == 0) comment_only = .true.
+         end if
+      end if
+
+      adj_line = adjustl(line_eval)
       len_adj = len_trim(adj_line)
       line_cp = line
       had_error = .false.
+      if (len_trim(line_eval) == 0) goto 9000
       if (adj_line == "compiler_version()") then
          print "(a)", trim(compiler_version())
          goto 9000
@@ -1894,20 +1922,20 @@ contains
          end if
       end if
 
-      if (len_trim(line) >= 2) then
-         if (line(1:1) == "*") then
+      if (len_trim(line_eval) >= 2) then
+         if (line_eval(1:1) == "*") then
             ! find first space after the count
-            p = index(line(2:), " ")
+            p = index(line_eval(2:), " ")
             if (p > 0) then
                ! parse the count expression between columnÂ 2 and p
-               tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
+               tmp = evaluate(line_eval(2:p))     ! e.g. line_eval(2:p) == "n" or "10"
                if (eval_error) then
                   had_error = .true.
                   goto 9000
                end if
                if (size(tmp) == 1) then
                   repeat_count = int(tmp(1))
-                  rest = line(p + 1:)           ! the code to repeat
+                  rest = line_eval(p + 1:)           ! the code to repeat
                   block
                      logical :: prev_write
                      prev_write = write_code
@@ -1926,7 +1954,7 @@ contains
       if (loop_depth > 0 .and. .not. in_loop_execute) then
          block
             character(len=:), allocatable :: tl
-            tl = adjustl(line)
+            tl = adjustl(line_eval)
             if (index(tl, "do ") == 1 &  ! a â€œdo i=â€¦â€ header
                 .or. trim(tl) == "end do" &
                 .or. trim(tl) == "enddo") then
@@ -1938,7 +1966,7 @@ contains
                   goto 9000
                end if
                ! buffer everything else
-               loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line)//new_line("a")
+               loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line_eval)//new_line("a")
                goto 9000
             end if
          end block
@@ -1990,7 +2018,7 @@ contains
          end if
       end if
 
-      if (in_loop_execute .and. adjustl(line) == "cycle") then
+      if (in_loop_execute .and. adjustl(line_eval) == "cycle") then
          cycle_loop = .true.
          goto 9000        ! skip everything else in this iteration
       end if
@@ -1998,7 +2026,7 @@ contains
 !â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 !  Loop handling
 !â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      select case (adjustl(line))
+      select case (adjustl(line_eval))
       case ("end do", "enddo", "enddo;", "end do;")
          if (loop_depth == 0) then
             print *, "Error: 'end do' without matching 'do'"
@@ -2023,7 +2051,7 @@ contains
          ! nothing â€“ fall through
       end select
 
-      adj_line = adjustl(line)
+      adj_line = adjustl(line_eval)
 !â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  oneâ€‘line IF  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ! if (index(adj_line,'if') == 1 .and. len_trim(adj_line) > 4 .and.    &
 !     adj_line(3:3) == '(' ) then
@@ -2088,16 +2116,16 @@ contains
 
                ! Parse  â€œdo  i = 1 , 5 , 2â€   (step is optional)
 
-               p_eq = index(line, "=")
-               p_com1 = index(line, ",")
+               p_eq = index(line_eval, "=")
+               p_com1 = index(line_eval, ",")
                if (p_eq == 0 .or. p_com1 == 0) then
-                  print *, "Error: malformed DO header: ", trim(line)
+                  print *, "Error: malformed DO header: ", trim(line_eval)
                   had_error = .true.
                   goto 9000
                end if
 
-               lhs = adjustl(line(3:p_eq - 1))              ! variable name
-               rhs = adjustl(line(p_eq + 1:))
+               lhs = adjustl(line_eval(3:p_eq - 1))              ! variable name
+               rhs = adjustl(line_eval(p_eq + 1:))
 
                p_com1 = index(rhs, ",")
                p_com2 = index(rhs(p_com1 + 1:), ",")
@@ -2122,7 +2150,7 @@ contains
          end if
       end if
 
-      trimmed_line = adjustl(line)
+      trimmed_line = adjustl(line_eval)
 
       if (len_trim(trimmed_line) >= 3 .and. trimmed_line(1:3) == "del" &
           .and. (len_trim(trimmed_line) == 3 &  ! just "del"
@@ -2158,11 +2186,11 @@ contains
 
 ! â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€” end â€œdelâ€ â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
-      if (adjustl(line) == "clear") then
+      if (adjustl(line_eval) == "clear") then
          call clear()
          goto 9000
       end if
-      if (adjustl(line) == "?vars") then
+      if (adjustl(line_eval) == "?vars") then
          write (*, *) "Defined variables:"
          do i = 1, n_vars
             nsize = size(vars(i)%val)
@@ -2179,7 +2207,7 @@ contains
          end do
          goto 9000
       end if
-      trimmed_line = adjustl(line)
+      trimmed_line = adjustl(line_eval)
       if (len_trim(trimmed_line) >= 4 .and. trimmed_line(1:4) == "read" & 
           .and. (len_trim(trimmed_line) == 4 .or. trimmed_line(5:5) == " ")) then
          tail = adjustl(trimmed_line(5:))
@@ -2195,11 +2223,11 @@ contains
         end if
         goto 9000
       end if
-      if (adjustl(line) == "cor") then
+      if (adjustl(line_eval) == "cor") then
          call print_cor_matrices()
          goto 9000
       end if
-      call split_by_semicolon(line, n, parts, suppress)
+      call split_by_semicolon(line_eval, n, parts, suppress)
 
       do k = 1, n
          if (parts(k) == "") cycle          ! blank segment
@@ -2489,7 +2517,7 @@ contains
       end do
 9000  continue
       const_assign = .false.
-      if (write_code .and. .not. had_error) write (tunit, "(a)") line
+      if (write_code .and. (.not. had_error .or. comment_only)) write (tunit, "(a)") line
    end subroutine eval_print
 
    subroutine delete_vars(list_str)
@@ -2956,7 +2984,7 @@ contains
       !  interpreter as if the user had typed it.
       character(len=*), intent(in) :: filename
       character(len=1000) :: ln
-      integer :: u, ios, comment_pos, neval
+      integer :: u, ios, neval
       logical :: verbose_
       verbose_ = .false.
       if (verbose_) neval = 0
@@ -2970,14 +2998,10 @@ contains
          read (u, '(A)', iostat=ios) ln
          if (ios /= 0) exit
          if (len_trim(ln) == 0) cycle       ! ignore blank lines
-         comment_pos = index(ln, comment_char)
-         if (comment_pos > 0) ln = ln(1:max(1, comment_pos - 1))
-         if (ln /= comment_char) then
-            if (verbose_ .and. neval > 0) print "(/)"
-            if (verbose_) print "(a)", trim(ln)
-            call eval_print(ln)
-            if (verbose_) neval = neval + 1
-         end if
+         if (verbose_ .and. neval > 0) print "(/)"
+         if (verbose_) print "(a)", trim(ln)
+         call eval_print(ln)
+         if (verbose_) neval = neval + 1
          if (stop_if_error .and. eval_error) exit
       end do
       close (u)
