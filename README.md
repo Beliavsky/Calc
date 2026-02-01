@@ -181,6 +181,6 @@ python transpile_session.py code.fi -o session.f90
 
 The transpiler:
 - Emits only required `use` statements with `only:`.
-- Uses `[]` array constructors and `_dp` literals for real constants.
+- Uses `_dp` literals for real constants.
 - Declares integer variables when first assigned integer expressions.
 - Converts `const` assignments into `parameter` declarations.
