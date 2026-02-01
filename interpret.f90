@@ -1,6 +1,6 @@
-module interpret_mod
+﻿module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, acf, arsim, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
@@ -22,12 +22,18 @@ module interpret_mod
    type :: var_t
       character(len=len_name) :: name = ""
       real(kind=dp), allocatable :: val(:)
+      logical :: is_const = .false.
    end type var_t
+   type :: arr_t
+      real(kind=dp), allocatable :: v(:)
+   end type arr_t
 
    type(var_t) :: vars(max_vars)
    integer :: n_vars = 0, tunit
    logical, save :: write_code = .true., eval_error = .false., &
                     echo_code = .true.
+   logical, save :: const_assign = .false.
+   logical, save :: suppress_result = .false.
    character(len=1) :: curr_char
    character(len=*), parameter :: code_transcript_file = "code.fi" ! stores the commands issued
    character(len=*), parameter :: comment_char = "!"
@@ -40,8 +46,8 @@ module interpret_mod
    logical, save :: exit_loop = .false., cycle_loop = .false.
    logical, parameter :: debug_read = .false.
 
-!––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
-!── Maximum nesting and a fixed buffer for every loop level
+!â€“â€“â€“ support for DO â€¦ ENDÂ DO loops â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
+!â”€â”€ Maximum nesting and a fixed buffer for every loop level
    integer, parameter :: max_loop_depth = 8
    character(len=4096), save :: loop_body(max_loop_depth) = ""   ! collected lines
    character(len=len_name), save :: loop_var(max_loop_depth) = ""   ! i , j , ...
@@ -49,7 +55,7 @@ module interpret_mod
    integer, save :: loop_end(max_loop_depth) = 0
    integer, save :: loop_step(max_loop_depth) = 1
    integer, save :: loop_depth = 0                     ! current level
-!––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+!â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
 
 contains
 
@@ -147,21 +153,320 @@ contains
       integer :: i
       do i = 1, min(n_vars, max_vars)
          vars(i)%name = ""
+         vars(i)%is_const = .false.
          if (allocated(vars(i)%val)) deallocate (vars(i)%val)
       end do
       n_vars = 0
    end subroutine clear
 
-   subroutine set_variable(name, val)
+   subroutine print_cor_matrix_args(args, labels)
+      type(arr_t), intent(in) :: args(:)
+      character(len=*), intent(in) :: labels(:)
+      integer :: i, j, n, nsize, max_name, col_width, pad
+      real(kind=dp) :: cval
+
+      n = size(args)
+      if (n < 2) then
+         print *, "Error: cor() needs at least two arguments"
+         eval_error = .true.
+         return
+      end if
+      nsize = size(args(1)%v)
+      if (nsize < 2) then
+         print *, "Error: function array arguments must have sizes > 1"
+         eval_error = .true.
+         return
+      end if
+      do i = 2, n
+         if (size(args(i)%v) /= nsize) then
+            print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
+               nsize, size(args(i)%v), " must be equal"
+            eval_error = .true.
+            return
+         end if
+      end do
+
+      max_name = 1
+      do i = 1, n
+         max_name = max(max_name, len_trim(labels(i)))
+      end do
+      col_width = max(10, max_name)
+
+      write (*, "(a,i0,a)") "Correlation matrix (n=", nsize, "):"
+      write (*, "(a)", advance="no") repeat(" ", max_name)//" "
+      do j = 1, n
+         call write_padded(trim(labels(j)), col_width)
+      end do
+      print *
+
+      do i = 1, n
+         call write_padded(trim(labels(i)), max_name)
+         do j = 1, n
+            cval = cor(args(i)%v, args(j)%v)
+            write (*, "(f10.6)", advance="no") cval
+            pad = col_width - 10
+            if (pad < 0) pad = 0
+            write (*, "(a)", advance="no") repeat(" ", pad + 1)
+         end do
+         print *
+      end do
+   contains
+      subroutine write_padded(str, width)
+         character(len=*), intent(in) :: str
+         integer, intent(in) :: width
+         integer :: nsp
+         nsp = width - len_trim(str)
+         if (nsp < 0) nsp = 0
+         write (*, "(a)", advance="no") trim(str)//repeat(" ", nsp + 1)
+      end subroutine write_padded
+   end subroutine print_cor_matrix_args
+
+   subroutine print_cor_matrices()
+      integer, allocatable :: sizes(:), idx(:)
+      integer :: i, j, k, nsize, n_sizes, n_group
+      integer :: max_name, col_width, pad
+      real(kind=dp) :: cval
+      logical :: any_printed
+
+      allocate (sizes(n_vars))
+      n_sizes = 0
+      do i = 1, n_vars
+         nsize = size(vars(i)%val)
+         if (nsize < 2) cycle
+         if (n_sizes == 0) then
+            n_sizes = 1
+            sizes(1) = nsize
+         else if (.not. any(sizes(1:n_sizes) == nsize)) then
+            n_sizes = n_sizes + 1
+            sizes(n_sizes) = nsize
+         end if
+      end do
+
+      if (n_sizes == 0) then
+         print *, "No array variables with size > 1"
+         return
+      end if
+
+      any_printed = .false.
+      do k = 1, n_sizes
+         nsize = sizes(k)
+         n_group = 0
+         max_name = 1
+         do i = 1, n_vars
+            if (size(vars(i)%val) == nsize) then
+               n_group = n_group + 1
+               max_name = max(max_name, len_trim(vars(i)%name))
+            end if
+         end do
+         if (n_group < 2) cycle
+
+         allocate (idx(n_group))
+         n_group = 0
+         do i = 1, n_vars
+            if (size(vars(i)%val) == nsize) then
+               n_group = n_group + 1
+               idx(n_group) = i
+            end if
+         end do
+
+         col_width = max(10, max_name)
+         write (*, "(a,i0,a)") "Correlation matrix (n=", nsize, "):"
+
+         write (*, "(a)", advance="no") repeat(" ", max_name)//" "
+         do j = 1, n_group
+            call write_padded(trim(vars(idx(j))%name), col_width)
+         end do
+         print *
+
+         do i = 1, n_group
+            call write_padded(trim(vars(idx(i))%name), max_name)
+            do j = 1, n_group
+               cval = cor(vars(idx(i))%val, vars(idx(j))%val)
+               write (*, "(f10.6)", advance="no") cval
+               pad = col_width - 10
+               if (pad < 0) pad = 0
+               write (*, "(a)", advance="no") repeat(" ", pad + 1)
+            end do
+            print *
+         end do
+
+         deallocate (idx)
+         any_printed = .true.
+      end do
+
+      if (.not. any_printed) then
+         print *, "No matching array groups with size > 1"
+      end if
+   contains
+      subroutine write_padded(str, width)
+         character(len=*), intent(in) :: str
+         integer, intent(in) :: width
+         integer :: nsp
+         nsp = width - len_trim(str)
+         if (nsp < 0) nsp = 0
+         write (*, "(a)", advance="no") trim(str)//repeat(" ", nsp + 1)
+      end subroutine write_padded
+   end subroutine print_cor_matrices
+
+   subroutine read_vars_from_file(fname)
+      character(len=*), intent(in) :: fname
+      integer :: u, ios, i, ncol, nrow, comment_pos
+      character(len=1000) :: line
+      character(len=:), allocatable :: header, words(:)
+      real(kind=dp), allocatable :: vals(:), tmp(:)
+      type(arr_t), allocatable :: cols(:)
+      logical :: found_data
+
+      open(newunit=u, file=trim(fname), action='read', status='old', iostat=ios)
+      if (ios /= 0) then
+         write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(fname), ios
+         eval_error = .true.
+         return
+      end if
+
+      header = ""
+      do
+         read(u,'(A)', iostat=ios) line
+         if (ios /= 0) then
+            print *, "Error: could not read header from file"
+            eval_error = .true.
+            close(u)
+            return
+         end if
+         comment_pos = index(line,'!')
+         if (comment_pos > 0) line = line(:comment_pos-1)
+         if (len_trim(line) == 0) cycle
+         header = replace(line, ",", " ")
+         header = replace(header, char(9), " ")
+         exit
+      end do
+
+      call split_by_spaces(header, ncol, words)
+      if (ncol < 1) then
+         print *, "Error: no column names found in header"
+         eval_error = .true.
+         close(u)
+         return
+      end if
+
+      allocate (cols(ncol))
+      do i = 1, ncol
+         allocate (cols(i)%v(0))
+      end do
+
+      found_data = .false.
+      nrow = 0
+      allocate (vals(ncol))
+      do
+         read(u,'(A)', iostat=ios) line
+         if (ios /= 0) exit
+         comment_pos = index(line,'!')
+         if (comment_pos > 0) line = line(:comment_pos-1)
+         if (len_trim(line) == 0) cycle
+         line = replace(line, ",", " ")
+         read(line,*, iostat=ios) vals
+         if (ios /= 0) then
+            if (.not. found_data) then
+               cycle
+            else
+               exit
+            end if
+         end if
+         found_data = .true.
+         nrow = nrow + 1
+         do i = 1, ncol
+            if (allocated(tmp)) deallocate (tmp)
+            allocate (tmp(nrow))
+            if (nrow > 1) tmp(1:nrow-1) = cols(i)%v
+            tmp(nrow) = vals(i)
+            call move_alloc(tmp, cols(i)%v)
+         end do
+      end do
+      close(u)
+
+      if (.not. found_data) then
+         print *, "Error: no data rows found in file"
+         eval_error = .true.
+         return
+      end if
+
+      do i = 1, ncol
+         call set_variable(words(i), cols(i)%v)
+         if (eval_error) return
+      end do
+   contains
+      subroutine split_by_spaces(line_in, n, parts)
+         character(len=*), intent(in) :: line_in
+         integer, intent(out) :: n
+         character(len=:), allocatable :: parts(:)
+         integer :: i, start, len_line, newlen, nlen_tail
+
+         n = 0
+         len_line = len_trim(line_in)
+         i = 1
+      do while (i <= len_line)
+         do
+            if (i > len_line) exit
+            if (line_in(i:i) /= " ") exit
+            i = i + 1
+         end do
+         if (i > len_line) exit
+         start = i
+         do
+            if (i > len_line) exit
+            if (line_in(i:i) == " ") exit
+            i = i + 1
+         end do
+         nlen_tail = min(i - 1, len_line)
+            if (nlen_tail < start) cycle
+            newlen = max(nlen_tail - start + 1, merge(0, len(parts(1)), allocated(parts)))
+            if (.not. allocated(parts)) then
+               allocate (character(len=newlen) :: parts(1))
+            else if (len(parts(1)) < newlen) then
+               block
+                  character(len=newlen), allocatable :: tmp(:)
+                  allocate (tmp(size(parts)))
+                  tmp = parts
+                  call move_alloc(tmp, parts)
+                  parts = [character(len=len(parts)) :: parts, ""]
+               end block
+            else
+               parts = [character(len=len(parts)) :: parts, ""]
+            end if
+            n = n + 1
+            parts(n) = adjustl(line_in(start:nlen_tail))
+         end do
+      end subroutine split_by_spaces
+   end subroutine read_vars_from_file
+
+   subroutine set_variable(name, val, is_const)
       ! Store or replace a variable
       character(len=*), intent(in) :: name
       real(kind=dp), intent(in) :: val(:)
+      logical, intent(in), optional :: is_const
       integer :: i
       character(len=len_name) :: nm
+      logical :: make_const
+
+      if (present(is_const)) then
+         make_const = is_const
+      else
+         make_const = .false.
+      end if
 
       nm = adjustl(name)
       do i = 1, n_vars
          if (vars(i)%name == nm) then
+            if (vars(i)%is_const) then
+               print *, "Error: cannot reassign const variable '"//trim(nm)//"'"
+               eval_error = .true.
+               return
+            end if
+            if (make_const) then
+               print *, "Error: const variable '"//trim(nm)//"' already exists"
+               eval_error = .true.
+               return
+            end if
             if (.not. mutable) then
                print *, "Error: cannot reassign '"//trim(nm)//"' if mutable is .false."
                eval_error = .true.
@@ -176,6 +481,7 @@ contains
          n_vars = n_vars + 1
          vars(n_vars)%name = nm
          vars(n_vars)%val = val
+         vars(n_vars)%is_const = make_const
       else
          print *, "Error: too many variables."
          eval_error = .true.
@@ -291,7 +597,7 @@ contains
 
       ! look for an *assignment* = that is **not** part of >= <= == <=
 !------------------------------------------------------------------
-!  find a top‑level “=” that is **not** part of  >= <= == /=  etc.
+!  find a topâ€‘level â€œ=â€ that is **not** part of  >= <= == /=  etc.
 !------------------------------------------------------------------
       eqpos = 0
       depth_p = 0          ! nesting level ()
@@ -310,7 +616,7 @@ contains
                end if
                if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
                eqpos = i
-               exit                            ! first *top‑level* “=” wins
+               exit                            ! first *topâ€‘level* â€œ=â€ wins
             end if
          end select
       end do
@@ -334,7 +640,7 @@ contains
             if (index(lhs, "(") > 0 .and. index(lhs, ")") > index(lhs, "(")) then
                call assign_element(lhs, res)   ! element assignment  a(i)=
             else
-               call set_variable(lhs, res)   ! wholevariable assignment
+               call set_variable(lhs, res, const_assign)   ! wholevariable assignment
             end if
          end if
          return
@@ -508,10 +814,10 @@ contains
       recursive function parse_factor() result(f)
          ! Parse a single factor in an expression, handling:
          !   - numeric literals
-         !   - parenthesized sub‑expressions
+         !   - parenthesized subâ€‘expressions
          !   - array literals
          !   - identifiers (variable lookup, function calls, slicing)
-         !   - unary +/– and exponentiation.
+         !   - unary +/â€“ and exponentiation.
          real(kind=dp), allocatable :: f(:) ! result
          !===================  locals  =====================================
          real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
@@ -520,9 +826,12 @@ contains
          character(len=len_name) :: id
          character(len=:), allocatable :: idxs
          integer :: nsize, pstart, pend, depth, n1, n2, dim_val
+         integer :: n_args, i_arg
          logical :: is_neg, have_second
          logical :: toplevel_colon, toplevel_comma, have_dim
          character(len=len_name) :: look_name    ! NEW
+         type(arr_t), allocatable :: args(:)
+         character(len=:), allocatable :: labels(:)
          have_dim = .false.
          dim_val = 1
          call skip_spaces()
@@ -572,10 +881,10 @@ contains
 
 !=================================================================
 !  read("file.txt" [, col | col = n])
-!      → calls  read_vec(file , f , icol = n)
+!      â†’ calls  read_vec(file , f , icol = n)
 !
-!  • first argument must be a double‑quoted file name
-!  • second argument is optional; if omitted defaults to column 1
+!  â€¢ first argument must be a doubleâ€‘quoted file name
+!  â€¢ second argument is optional; if omitted defaults to columnÂ 1
 !    It can be given positionally ( e.g. read("f.txt",3) )
 !    or by keyword         ( e.g. read("f.txt", col = 3) )
 !=================================================================
@@ -638,7 +947,7 @@ contains
                                  eval_error = .true.; f = [bad_value]; return
                               end if
                            else
-                              ! no keyword → rewind; treat as positional
+                              ! no keyword â†’ rewind; treat as positional
                               pos = save_pos
                               curr_char = expr(pos - 1:pos - 1)
                            end if
@@ -740,18 +1049,18 @@ contains
                                           "sum", "product", "minval", "maxval"])) then
                         !------------------------------------------------------------
                         !  2nd *token* can be either
-                        !     • a positional DIM value       →  sum(x , 1)
-                        !     • a named argument             →  sum(x , mask = …)
+                        !     â€¢ a positional DIM value       â†’  sum(x , 1)
+                        !     â€¢ a named argument             â†’  sum(x , mask = â€¦)
                         !------------------------------------------------------------
                         block
                            integer :: save_pos
                            logical :: is_name_eq
                            real(kind=dp), allocatable :: tmp(:)
                            save_pos = pos          ! index **after** the comma
-                           call next_char()          ! step over ‘,’
+                           call next_char()          ! step over â€˜,â€™
                            call skip_spaces()
 
-                           !–– look ahead:  identifier followed by '='  ? ––
+                           !â€“â€“ look ahead:  identifier followed by '='  ? â€“â€“
                            is_name_eq = .false.
                            if (is_letter(curr_char)) then
                               look_name = parse_identifier()
@@ -760,13 +1069,13 @@ contains
                            end if
 
                            if (is_name_eq) then
-                              !–– restore → named‑argument loop will handle it ––
+                              !â€“â€“ restore â†’ namedâ€‘argument loop will handle it â€“â€“
                               pos = save_pos
                               curr_char = ","
                            else
-                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
+                              !â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
                               !  **Positional DIM value**
-                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
+                              !â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
                               pos = save_pos          ! we already skipped the comma
                               call next_char()
                               call skip_spaces()
@@ -785,7 +1094,7 @@ contains
                         end block
                      else
                         !------------------------------------------------------------
-                        !  Any other routine – 2‑nd positional argument as before
+                        !  Any other routine â€“ 2â€‘nd positional argument as before
                         !------------------------------------------------------------
                         call next_char()          ! consume ','
                         call skip_spaces()
@@ -797,6 +1106,42 @@ contains
                      end if
                   end if
 
+                  if (trim(id) == "cor") then
+                     call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                     if (n_args > 2) then
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        allocate (args(n_args))
+                        args(1)%v = arg1
+                        args(2)%v = arg2
+                        do i_arg = 3, n_args
+                           call skip_spaces()
+                           if (curr_char /= ",") then
+                              print *, "Error: cor() needs arguments separated by commas"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           call next_char()
+                           call skip_spaces()
+                           args(i_arg)%v = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]; return
+                           end if
+                        end do
+                        call skip_spaces()
+                        if (curr_char == ")") call next_char()
+                        call print_cor_matrix_args(args, labels)
+                        if (eval_error) then
+                           f = [bad_value]
+                           return
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                        return
+                     end if
+                  end if
+
                   if (curr_char == ")") call next_char()
 
                   !------------- dispatch -----------------------------------------
@@ -804,7 +1149,7 @@ contains
 
                      !================================================================
                      !  SUM / PRODUCT / MINVAL / MAXVAL
-                     !  – optional named arguments in any order
+                     !  â€“ optional named arguments in any order
                      !        dim = 1      and/or     mask = logical array
                      !================================================================
                   case ("sum", "product", "minval", "maxval")
@@ -819,7 +1164,7 @@ contains
                         have_mask = .false.
 
                         !---------------------------------------------------------
-                        ! first positional argument already parsed  →  ARG1
+                        ! first positional argument already parsed  â†’  ARG1
                         ! now parse any  , name = expr  pairs
                         do
                            call skip_spaces()
@@ -911,7 +1256,7 @@ contains
 
                         case ("product")
                            if (have_mask) then
-                              ! PRODUCT(mask=…) is F2003; use PACK for portability
+                              ! PRODUCT(mask=â€¦) is F2003; use PACK for portability
                               f = [product(pack(arg1, lmask))]
                            else
                               f = [product(arg1)]
@@ -932,6 +1277,58 @@ contains
                            end if
                         end select
                      end block
+
+                  case ("acf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of acf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 2) then
+                        print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1 .or. n1 > size(arg1) - 1) then
+                           print *, "Error: acf() lag count must be between 1 and ", size(arg1) - 1
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = acf(arg1, n1)
+                        end if
+                     end if
+
+                  case ("arsim")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument of arsim() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (size(arg2) == 1 .and. n_args >= 2) then
+                           if (index(labels(2), "[") == 0) then
+                              print *, "Error: second argument of arsim() must be an explicit 1D array"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        end if
+                     end if
+                     if (eval_error) then
+                        f = [bad_value]
+                        return
+                     else if (size(arg2) < 1) then
+                        print *, "Error: second argument of arsim() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg1(1))
+                        if (n1 < 1) then
+                           print *, "Error: arsim() length must be > 0"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = arsim(n1, arg2)
+                        end if
+                     end if
 
                   case ("cor", "cov", "dot") ! correlation, covariance, dot product
                      if (.not. have_second) then
@@ -1120,7 +1517,7 @@ contains
                         f = [bad_value]
                      else
                         call plot(arg1, arg2, title=plot_to_label(line_cp))         ! <-- actual drawing
-                        allocate (f(0))                ! return “nothing”
+                        allocate (f(0))                ! return â€œnothingâ€
                      end if
 
                   case default ! subscript  x(i)
@@ -1368,8 +1765,8 @@ contains
       ! * LHS is of the form  var(indices)  where **indices** may be a scalar
       !   or a vector.
       ! * If RVAL has size 1  -> broadcast to every index in INDICES
-      ! * If RVAL size equals size(INDICES) -> element–wise assignment
-      ! * Otherwise → size-mismatch error
+      ! * If RVAL size equals size(INDICES) -> elementâ€“wise assignment
+      ! * Otherwise â†’ size-mismatch error
       ! ---------------------------------------------------------------------------
       character(len=*), intent(in)  :: lhs
       real(kind=dp), allocatable, intent(in)  :: rval(:)
@@ -1380,11 +1777,22 @@ contains
       integer, allocatable  :: idx(:)
       integer :: p_lpar, p_rpar, vi, n_idx
 
-      ! ---- split "var( … )" into name and index string ---------------------
+      ! ---- split "var( â€¦ )" into name and index string ---------------------
       p_lpar = index(lhs, "(")
       p_rpar = index(lhs, ")")
       name = adjustl(lhs(1:p_lpar - 1))
       idx_txt = lhs(p_lpar + 1:p_rpar - 1)
+
+      do vi = 1, n_vars
+         if (vars(vi)%name == name) then
+            if (vars(vi)%is_const) then
+               print *, "Error: cannot modify const variable '", trim(name), "'"
+               eval_error = .true.
+               return
+            end if
+            exit
+         end if
+      end do
 
       ! ---- evaluate index expression ---------------------------------------
       idx_val = evaluate(idx_txt)
@@ -1441,39 +1849,48 @@ contains
       ! 1.  split the input at *top-level* semicolons
       ! --------------------------------------------------------------
       integer                       :: n, k, rsize, i, nsize, ivar, nlen_tail
-      character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line
+      character(len=:), allocatable :: parts(:), rest, trimmed_line, tail, adj_line, part_eval
+      character(len=:), allocatable :: names(:)
       logical, allocatable   :: suppress(:)
       real(dp), allocatable   :: r(:), tmp(:)
       integer, allocatable   :: rint(:)
       integer                       :: p, repeat_count
-      logical :: print_array_as_int, run_then
+      logical :: print_array_as_int, run_then, had_error
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
       character(len=:), allocatable :: lhs, rhs
       integer :: p_eq, p_com1, p_com2, p_lpar, p_rpar, depth, len_adj
+      integer :: n_names
       character(len=:), allocatable :: cond_txt, then_txt
       adj_line = adjustl(line)
       len_adj = len_trim(adj_line)
       line_cp = line
-      ! write to transcript just once, for the whole input line
-      if (write_code) write (tunit, "(a)") line
+      had_error = .false.
       if (adj_line == "compiler_version()") then
          print "(a)", trim(compiler_version())
-         return
+         goto 9000
       else if (adj_line == "compiler_info()") then
          print "(a)", trim(compiler_version())
          print "(a)", trim(compiler_options())
-         return
+         goto 9000
       else if (adj_line == "exit") then
          exit_loop = .true.
-         return
+         goto 9000
       else if (adj_line == "print") then
          print*
-         return
+         goto 9000
       else if (len_adj > 2) then
          if (adj_line(1:1) == '"' .and. adj_line(len_adj:len_adj) == '"') then
             ! if a line just contains a quoted non-empty string, print it after a blank line
             print "(/,a)",adj_line(2:len_adj-1)
-            return
+            goto 9000
+         end if
+      end if
+
+      if (in_loop_execute .or. loop_depth > 0) then
+         if (index(adj_line, "const") > 0) then
+            print *, "Error: const not allowed inside loops or blocks"
+            had_error = .true.
+            goto 9000
          end if
       end if
 
@@ -1482,15 +1899,25 @@ contains
             ! find first space after the count
             p = index(line(2:), " ")
             if (p > 0) then
-               ! parse the count expression between column 2 and p
+               ! parse the count expression between columnÂ 2 and p
                tmp = evaluate(line(2:p))     ! e.g. line(2:p) == "n" or "10"
-               if (.not. eval_error .and. size(tmp) == 1) then
+               if (eval_error) then
+                  had_error = .true.
+                  goto 9000
+               end if
+               if (size(tmp) == 1) then
                   repeat_count = int(tmp(1))
                   rest = line(p + 1:)           ! the code to repeat
-                  do i = 1, repeat_count
-                     call eval_print(rest)         ! recursive call; will split again
-                  end do
-                  return                         ! done with this line
+                  block
+                     logical :: prev_write
+                     prev_write = write_code
+                     write_code = .false.
+                     do i = 1, repeat_count
+                        call eval_print(rest)         ! recursive call; will split again
+                     end do
+                     write_code = prev_write
+                  end block
+                  goto 9000                         ! done with this line
                end if
             end if
          end if
@@ -1500,32 +1927,38 @@ contains
          block
             character(len=:), allocatable :: tl
             tl = adjustl(line)
-            if (index(tl, "do ") == 1 &  ! a “do i=…” header
+            if (index(tl, "do ") == 1 &  ! a â€œdo i=â€¦â€ header
                 .or. trim(tl) == "end do" &
                 .or. trim(tl) == "enddo") then
                ! fall through into the normal do/end-do handlers
             else
+               if (index(tl, "const") > 0) then
+                  print *, "Error: const not allowed inside loops or blocks"
+                  had_error = .true.
+                  goto 9000
+               end if
                ! buffer everything else
                loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line)//new_line("a")
-               return
+               goto 9000
             end if
          end block
       end if
 
-      ! ─── run("file") : execute the contents of a text file ───
+      ! â”€â”€â”€ run("file") : execute the contents of a text file â”€â”€â”€
       if (index(adj_line, 'run(') == 1) then
          block
             integer :: p1, p2
             character(len=:), allocatable :: fn
             p1 = index(adj_line, '("') + 2
             p2 = index(adj_line, '")') - 1
-            if (p1 > 2 .and. p2 >= p1) then
-               fn = adj_line(p1:p2)
-               call run(fn)
-            else
-               print *, "Error: run() expects a filename in double quotes"
-            end if
-            return
+           if (p1 > 2 .and. p2 >= p1) then
+              fn = adj_line(p1:p2)
+              call run(fn)
+           else
+              print *, "Error: run() expects a filename in double quotes"
+              had_error = .true.
+           end if
+           goto 9000
          end block
       end if
 
@@ -1533,7 +1966,7 @@ contains
          p_lpar = index(adj_line, "(")
          if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
-            ! find matching “)”
+            ! find matching â€œ)â€
             p_rpar = p_lpar
             depth = 1
             do while (p_rpar < len_trim(adj_line) .and. depth > 0)
@@ -1548,34 +1981,36 @@ contains
             then_txt = adjustl(adj_line(p_rpar + 1:))
 
             tmp = evaluate(cond_txt)
+            if (eval_error) had_error = .true.
             if (.not. eval_error .and. size(tmp) == 1) then
                if (tmp(1) /= 0.0_dp) call eval_print(then_txt)
             end if
 
-            return
+            goto 9000
          end if
       end if
 
       if (in_loop_execute .and. adjustl(line) == "cycle") then
          cycle_loop = .true.
-         return        ! skip everything else in this iteration
+         goto 9000        ! skip everything else in this iteration
       end if
 
-!─────────────────────────────
+!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 !  Loop handling
-!─────────────────────────────
+!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       select case (adjustl(line))
       case ("end do", "enddo", "enddo;", "end do;")
          if (loop_depth == 0) then
             print *, "Error: 'end do' without matching 'do'"
-            return
+            had_error = .true.
+            goto 9000
          end if
 
          print *
          do ivar = loop_start(loop_depth), loop_end(loop_depth), loop_step(loop_depth)
             call set_variable(loop_var(loop_depth), [real(ivar, dp)])
             call run_loop_body(loop_body(loop_depth))
-            if (exit_loop) then        ! ← exit from the DO
+            if (exit_loop) then        ! â† exit from the DO
                exit
             end if
          end do
@@ -1583,20 +2018,20 @@ contains
          exit_loop = .false.          ! clear the flag for next loop
          call set_variable(loop_var(loop_depth), [real(ivar, dp)])
          loop_depth = loop_depth - 1
-         return
+         goto 9000
       case default
-         ! nothing – fall through
+         ! nothing â€“ fall through
       end select
 
       adj_line = adjustl(line)
-!──────────────────────────  one‑line IF  ──────────────────────────
+!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  oneâ€‘line IF  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ! if (index(adj_line,'if') == 1 .and. len_trim(adj_line) > 4 .and.    &
 !     adj_line(3:3) == '(' ) then
 
       p_lpar = index(adj_line, "(")                ! first left parenthesis
       if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
-         ! — locate the matching right parenthesis —
+         ! â€” locate the matching right parenthesis â€”
          p_rpar = p_lpar
          depth = 1
          do while (p_rpar < len_trim(adj_line) .and. depth > 0)
@@ -1606,34 +2041,40 @@ contains
             case (")"); depth = depth - 1
             end select
          end do
-         if (depth /= 0) then
-            print *, "Error: mismatched parentheses in IF statement"
-            return
-         end if
+        if (depth /= 0) then
+           print *, "Error: mismatched parentheses in IF statement"
+           had_error = .true.
+           goto 9000
+        end if
 
-         ! — split into  condition  and  consequent —
+         ! â€” split into  condition  and  consequent â€”
          cond_txt = adjustl(adj_line(p_lpar + 1:p_rpar - 1))
          then_txt = adjustl(adj_line(p_rpar + 1:))
 
-         if (len_trim(then_txt) == 0) then
-            print *, "Error: null statement after IF"
-            return
-         end if
+        if (len_trim(then_txt) == 0) then
+           print *, "Error: null statement after IF"
+           had_error = .true.
+           goto 9000
+        end if
 
-         ! — evaluate the condition (must be scalar) —
+         ! â€” evaluate the condition (must be scalar) â€”
          tmp = evaluate(cond_txt)
-         if (eval_error) return
+         if (eval_error) then
+            had_error = .true.
+            goto 9000
+         end if
          if (size(tmp) /= 1) then
             print *, "Error: IF condition must be scalar"
-            return
+            had_error = .true.
+            goto 9000
          end if
          run_then = (tmp(1) /= 0.0_dp)
 
-         ! — execute the single statement if TRUE —
+         ! â€” execute the single statement if TRUE â€”
          if (run_then) call eval_print(then_txt)
-         return                                    ! one‑line IF handled
+         goto 9000                                    ! oneâ€‘line IF handled
       end if
-!───────────────────────────────────────────────────────────────────
+!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 !------------  Is this the beginning of a DO block?  -----------------
       if (index(adj_line, "do") == 1) then
@@ -1641,16 +2082,18 @@ contains
             if (adj_line(3:3) == " ") then
                if (loop_depth >= max_loop_depth) then
                   print *, "Error: loop nesting deeper than ", max_loop_depth
-                  return
+                  had_error = .true.
+                  goto 9000
                end if
 
-               ! Parse  “do  i = 1 , 5 , 2”   (step is optional)
+               ! Parse  â€œdo  i = 1 , 5 , 2â€   (step is optional)
 
                p_eq = index(line, "=")
                p_com1 = index(line, ",")
                if (p_eq == 0 .or. p_com1 == 0) then
                   print *, "Error: malformed DO header: ", trim(line)
-                  return
+                  had_error = .true.
+                  goto 9000
                end if
 
                lhs = adjustl(line(3:p_eq - 1))              ! variable name
@@ -1674,7 +2117,7 @@ contains
                end if
                call set_variable(loop_var(loop_depth), [real(loop_start(loop_depth), dp)])
                loop_body(loop_depth) = ""   ! empty buffer, start collecting
-               return                       ! finished with the DO line
+               goto 9000                       ! finished with the DO line
             end if
          end if
       end if
@@ -1704,19 +2147,20 @@ contains
             tail = tail(:len_trim(tail) - 1)
          end do
 
-         if (nlen_tail > 0) then
-            call delete_vars(tail)
-         else
-            print *, "Error: no variables specified in 'del'"
-         end if
-         return
+        if (nlen_tail > 0) then
+           call delete_vars(tail)
+        else
+           print *, "Error: no variables specified in 'del'"
+           had_error = .true.
+        end if
+        goto 9000
       end if
 
-! ————————————————————————— end “del” —————————————————————
+! â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€” end â€œdelâ€ â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
       if (adjustl(line) == "clear") then
          call clear()
-         return
+         goto 9000
       end if
       if (adjustl(line) == "?vars") then
          write (*, *) "Defined variables:"
@@ -1733,28 +2177,277 @@ contains
                write (*, "(a,': array(',i0,')')") trim(vars(i)%name), nsize
             end if
          end do
-         return
+         goto 9000
+      end if
+      trimmed_line = adjustl(line)
+      if (len_trim(trimmed_line) >= 4 .and. trimmed_line(1:4) == "read" & 
+          .and. (len_trim(trimmed_line) == 4 .or. trimmed_line(5:5) == " ")) then
+         tail = adjustl(trimmed_line(5:))
+        if (len_trim(tail) == 0) then
+           print *, "Error: read needs a file name"
+           had_error = .true.
+           goto 9000
+        end if
+        call read_vars_from_file(trim(tail))
+        if (eval_error) then
+           had_error = .true.
+           goto 9000
+        end if
+        goto 9000
+      end if
+      if (adjustl(line) == "cor") then
+         call print_cor_matrices()
+         goto 9000
       end if
       call split_by_semicolon(line, n, parts, suppress)
 
       do k = 1, n
          if (parts(k) == "") cycle          ! blank segment
 
+         const_assign = .false.
+         part_eval = parts(k)
+         if (len_trim(part_eval) >= 6 .and. part_eval(1:5) == "const" .and. part_eval(6:6) == " ") then
+            const_assign = .true.
+            part_eval = adjustl(part_eval(6:))
+            if (len_trim(part_eval) == 0) then
+               print *, "Error: const needs an assignment"
+               had_error = .true.
+               const_assign = .false.
+               cycle
+            end if
+            if (index(part_eval, "(") > 0 .and. index(part_eval, ")") > index(part_eval, "(") & 
+                .and. index(part_eval, "=") > index(part_eval, "(")) then
+               print *, "Error: const applies to whole-variable assignments only"
+               had_error = .true.
+               const_assign = .false.
+               cycle
+            end if
+         end if
+
+         call split_by_comma(part_eval, n_names, names)
+         if (n_names > 1) then
+            if (.not. suppress(k)) then
+               if (echo_code) write (*, '(/,"> ",a)') trim(part_eval)
+               do i = 1, n_names
+                  if (len_trim(names(i)) >= 2 .and. names(i)(1:1) == '"' .and. &
+                      names(i)(len_trim(names(i)):len_trim(names(i))) == '"') then
+                     write (*, "(a)", advance="no") names(i)(2:len_trim(names(i)) - 1)
+                  else
+                     r = evaluate(names(i))
+                     if (eval_error) then
+                        had_error = .true.
+                        exit
+                     end if
+                     rsize = size(r)
+                     if (rsize == 0) then
+                        write (*, "(a)", advance="no") ""
+                     else
+                        rint = nint(r)
+                        select case (rsize)
+                        case (1)
+                           if (abs(r(1) - rint(1)) <= tol) then
+                              write (*, "(i0)", advance="no") rint
+                           else
+                              write (*, "(F0.6)", advance="no") r(1)
+                           end if
+                        case default
+                           if (rsize <= max_print) then
+                              if (print_array_as_int_if_possible) then
+                                 print_array_as_int = all(abs(r - rint) <= tol)
+                              else
+                                 print_array_as_int = .false.
+                              end if
+                              if (print_array_as_int) then
+                                 write (*, fmt_real_array, advance="no") rint
+                              else
+                                 write (*, '("[",*(F0.6,:,", "))', advance="no") r
+                              end if
+                              write (*, "(']')", advance="no")
+                           else
+                              call print_stats(r)
+                           end if
+                        end select
+                     end if
+                  end if
+                  if (i < n_names) write (*, "(a)", advance="no") " "
+               end do
+               print *
+            end if
+            cycle
+         end if
+
+         if (index(part_eval, '"') > 0) then
+            block
+               character(len=:), allocatable :: seg
+               integer :: p1, p2, posq
+               logical :: have_item
+               have_item = .false.
+               posq = index(part_eval, '"')
+               do while (posq > 0)
+                  if (posq > 1) then
+                     seg = adjustl(part_eval(:posq - 1))
+                     if (len_trim(seg) > 0) then
+                        call split_by_spaces(seg, n_names, names)
+                        if (n_names > 0) then
+                           do i = 1, n_names
+                              r = evaluate(names(i))
+                              if (eval_error) then
+                                 had_error = .true.
+                                 exit
+                              end if
+                              if (size(r) == 1) then
+                                 if (abs(r(1) - nint(r(1))) <= tol) then
+                                    write (*, "(i0)", advance="no") nint(r(1))
+                                 else
+                                    write (*, "(F0.6)", advance="no") r(1)
+                                 end if
+                              else
+                                 write (*, '("[",*(F0.6,:,", "))', advance="no") r
+                                 write (*, "(']')", advance="no")
+                              end if
+                              write (*, "(a)", advance="no") " "
+                           end do
+                           have_item = .true.
+                        end if
+                     end if
+                  end if
+                  p1 = posq + 1
+                  p2 = index(part_eval(p1:), '"')
+                  if (p2 <= 0) then
+                     print *, "Error: unmatched quote"
+                     had_error = .true.
+                     exit
+                  end if
+                  p2 = p1 + p2 - 2
+                  write (*, "(a)", advance="no") part_eval(p1:p2)
+                  write (*, "(a)", advance="no") " "
+                  have_item = .true.
+                  if (p2 + 2 <= len_trim(part_eval)) then
+                     part_eval = part_eval(p2 + 2:)
+                     posq = index(part_eval, '"')
+                  else
+                     part_eval = ""
+                     posq = 0
+                  end if
+               end do
+               if (len_trim(part_eval) > 0 .and. .not. had_error) then
+                  call split_by_spaces(part_eval, n_names, names)
+                  if (n_names > 0) then
+                     do i = 1, n_names
+                        r = evaluate(names(i))
+                        if (eval_error) then
+                           had_error = .true.
+                           exit
+                        end if
+                        if (size(r) == 1) then
+                           if (abs(r(1) - nint(r(1))) <= tol) then
+                              write (*, "(i0)", advance="no") nint(r(1))
+                           else
+                              write (*, "(F0.6)", advance="no") r(1)
+                           end if
+                        else
+                           write (*, '("[",*(F0.6,:,", "))', advance="no") r
+                           write (*, "(']')", advance="no")
+                        end if
+                        write (*, "(a)", advance="no") " "
+                     end do
+                     have_item = .true.
+                  end if
+               end if
+               if (have_item) then
+                  print *
+                  cycle
+               end if
+            end block
+         end if
+
+         call split_by_spaces(part_eval, n_names, names)
+         if (n_names > 1) then
+            block
+               integer :: j, c
+               logical :: all_ident
+               all_ident = .true.
+               do j = 1, n_names
+                  if (len_trim(names(j)) == 0) then
+                     all_ident = .false.; exit
+                  end if
+                  if (.not. is_letter(names(j)(1:1))) then
+                     all_ident = .false.; exit
+                  end if
+                  do c = 1, len_trim(names(j))
+                     if (.not. (is_alphanumeric(names(j)(c:c)) .or. names(j)(c:c) == "_")) then
+                        all_ident = .false.; exit
+                     end if
+                  end do
+                  if (.not. all_ident) exit
+               end do
+
+               if (all_ident) then
+                  if (.not. suppress(k)) then
+                     if (echo_code) write (*, '(/,"> ",a)') trim(part_eval)
+                     do j = 1, n_names
+                        r = evaluate(names(j))
+                        if (eval_error) then
+                           had_error = .true.
+                           exit
+                        end if
+                        rsize = size(r)
+                        if (rsize == 0) then
+                           print *
+                        else
+                           rint = nint(r)
+                           select case (rsize)
+                           case (1)
+                              if (abs(r(1) - rint(1)) <= tol) then
+                                 print "(i0)", rint
+                              else
+                                 call print_real(r(1))
+                              end if
+                           case default
+                              if (rsize <= max_print) then
+                                 if (print_array_as_int_if_possible) then
+                                    print_array_as_int = all(abs(r - rint) <= tol)
+                                 else
+                                    print_array_as_int = .false.
+                                 end if
+                                 if (print_array_as_int) then
+                                    write (*, fmt_real_array, advance="no") rint
+                                 else
+                                    write (*, '("[",*(F0.6,:,", "))', advance="no") r
+                                 end if
+                                 print "(']')"
+                              else
+                                 call print_stats(r)
+                              end if
+                           end select
+                        end if
+                     end do
+                  end if
+                  cycle
+               end if
+            end block
+         end if
+
          ! ---------- syntax checks exactly as before ----------
-         if (.not. matched_parentheses(parts(k))) then
-            print *, "mismatched parentheses"; cycle
+         if (.not. matched_parentheses(part_eval)) then
+            print *, "mismatched parentheses"; had_error = .true.; cycle
          end if
-         if (.not. matched_brackets(parts(k))) then
-            print *, "mismatched brackets"; cycle
+         if (.not. matched_brackets(part_eval)) then
+            print *, "mismatched brackets"; had_error = .true.; cycle
          end if
-         if (index(parts(k), "**") /= 0) then
-            print *, "use ^ instead of ** for exponentiation"; cycle
+         if (index(part_eval, "**") /= 0) then
+            print *, "use ^ instead of ** for exponentiation"; had_error = .true.; cycle
          end if
 
          ! ------------------------------------------------------
-         r = evaluate(parts(k))
+         r = evaluate(part_eval)
          if (eval_error) then
             if (stop_if_error) stop "stopped with evaluation error"
+            had_error = .true.; cycle
+         end if
+         const_assign = .false.
+         if (suppress_result) then
+            suppress_result = .false.
             cycle
          end if
          if (index(trim(parts(k)), "print_stats") == 1) cycle
@@ -1782,7 +2475,7 @@ contains
                         print_array_as_int = .false.
                      end if
                      if (print_array_as_int) then
-                        write (*, fmt_real_array, advance="no") rint   ! open ‘[’ but no LF
+                        write (*, fmt_real_array, advance="no") rint   ! open â€˜[â€™ but no LF
                      else
                         write (*, '("[",*(F0.6,:,", "))', advance="no") r    ! ditto
                      end if
@@ -1794,6 +2487,9 @@ contains
             end if
          end if
       end do
+9000  continue
+      const_assign = .false.
+      if (write_code .and. .not. had_error) write (tunit, "(a)") line
    end subroutine eval_print
 
    subroutine delete_vars(list_str)
@@ -1835,6 +2531,7 @@ contains
                   vars(j_var) = vars(j_var + 1)
                end do
                vars(n_vars)%name = ""
+               vars(n_vars)%is_const = .false.
                if (allocated(vars(n_vars)%val)) deallocate (vars(n_vars)%val)
                n_vars = n_vars - 1
                found = .true.
@@ -1933,7 +2630,7 @@ contains
       end if
       allocate (mask(n))
 
-      ! -------- build element‑wise truth masks ---------------------
+      ! -------- build elementâ€‘wise truth masks ---------------------
       if (na == 1) then
          mask = (a(1) /= 0.0_dp)
       else
@@ -1959,10 +2656,10 @@ contains
 
    function merge_array(t_source, f_source, mask_val) result(res)
   !! Elemental-style MERGE for the interpreter.
-  !! – Any of the three inputs may be size-1 (scalar) or an array.
+  !! â€“ Any of the three inputs may be size-1 (scalar) or an array.
       real(dp), intent(in)          :: t_source(:)
       real(dp), intent(in)          :: f_source(:)
-      real(dp), intent(in)          :: mask_val(:)   ! zero → .false., non-zero → .true.
+      real(dp), intent(in)          :: mask_val(:)   ! zero â†’ .false., non-zero â†’ .true.
       real(dp), allocatable         :: res(:)
 
       integer :: nt, nf, nm, n
@@ -2003,8 +2700,125 @@ contains
       res = merge(t, f, lmask)   ! use intrinsic MERGE now that shapes match
    end function merge_array
 
+   subroutine split_by_comma(line, n, parts)
+!  Break LINE into items separated by top-level commas.
+!  parts(i) = i-th item (trimmed)
+      character(len=*), intent(in)  :: line
+      integer, intent(out) :: n
+      character(len=:), allocatable  :: parts(:)
+
+      character(len=:), allocatable :: buf
+      integer :: i, depth_par, depth_br, ntrim
+      logical :: in_quote
+
+      buf = ""
+      depth_par = 0
+      depth_br = 0
+      in_quote = .false.
+      n = 0
+
+      do i = 1, len_trim(line)
+         select case (line(i:i))
+         case ('"')
+            in_quote = .not. in_quote
+         case ("("); depth_par = depth_par + 1
+         case (")"); depth_par = depth_par - 1
+         case ("["); depth_br = depth_br + 1
+         case ("]"); depth_br = depth_br - 1
+         case (",")
+            if (.not. in_quote .and. depth_par == 0 .and. depth_br == 0) then
+               call append_part(buf)
+               buf = ""
+               cycle
+            end if
+         end select
+         buf = buf//line(i:i)
+      end do
+
+      if (len_trim(buf) > 0) then
+         call append_part(buf)
+      else
+         ntrim = len_trim(line)
+         if (ntrim > 0) then
+            if (line(ntrim:ntrim) == ",") call append_part("")
+         end if
+      end if
+
+   contains
+      subroutine append_part(txt)
+         character(len=*), intent(in) :: txt
+         integer :: newlen
+
+         newlen = max(len_trim(txt), merge(0, len(parts(1)), allocated(parts)))
+
+         if (.not. allocated(parts)) then
+            allocate (character(len=newlen) :: parts(1))
+         else if (len(parts(1)) < newlen) then
+            call enlarge_parts(newlen)
+         else
+            parts = [character(len=len(parts)) :: parts, ""]
+         end if
+
+         n = n + 1
+         parts(n) = adjustl(trim(txt))
+      end subroutine append_part
+
+      subroutine enlarge_parts(newlen)
+         integer, intent(in) :: newlen
+         character(len=newlen), allocatable :: tmp(:)
+
+         allocate (tmp(size(parts)))
+         tmp = parts
+         call move_alloc(tmp, parts)
+         parts = [character(len=len(parts)) :: parts, ""]
+      end subroutine enlarge_parts
+   end subroutine split_by_comma
+
+   subroutine split_by_spaces(line_in, n, parts)
+      character(len=*), intent(in) :: line_in
+      integer, intent(out) :: n
+      character(len=:), allocatable :: parts(:)
+      integer :: i, start, len_line, newlen, nlen_tail
+
+      n = 0
+      len_line = len_trim(line_in)
+      i = 1
+      do while (i <= len_line)
+         do
+            if (i > len_line) exit
+            if (line_in(i:i) /= " ") exit
+            i = i + 1
+         end do
+         if (i > len_line) exit
+         start = i
+         do
+            if (i > len_line) exit
+            if (line_in(i:i) == " ") exit
+            i = i + 1
+         end do
+         nlen_tail = min(i - 1, len_line)
+         if (nlen_tail < start) cycle
+         newlen = max(nlen_tail - start + 1, merge(0, len(parts(1)), allocated(parts)))
+         if (.not. allocated(parts)) then
+            allocate (character(len=newlen) :: parts(1))
+         else if (len(parts(1)) < newlen) then
+            block
+               character(len=newlen), allocatable :: tmp(:)
+               allocate (tmp(size(parts)))
+               tmp = parts
+               call move_alloc(tmp, parts)
+               parts = [character(len=len(parts)) :: parts, ""]
+            end block
+         else
+            parts = [character(len=len(parts)) :: parts, ""]
+         end if
+         n = n + 1
+         parts(n) = adjustl(line_in(start:nlen_tail))
+      end do
+   end subroutine split_by_spaces
+
    subroutine split_by_semicolon(line, n, parts, suppress)
-!  Break LINE into statements separated by *top‑level* semicolons.
+!  Break LINE into statements separated by *topâ€‘level* semicolons.
 !  parts(i)   = i-th statement (trimmed)
 !  suppress(i)= .true. if that statement ended with a ';'
       character(len=*), intent(in)  :: line
@@ -2016,8 +2830,8 @@ contains
       integer :: i, depth_par, depth_br, ntrim
 
       buf = ""
-      depth_par = 0      ! '(' … ')'
-      depth_br = 0      ! '[' … ']'
+      depth_par = 0      ! '(' â€¦ ')'
+      depth_br = 0      ! '[' â€¦ ']'
       n = 0
 
       do i = 1, len_trim(line)
@@ -2089,7 +2903,7 @@ contains
    end subroutine split_by_semicolon
 
    subroutine run_loop_body(body)
-      ! Execute the buffered DO‑loop BODY one line at a time by calling
+      ! Execute the buffered DOâ€‘loop BODY one line at a time by calling
       ! eval_print, handling CYCLE and EXIT via cycle_loop and exit_loop flags.
       character(len=*), intent(in) :: body
       character(len=:), allocatable :: line
@@ -2106,7 +2920,7 @@ contains
          end if
          call eval_print(line)                            ! recursion
          if (cycle_loop) then
-            ! — we’ve seen a “cycle” in this iteration,
+            ! â€” weâ€™ve seen a â€œcycleâ€ in this iteration,
             !   so drop the rest of the body and go back to the DO
             cycle_loop = .false.
             in_loop_execute = .false.
@@ -2131,7 +2945,7 @@ contains
       tmp = evaluate(txt)
       if (eval_error .or. size(tmp) /= 1) then
          print *, "Error: bad scalar expression in DO header: '", trim(txt), "'"
-         iv = 0        ! any value – the loop will not run anyway
+         iv = 0        ! any value â€“ the loop will not run anyway
          return
       end if
       iv = nint(tmp(1))
