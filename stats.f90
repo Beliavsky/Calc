@@ -1,10 +1,11 @@
 module stats_mod
 use kind_mod, only: dp
+use random_mod, only: random_normal
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean, harmean
+          geomean, harmean, acf, arsim
 contains
 
 function standardize(x) result(y)
@@ -95,6 +96,56 @@ x_mean = sum(x) / n
 y_mean = sum(y) / n
 cov_xy = sum((x - x_mean) * (y - y_mean)) / (n - 1)
 end function cov
+
+function acf(x, k) result(r)
+! return the first k autocorrelations (lags 1..k) of x
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k
+real(kind=dp), allocatable :: r(:)
+real(kind=dp) :: mean_x, denom
+integer :: n, lag, k_eff
+n = size(x)
+if (k < 1 .or. n < 2) then
+   allocate (r(0))
+   return
+end if
+k_eff = min(k, n - 1)
+allocate (r(k_eff))
+mean_x = mean(x)
+denom = sum((x - mean_x)**2)
+if (denom <= 0.0_dp) then
+   r = -3.0_dp
+   return
+end if
+do lag = 1, k_eff
+   r(lag) = sum((x(1:n - lag) - mean_x) * (x(1 + lag:n) - mean_x)) / denom
+end do
+end function acf
+
+function arsim(n, phi) result(x)
+! simulate n observations from an AR(p) with coefficients phi(:)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: phi(:)
+real(kind=dp), allocatable :: x(:)
+real(kind=dp), allocatable :: eps(:)
+integer :: p, t, j, m
+p = size(phi)
+if (n < 1 .or. p < 1) then
+   allocate (x(0))
+   return
+end if
+allocate (x(n))
+eps = random_normal(n)
+do t = 1, n
+   x(t) = eps(t)
+   m = min(p, t - 1)
+   if (m > 0) then
+      do j = 1, m
+         x(t) = x(t) + phi(j) * x(t - j)
+      end do
+   end if
+end do
+end function arsim
 
 function cumsum(x) result(y)
 ! return the cumulative sum of x
