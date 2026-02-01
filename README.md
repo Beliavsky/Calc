@@ -1,5 +1,5 @@
 # Calc
-Interpreter in Fortran that can handle scalars and 1D arrays, with plotting using gnuplot. Some code the interpreter accepts is
+Interpreter in Fortran that can handle scalars and 1D arrays, with plotting using gnuplot. It now supports const bindings, autocorrelation and AR simulation helpers, labeled correlation matrices, comma-separated print lists, multi-name prints, mixed string/value prints, and reading column-named CSV/space-delimited files. A simple transpiler is included to convert session scripts to Fortran. Some code the interpreter accepts is
 
 ```
 ! ────────────────────────────────
@@ -14,6 +14,7 @@ calc code.txt                       ! run the code in code.txt assuming calc is 
 n = 10                              ! define an integer/real scalar variable
 r = n / 2                           ! scalar arithmetic (division)
 r^3                                 ! exponentiation of a scalar
+const m = 10^3                      ! const variables (cannot be reassigned)
 
 ! ────────────────────────────────
 ! Creating vectors (array literals, arange, grid)
@@ -42,6 +43,8 @@ x  = runif(10)                      ! 10 iid uniform(0,1) deviates
 x0 = runif()                        ! single uniform deviate (same as runif(1))
 rn = rnorm(5)                       ! 5 iid standard-normal deviates
 rnorm(10^3)                         ! 1000 iid normals; large vectors are summarized
+arsim(1000, [0.5, -0.4])            ! simulate AR(2) series
+acf(x, 10)                          ! first 10 autocorrelations
 
 ! ────────────────────────────────
 ! Descriptive statistics
@@ -90,6 +93,8 @@ y >= 4                              ! “greater-or-equal” test
 ! ────────────────────────────────
 cor(x, sort(x))                     ! Pearson correlation of two equal-length vectors
 cov(x, sort(x))                     ! covariance
+cor                                ! labeled correlation matrix for all equal-size arrays
+cor(x, y, z)                        ! labeled correlation matrix for explicit arguments
 dot(y, v(1:size(y)))                ! dot product of two length-5 vectors
 min(y, v(1:size(y)))                ! element-wise minima between two vectors
 max(x, 0.5)                         ! element-wise maximum with a scalar
@@ -98,6 +103,7 @@ max(x, 0.5)                         ! element-wise maximum with a scalar
 ! Inspect currently defined variables
 ! ────────────────────────────────
 ?vars                               ! list all variables and their current values
+read prices.csv                     ! read columns into variables from header row
 
 ! ────────────────────────────────
 ! Clean up workspace
@@ -134,7 +140,7 @@ A sample session is
 > q
 ```
 
-The semicolon `;` is the continuation character, as in Fortran. It suppresses output when it appears at the end of the line, as in Matlab. Iteration is done by starting a line with `*n`, which means execute the rest of the line n times. Thus the code
+The semicolon `;` is the continuation character, as in Fortran. It suppresses output when it appears at the end of the line, as in Matlab. Iteration is done by starting a line with `*n`, which means execute the rest of the line n times. The transcript file `code.fi` records only successful input lines. Thus the code
 
 ```
 a = 3
@@ -159,3 +165,22 @@ plot(x,bessel_j0(x))
 
 ![Alt text](bessel_j0.png)
 
+## Printing shortcuts
+You can print multiple items on one line using either space-separated names or a comma-separated list:
+```
+x y z
+"x=",x,"y=",y,"x+y=",x+y
+```
+
+## Transpiler
+`transpile_session.py` converts a session script (e.g. `code.fi` or any `.fi`) to a standalone Fortran program.
+
+```
+python transpile_session.py code.fi -o session.f90
+```
+
+The transpiler:
+- Emits only required `use` statements with `only:`.
+- Uses `[]` array constructors and `_dp` literals for real constants.
+- Declares integer variables when first assigned integer expressions.
+- Converts `const` assignments into `parameter` declarations.
