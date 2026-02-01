@@ -5,11 +5,11 @@ program xinterpret
   use kind_mod, only: dp
   use plot_mod, only: use_windows
   implicit none
-  integer :: i, iostat_err, varu, ipos_comment, narg
+  integer :: i, iostat_err, varu, narg
   character (len=1000) :: line, arg
   logical, parameter :: write_vars_at_end = .false., &
                         time_code=.false., run_sample_code=.false.
-  character (len=*), parameter :: vars_file = "temp_vars.txt", comment_char="!"
+  character (len=*), parameter :: vars_file = "temp_vars.txt"
   real(kind=dp) :: t1, t2
   use_windows = windows()
   narg = command_argument_count()
@@ -48,12 +48,6 @@ program xinterpret
      read (*,"(a)", iostat=iostat_err) line
      if (iostat_err /= 0) exit
      if (line == "exit" .or. line == "exit()" .or. line == "quit" .or. line == "quit()" .or. line == "q" .or. line == "q()") exit
-     ipos_comment = index(line, comment_char)
-     if (ipos_comment == 1) then
-        cycle
-     else if (ipos_comment > 0) then
-        line = line(:ipos_comment-1)
-     end if
      line = replace(line, "**", "^")
      if (time_code) call cpu_time(t1)
      call eval_print(trim(line))
