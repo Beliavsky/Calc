@@ -184,3 +184,42 @@ The transpiler:
 - Uses `_dp` literals for real constants.
 - Declares integer variables when first assigned integer expressions.
 - Converts `const` assignments into `parameter` declarations.
+
+### Example: `code.fi` to `tests.f90`
+Current `code.fi`:
+```
+a = 3.0
+b = 1.0
+! Newton method for square root
+*5  b = (b + a/b)/2
+b
+const n = 10^3
+x = arsim(n, [0.9])
+acf(x,5)
+plot(x)
+```
+
+Transpiled `tests.f90`:
+```
+program session
+  use kind_mod, only: dp
+  use stats_mod, only: acf, arsim
+  use plot_mod, only: plot
+  implicit none
+  integer :: rep1
+  integer, parameter :: n = 10**3
+  real(kind=dp) :: a, b
+  real(kind=dp), allocatable :: x(:)
+
+   a = 3.0_dp
+   b = 1.0_dp
+   ! Newton method for square root
+   do rep1 = 1, 5
+      b = (b + a/b)/2
+   end do
+   print *, b
+   x = arsim(n, [0.9_dp])
+   print *, acf(x,5)
+   call plot(x)
+end program session
+```
