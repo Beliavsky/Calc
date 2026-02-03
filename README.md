@@ -145,8 +145,6 @@ resample(x, n=20, replace=0)      ! sample without replacement
 ## Distribution helpers
 
 - Most distributions expose `r*`/`d*`/`p*`/`q*` helpers plus `fit_*` and often `mssk_*`.
-- Uniform helpers now include `runif`, `dunif`, `punif`, and `qunif`.
-- `fit_t(x)` now returns three parameters: `[mu, sigma, df]`.
 
 See [distributions.md](distributions.md) for interpreter-name to statistical-name mapping.
 
