@@ -14,7 +14,7 @@ Calc naming follows R-style prefixes in many places:
 
 | Interpreter name family | Statistical name |
 |---|---|
-| `runif` | Uniform distribution (default: Uniform(0,1)) |
+| `runif`, `dunif`, `punif`, `qunif` | Uniform distribution (default: Uniform(0,1)) |
 | `rnorm`, `dnorm`, `pnorm`, `qnorm`, `fit_norm` | Normal (Gaussian) distribution |
 | `rexp`, `dexp`, `pexp`, `qexp`, `fit_exp`, `mssk_exp` | Exponential distribution |
 | `rgamma`, `dgamma`, `pgamma`, `qgamma`, `fit_gamma`, `mssk_gamma` | Gamma distribution |
@@ -32,5 +32,5 @@ Calc naming follows R-style prefixes in many places:
 
 ## Notes
 
-- Some distribution families have partial helper coverage (for example, `runif` is available but no `dunif`/`punif`/`qunif` helpers are currently exposed).
+- Uniform helper defaults use the standard support `[0,1]` when bounds are omitted.
 - `mssk(x)` computes empirical moments from a sample, while `mssk_*` routines return theoretical moments for named distributions.
