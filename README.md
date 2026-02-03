@@ -75,8 +75,8 @@ diff(y)
 
 ! Sorting and ordering
 sort(x)
-indexx(x)
-y(indexx(y))
+p = indexx(y)                     ! permutation that sorts y
+y(p)                              ! y reordered by that permutation (same values as sort(y))
 
 ! Head/tail
 head(v)
