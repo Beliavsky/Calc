@@ -6,7 +6,7 @@ Calc is a Fortran-based interactive statistics interpreter with a session-to-For
 
 - Scalars and 1D real arrays.
 - Array literals, slicing, arithmetic, reductions, and basic control flow.
-- Random simulation and distribution helpers.
+- Random simulation, fitting, and properties of many [probability distributions](distributions.md).
 - Time-series helpers including ACF/PACF and AR/MA/ARMA/ARFIMA utilities.
 - Plotting via gnuplot.
 
