@@ -90,13 +90,13 @@ y /= 3
 y >= 4
 
 ! Two-vector functions
-cor(x, sort(x))
-cov(x, sort(x))
-cor
-cor(x, y, z)
-dot(y, v(1:size(y)))
-min(y, v(1:size(y)))
-max(x, 0.5)
+cor(x, y)                         ! Pearson correlation between x and y
+cov(x, y)                         ! sample covariance between x and y
+cor                               ! labeled correlation matrix for all same-length vectors in workspace
+cor(x, y, z)                      ! labeled correlation matrix for the listed vectors
+dot(x, y)                         ! dot product of x and y
+min(x, y)                         ! element-wise minimum of x and y
+max(x, 0.5)                       ! element-wise maximum of x and scalar 0.5
 
 ! Workspace
 ?vars
