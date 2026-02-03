@@ -116,8 +116,8 @@ regress(x, y)                     ! with intercept by default
 regress(x, y, intcp=0)            ! no-intercept regression
 
 ! Multiple regression
-X = [x, x^2]                      ! use your preferred matrix-construction workflow
-regress_multi(X, y)
+z = x^2
+regress(y, x, z)                  ! multiple predictors via regress(...)
 
 ! AR/MA/ARMA fitting helpers
 arfit(y, 1, 5)
