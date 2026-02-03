@@ -99,9 +99,9 @@ min(x, y)                         ! element-wise minimum of x and y
 max(x, 0.5)                       ! element-wise maximum of x and scalar 0.5
 
 ! Workspace
-?vars
-read prices.csv
-clear
+?vars                              ! list currently defined variables and their values
+read prices.csv                    ! read columns from prices.csv into workspace variables
+clear                              ! remove all user-defined variables from the workspace
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
