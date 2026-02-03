@@ -59,6 +59,7 @@ arfimasim(1000, 0.25, phi=[0.4], theta=[0.2]) ! simulate ARFIMA(1,d,1)
 
 ! Stats
 sum(x)
+product(x)
 mean(x)
 geomean(x)
 harmean(x)
@@ -79,8 +80,10 @@ p = indexx(y)                     ! permutation that sorts y
 y(p)                              ! y reordered by that permutation (same values as sort(y))
 
 ! Head/tail
-head(v)
-tail(v)
+head(v)                            ! first 5 values (default)
+head(v, 3)                         ! first 3 values
+tail(v)                            ! last 5 values (default)
+tail(v, 3)                         ! last 3 values
 
 ! Comparisons
 x > 0.5
@@ -105,6 +108,7 @@ clear                              ! remove all user-defined variables from the 
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
+`head`/`tail` accept an optional second argument for the number of elements to return.
 
 ## Regression and model fitting
 
