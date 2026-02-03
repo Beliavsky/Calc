@@ -39,23 +39,23 @@ v(3:9:2)
 reverse(v)
 
 ! Random numbers and time series
-x = runif(10)
-x0 = runif()
-rn = rnorm(5)
-arsim(1000, [0.5, -0.4])
-acf(x, 10)
-acf(x, 10, plot=.true.)
-pacf(x, 10)
-pacf(x, 10, plot=.true.)
-acfpacf(x, 10)
-acfpacf(x, 10, plot=.true.)
-acfpacfar(x, 10)
-acfpacfar(x, 10, plot=.true.)
-fiacf(0.25, 10)
-arfimaacf([0.4], [0.2], 0.25, 10)
-fracdiff(x, 0.3)
-arfimafit(x, 1, 1)
-arfimasim(1000, 0.25, phi=[0.4], theta=[0.2])
+x = runif(10)                                ! 10 iid Uniform(0,1) draws
+x0 = runif()                                 ! one Uniform(0,1) draw
+rn = rnorm(5)                                ! 5 iid standard Normal draws
+arsim(1000, [0.5, -0.4])                     ! simulate AR(2) series
+acf(x, 10)                                   ! sample ACF for lags 1..10
+acf(x, 10, plot=.true.)                      ! sample ACF and plot
+pacf(x, 10)                                  ! sample PACF for lags 1..10
+pacf(x, 10, plot=.true.)                     ! sample PACF and plot
+acfpacf(x, 10)                               ! print aligned ACF/PACF table
+acfpacf(x, 10, plot=.true.)                  ! table + joint ACF/PACF plot
+acfpacfar(x, 10)                             ! print ACF/PACF/AR-coefficient table
+acfpacfar(x, 10, plot=.true.)                ! table + joint ACF/PACF/AR plot
+fiacf(0.25, 10)                              ! theoretical ACF of ARFIMA(0,d,0)
+arfimaacf([0.4], [0.2], 0.25, 10)            ! theoretical ACF of ARFIMA(1,d,1)
+fracdiff(x, 0.3)                             ! fractional differencing (1-L)^0.3 x
+arfimafit(x, 1, 1)                           ! fit ARFIMA(1,d,1)
+arfimasim(1000, 0.25, phi=[0.4], theta=[0.2]) ! simulate ARFIMA(1,d,1)
 
 ! Stats
 sum(x)
@@ -105,6 +105,54 @@ clear
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
+
+## Regression and model fitting
+
+```text
+! Simple linear regression
+x = runif(200)
+y = 1.0 + 2.0*x + 0.2*rnorm(200)
+regress(x, y)                     ! with intercept by default
+regress(x, y, intcp=0)            ! no-intercept regression
+
+! Multiple regression
+X = [x, x^2]                      ! use your preferred matrix-construction workflow
+regress_multi(X, y)
+
+! AR/MA/ARMA fitting helpers
+arfit(y, 1, 5)
+mafit(y, 1, 5)
+armafit(y, 1, 1)
+armafitgrid(y, 0, 3, 0, 3)
+armafitaic(y, 0, 5, 0, 5)
+```
+
+`arfimafit(x, p, q)` prints a fit table including `npar` (number of estimated parameters), RMSE/AIC/BIC, and parameter estimates.
+
+## Resampling
+
+```text
+x = rnorm(100)
+resample(x)                       ! bootstrap sample, same size, with replacement
+resample(x, n=20)                 ! sample size 20
+resample(x, n=20, replace=0)      ! sample without replacement
+```
+
+## Distribution helpers
+
+- Most distributions expose `r*`/`d*`/`p*`/`q*` helpers plus `fit_*` and often `mssk_*`.
+- Uniform helpers now include `runif`, `dunif`, `punif`, and `qunif`.
+- `fit_t(x)` now returns three parameters: `[mu, sigma, df]`.
+
+See [distributions.md](distributions.md) for interpreter-name to statistical-name mapping.
+
+## Data input modes
+
+```text
+read prices.csv                   ! REPL command: load named columns into workspace variables
+x = read("spy.csv", 2)            ! function form: read numeric column 2 as a vector
+ret = diff(log(read("spy.csv", 2)))
+```
 
 ## Sample session
 
