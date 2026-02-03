@@ -9,6 +9,19 @@ ARRAY_FUNCS = {
     "runif",
     "rnorm",
     "random_normal",
+    "rexp",
+    "rgamma",
+    "rlnorm",
+    "rt",
+    "rchisq",
+    "rf",
+    "rbeta",
+    "rlogis",
+    "rsech",
+    "rlaplace",
+    "rcauchy",
+    "rged",
+    "rhyperb",
     "zeros",
     "ones",
     "cumsum",
@@ -27,6 +40,93 @@ ARRAY_FUNCS = {
     "stdz",
     "standardize",
     "reverse",
+    "acf",
+    "pacf",
+    "fiacf",
+    "fracdiff",
+    "aracf",
+    "maacf",
+    "arpacf",
+    "mapacf",
+    "armaacf",
+    "arfimaacf",
+    "armapacf",
+    "arsim",
+    "masim",
+    "armasim",
+    "arfimasim",
+    "resample",
+    "quantile",
+    "mssk",
+    "mssk_exp",
+    "mssk_gamma",
+    "mssk_lnorm",
+    "mssk_t",
+    "mssk_chisq",
+    "mssk_f",
+    "mssk_beta",
+    "mssk_logis",
+    "mssk_sech",
+    "mssk_laplace",
+    "fit_norm",
+    "fit_exp",
+    "fit_gamma",
+    "fit_lnorm",
+    "fit_t",
+    "fit_chisq",
+    "fit_f",
+    "fit_beta",
+    "fit_logis",
+    "fit_sech",
+    "fit_laplace",
+    "fit_cauchy",
+    "fit_ged",
+    "fit_hyperb",
+    "dunif",
+    "dexp",
+    "dgamma",
+    "dlnorm",
+    "dnorm",
+    "dt",
+    "dchisq",
+    "df",
+    "dbeta",
+    "dlogis",
+    "dsech",
+    "dlaplace",
+    "dcauchy",
+    "dged",
+    "dhyperb",
+    "punif",
+    "pexp",
+    "pgamma",
+    "plnorm",
+    "pnorm",
+    "pt",
+    "pchisq",
+    "pf",
+    "pbeta",
+    "plogis",
+    "psech",
+    "plaplace",
+    "pcauchy",
+    "pged",
+    "phyperb",
+    "qunif",
+    "qexp",
+    "qgamma",
+    "qlnorm",
+    "qnorm",
+    "qt",
+    "qchisq",
+    "qf",
+    "qbeta",
+    "qlogis",
+    "qsech",
+    "qlaplace",
+    "qcauchy",
+    "qged",
+    "qhyperb",
     "read",
 }
 SCALAR_FUNCS = {
@@ -51,7 +151,21 @@ SCALAR_FUNCS = {
     "cov",
     "dot",
 }
-CALL_ONLY = {"plot", "plot_to_label", "print_stats"}
+CALL_ONLY = {
+    "plot",
+    "plot_to_label",
+    "print_stats",
+    "regress",
+    "regress_multi",
+    "arfit",
+    "mafit",
+    "armafit",
+    "armafitgrid",
+    "armafitaic",
+    "arfimafit",
+    "acfpacf",
+    "acfpacfar",
+}
 REWRITE_FUNCS = {
     "rnorm": "random_normal",
     "sort": "sorted",
@@ -92,11 +206,118 @@ MODULE_EXPORTS = {
         "geomean",
         "harmean",
         "acf",
+        "pacf",
+        "acfpacf",
+        "acfpacfar",
+        "fiacf",
+        "fracdiff",
+        "aracf",
+        "maacf",
+        "arpacf",
+        "mapacf",
+        "armaacf",
+        "arfimaacf",
+        "armapacf",
         "arsim",
+        "masim",
+        "armasim",
+        "arfimasim",
+        "resample",
+        "regress",
+        "regress_multi",
+        "arfit",
+        "mafit",
+        "armafit",
+        "armafitgrid",
+        "armafitaic",
+        "arfimafit",
+        "mssk",
+        "mssk_exp",
+        "mssk_gamma",
+        "mssk_lnorm",
+        "mssk_t",
+        "mssk_chisq",
+        "mssk_f",
+        "mssk_beta",
+        "mssk_logis",
+        "mssk_sech",
+        "mssk_laplace",
+        "fit_norm",
+        "fit_exp",
+        "fit_gamma",
+        "fit_lnorm",
+        "fit_t",
+        "fit_chisq",
+        "fit_f",
+        "fit_beta",
+        "fit_logis",
+        "fit_sech",
+        "fit_laplace",
+        "fit_cauchy",
+        "fit_ged",
+        "fit_hyperb",
+        "dunif",
+        "dexp",
+        "dgamma",
+        "dlnorm",
+        "dnorm",
+        "dt",
+        "dchisq",
+        "df",
+        "dbeta",
+        "dlogis",
+        "dsech",
+        "dlaplace",
+        "dcauchy",
+        "dged",
+        "dhyperb",
+        "punif",
+        "pexp",
+        "pgamma",
+        "plnorm",
+        "pnorm",
+        "pt",
+        "pchisq",
+        "pf",
+        "pbeta",
+        "plogis",
+        "psech",
+        "plaplace",
+        "pcauchy",
+        "pged",
+        "phyperb",
+        "qunif",
+        "qexp",
+        "qgamma",
+        "qlnorm",
+        "qnorm",
+        "qt",
+        "qchisq",
+        "qf",
+        "qbeta",
+        "qlogis",
+        "qsech",
+        "qlaplace",
+        "qcauchy",
+        "qged",
+        "qhyperb",
+        "rhyperb",
     },
     "random_mod": {
         "random_normal",
         "runif",
+        "rexp",
+        "rgamma",
+        "rlnorm",
+        "rt",
+        "rchisq",
+        "rf",
+        "rbeta",
+        "rlogis",
+        "rsech",
+        "rlaplace",
+        "rcauchy",
+        "rged",
     },
     "qsort_mod": {
         "sorted",
@@ -159,6 +380,10 @@ def split_comment(line):
     return line.rstrip(), ""
 
 
+def strip_prompt(line):
+    return re.sub(r"^\s*>\s*", "", line)
+
+
 def find_top_level_assign(s):
     depth_par = 0
     depth_br = 0
@@ -184,6 +409,71 @@ def find_top_level_assign(s):
                 continue
             return i
     return -1
+
+
+def has_top_level_relational(expr):
+    depth_par = 0
+    depth_br = 0
+    in_str = False
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch == '"':
+            in_str = not in_str
+            i += 1
+            continue
+        if in_str:
+            i += 1
+            continue
+        if ch == "(":
+            depth_par += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth_par = max(0, depth_par - 1)
+            i += 1
+            continue
+        if ch == "[":
+            depth_br += 1
+            i += 1
+            continue
+        if ch == "]":
+            depth_br = max(0, depth_br - 1)
+            i += 1
+            continue
+        if depth_par == 0 and depth_br == 0:
+            if expr.startswith(("<=", ">=", "==", "/="), i):
+                return True
+            if ch in "<>":
+                return True
+        i += 1
+    return False
+
+
+def strip_outer_parens(expr):
+    s = expr.strip()
+    while s.startswith("(") and s.endswith(")"):
+        depth = 0
+        in_str = False
+        ok = True
+        for i, ch in enumerate(s):
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(s) - 1:
+                    ok = False
+                    break
+        if ok and depth == 0:
+            s = s[1:-1].strip()
+        else:
+            break
+    return s
 
 
 def normalize_array_content(content):
@@ -343,6 +633,320 @@ def rewrite_functions(expr):
     return re.sub(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", repl, expr)
 
 
+def rewrite_arfimasim_calls(expr):
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\barfimasim\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args_raw = expr[lpar + 1 : j]
+        args = split_top_level(args_raw, ",")
+        # Rewrite legacy positional form: arfimasim(n, phi, theta, d, ...)
+        if (
+            len(args) >= 4
+            and all("=" not in a for a in args[:4])
+            and "[" in args[1]
+            and "[" in args[2]
+        ):
+            new_args = [args[0], args[3], f"phi={args[1]}", f"theta={args[2]}"] + args[4:]
+            out.append("arfimasim(" + ", ".join(new_args) + ")")
+        else:
+            out.append(expr[start : j + 1])
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_acf_pacf_plot_args(expr):
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b(acf|pacf)\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        fname = m.group(1)
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = split_top_level(expr[lpar + 1 : j], ",")
+        kept = []
+        for a in args:
+            a_str = a.strip()
+            if a_str.lower().startswith("plot="):
+                continue
+            kept.append(rewrite_acf_pacf_plot_args(a_str))
+        out.append(f"{fname}(" + ", ".join(kept) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_reduction_calls(expr):
+    reducers = {"sum", "product", "minval", "maxval"}
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b(sum|product|minval|maxval)\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        fname = m.group(1)
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = split_top_level(expr[lpar + 1 : j], ",")
+        new_args = []
+        for idx, a in enumerate(args):
+            a_str = a.strip()
+            eq = find_top_level_assign(a_str)
+            if eq != -1:
+                key = a_str[:eq].strip().lower()
+                rhs = a_str[eq + 1 :].strip()
+                rhs_rw = rewrite_reduction_calls(rhs)
+                if key == "mask":
+                    if has_top_level_relational(rhs_rw):
+                        new_args.append(f"{a_str[:eq].strip()}={rhs_rw}")
+                    else:
+                        new_args.append(f"{a_str[:eq].strip()}=({rhs_rw} /= 0)")
+                elif key == "dim":
+                    if re.fullmatch(r"[0-9]+", rhs_rw) and rhs_rw != "1":
+                        new_args.append(f"{a_str[:eq].strip()}=1")
+                    else:
+                        new_args.append(f"{a_str[:eq].strip()}={rhs_rw}")
+                else:
+                    new_args.append(f"{a_str[:eq].strip()}={rhs_rw}")
+            else:
+                a_rw = rewrite_reduction_calls(a_str)
+                if idx == 1 and fname.lower() in reducers:
+                    if re.fullmatch(r"[0-9]+", a_rw) and a_rw != "1":
+                        a_rw = "1"
+                new_args.append(a_rw)
+        out.append(f"{fname}(" + ", ".join(new_args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_default_optional_calls(expr):
+    defaults = {
+        "rexp": {
+            1: lambda a: [a[0], "1.0"],
+        },
+        "rgamma": {
+            2: lambda a: [a[0], a[1], "1.0"],
+        },
+        "rlnorm": {
+            1: lambda a: [a[0], "0.0", "1.0"],
+            2: lambda a: [a[0], a[1], "1.0"],
+        },
+        "rlogis": {
+            1: lambda a: [a[0], "0.0", "1.0"],
+            2: lambda a: [a[0], a[1], "1.0"],
+        },
+        "mssk_exp": {
+            0: lambda a: ["1.0"],
+        },
+        "mssk_gamma": {
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_lnorm": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_logis": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+    }
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", expr[i:])
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        fname = m.group(1)
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+
+        inner = expr[lpar + 1 : j]
+        args = split_top_level(inner, ",")
+        args = [rewrite_default_optional_calls(a.strip()) for a in args if a.strip()]
+        low = fname.lower()
+        if low in defaults and all("=" not in a for a in args):
+            rules = defaults[low]
+            if len(args) in rules:
+                args = rules[len(args)](args)
+        out.append(f"{fname}(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def parse_top_call_with_plot(stmt, fname):
+    s = stmt.strip()
+    low = s.lower()
+    prefix = fname.lower() + "("
+    if not low.startswith(prefix):
+        return None
+    depth = 0
+    in_str = False
+    end = -1
+    for idx, ch in enumerate(s):
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end = idx
+                break
+    if end == -1 or s[end + 1 :].strip():
+        return None
+    args = split_top_level(s[len(fname) + 1 : end], ",")
+    kept = []
+    plot_arg = None
+    for a in args:
+        a_str = a.strip()
+        if a_str.lower().startswith("plot="):
+            plot_arg = a_str.split("=", 1)[1].strip()
+        else:
+            kept.append(a_str)
+    if plot_arg is None:
+        return None
+    return kept, plot_arg
+
+
+def find_named_call_spans(expr, fname):
+    spans = []
+    i = 0
+    n = len(expr)
+    in_str = False
+    target = fname.lower()
+    while i < n:
+        ch = expr[i]
+        if ch == '"':
+            in_str = not in_str
+            i += 1
+            continue
+        if in_str:
+            i += 1
+            continue
+        if re.match(r"[A-Za-z_]", ch):
+            j = i + 1
+            while j < n and re.match(r"[A-Za-z0-9_]", expr[j]):
+                j += 1
+            word = expr[i:j].lower()
+            if word == target:
+                k = j
+                while k < n and expr[k].isspace():
+                    k += 1
+                if k < n and expr[k] == "(":
+                    depth = 1
+                    p = k + 1
+                    in_sub_str = False
+                    while p < n and depth > 0:
+                        c = expr[p]
+                        if c == '"':
+                            in_sub_str = not in_sub_str
+                        elif not in_sub_str:
+                            if c == "(":
+                                depth += 1
+                            elif c == ")":
+                                depth -= 1
+                                if depth == 0:
+                                    break
+                        p += 1
+                    if p < n and depth == 0:
+                        spans.append((i, p, expr[k + 1 : p]))
+                        i = p + 1
+                        continue
+            i = j
+            continue
+        i += 1
+    return spans
+
+
 def rewrite_int_args(expr):
     def wrap_int_arg(match):
         name = match.group(1)
@@ -350,6 +954,8 @@ def rewrite_int_args(expr):
         if "," in arg:
             return f"{name}({arg})"
         if re.fullmatch(r"[0-9]+", arg):
+            return f"{name}({arg})"
+        if is_int_expr(arg):
             return f"{name}({arg})"
         if arg in INT_VARS:
             return f"{name}({arg})"
@@ -362,6 +968,10 @@ def rewrite_int_args(expr):
 
 
 def transpile_expr(expr):
+    expr = rewrite_arfimasim_calls(expr)
+    expr = rewrite_acf_pacf_plot_args(expr)
+    expr = rewrite_reduction_calls(expr)
+    expr = rewrite_default_optional_calls(expr)
     expr = rewrite_functions(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
@@ -421,7 +1031,7 @@ def infer_from_lines(lines):
     int_vars = set()
     const_params = {}
     for raw in lines:
-        raw_line = raw.rstrip("\n")
+        raw_line = strip_prompt(raw.rstrip("\n"))
         if not raw_line.strip():
             continue
         if raw_line.lstrip().startswith("!"):
@@ -493,7 +1103,7 @@ def transpile_lines(lines):
     rep_idx = 0
     rep_vars = []
     for raw in lines:
-        line = raw.rstrip("\n")
+        line = strip_prompt(raw.rstrip("\n"))
         if not line.strip():
             out.append("")
             continue
@@ -556,7 +1166,29 @@ def transpile_statement(stmt):
         return []
     if low == "cor":
         return [f"! {s}"]
-    if '"' in s:
+    for fn in ("acf", "pacf"):
+        parsed = parse_top_call_with_plot(s, fn)
+        if parsed is not None:
+            args_no_plot, plot_arg = parsed
+            call_expr = fn + "(" + ", ".join(transpile_expr(a) for a in args_no_plot) + ")"
+            plot_low = plot_arg.lower()
+            if plot_low in {".true.", "true", "t"}:
+                cond = ".true."
+            elif plot_low in {".false.", "false", "f"}:
+                cond = ".false."
+            else:
+                cond = "(" + transpile_expr(plot_arg) + " /= 0.0_dp)"
+            return [
+                "block",
+                "real(kind=dp), allocatable :: plot_tmp(:)",
+                f"plot_tmp = {call_expr}",
+                f"if ({cond}) then",
+                "call plot(plot_tmp)",
+                "end if",
+                "print *, plot_tmp",
+                "end block",
+            ]
+    if '"' in s and find_top_level_assign(s) == -1:
         items = []
         buf = ""
         in_str = False
@@ -583,9 +1215,6 @@ def transpile_statement(stmt):
                 items.append(transpile_expr(tok))
         if items:
             return ["print *, " + ", ".join(items)]
-    tokens = s.split()
-    if len(tokens) > 1 and all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t) for t in tokens):
-        return ["print *, " + ", ".join(tokens)]
     if low.startswith("?"):
         return [f"! {s}"]
     if low in {"clear", "exit"}:
@@ -598,12 +1227,36 @@ def transpile_statement(stmt):
         return [transpile_expr(s)]
     if low.startswith("else") or low.startswith("cycle") or low.startswith("exit"):
         return [s]
+    tokens = s.split()
+    if len(tokens) > 1 and all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t) for t in tokens):
+        return ["print *, " + ", ".join(tokens)]
     if any(low.startswith(fn + "(") for fn in CALL_ONLY):
         return ["call " + transpile_expr(s)]
     eqpos = find_top_level_assign(s)
     if eqpos != -1:
         lhs = s[:eqpos].strip()
         rhs = s[eqpos + 1 :].strip()
+        read_calls = find_named_call_spans(rhs, "read")
+        if len(read_calls) == 1:
+            start, end, args_raw = read_calls[0]
+            args = [a.strip() for a in split_top_level(args_raw, ",") if a.strip()]
+            if args:
+                call_args = [transpile_expr(args[0]), lhs]
+                for extra in args[1:]:
+                    call_args.append(transpile_expr(extra))
+                rhs_repl = (rhs[:start] + lhs + rhs[end + 1 :]).strip()
+                out_lines = [f"call read_vec({', '.join(call_args)})"]
+                if rhs_repl == lhs:
+                    return out_lines
+                rhs_norm = strip_outer_parens(rhs_repl)
+                if has_top_level_relational(rhs_norm):
+                    out_lines.append(f"{lhs} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs_repl)})")
+                else:
+                    out_lines.append(f"{lhs} = {transpile_expr(rhs_repl)}")
+                return out_lines
+        rhs_norm = strip_outer_parens(rhs)
+        if has_top_level_relational(rhs_norm):
+            return [f"{lhs} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs)})"]
         return [f"{lhs} = {transpile_expr(rhs)}"]
     return [f"print *, {transpile_expr(s)}"]
 
@@ -636,6 +1289,10 @@ def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars):
     out = []
     out.append("program session")
     needs_dp = bool(scalars or arrays)
+    if any("_dp" in line for line in lines):
+        needs_dp = True
+    if any("kind=dp" in line.lower() for line in lines):
+        needs_dp = True
     for _name, (typ, _rhs) in CONST_PARAMS.items():
         if typ == "real":
             needs_dp = True

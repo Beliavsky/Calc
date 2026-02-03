@@ -3,7 +3,7 @@ module qsort_mod
    implicit none
    private
    public :: indexx, quick_sort_in_place, quick_sort, &
-             sorted, rank, median, unique
+             sorted, rank, median, unique, quantile
 
    !–––––––––––––––– generic interfaces –––––––––––––––––––––––––––––––––
    interface indexx
@@ -17,6 +17,9 @@ module qsort_mod
    interface median
       module procedure median_real, median_int
    end interface median
+   interface quantile
+      module procedure quantile_real
+   end interface quantile
    !––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 contains
 !=======================================================================
@@ -233,5 +236,46 @@ do i=2,n
 end do
 y = y(:j)
 end function unique
+
+!=======================================================================
+!  Quantile for REAL(dp) vector
+!=======================================================================
+pure function quantile_real(x, q) result(y)
+   !! Quantile(s) of REAL(dp) vector x at probabilities q in [0,1].
+   !! Uses linear interpolation (type=7).
+   real(kind=dp), intent(in) :: x(:)
+   real(kind=dp), intent(in) :: q(:)
+   real(kind=dp), allocatable :: y(:)
+   real(kind=dp), allocatable :: xs(:)
+   integer :: n, i, lo, hi
+   real(kind=dp) :: h, t
+
+   n = size(x)
+   allocate (y(size(q)))
+   if (n == 0) then
+      y = 0.0_dp
+      return
+   end if
+   xs = sorted(x)
+   if (n == 1) then
+      y = xs(1)
+      return
+   end if
+   do i = 1, size(q)
+      h = (real(n - 1, dp) * q(i)) + 1.0_dp
+      lo = int(floor(h))
+      hi = int(ceiling(h))
+      if (lo < 1) lo = 1
+      if (hi < 1) hi = 1
+      if (lo > n) lo = n
+      if (hi > n) hi = n
+      if (hi == lo) then
+         y(i) = xs(lo)
+      else
+         t = h - real(lo, dp)
+         y(i) = xs(lo) + t * (xs(hi) - xs(lo))
+      end if
+   end do
+end function quantile_real
 
 end module qsort_mod

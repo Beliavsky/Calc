@@ -1,14 +1,14 @@
 ﻿module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, acf, arsim, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dt, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pt, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qt, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
                        rep, read_vec, reverse
-   use random_mod, only: random_normal, runif
-   use qsort_mod, only: sorted, indexx, rank, median, unique
+   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+   use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version
    use plot_mod, only: plot, plot_to_label
    implicit none
@@ -571,12 +571,44 @@ contains
       case ("unique"); res = unique(arr)
       case ("stdz"); res = standardize(arr)
       case ("reverse"); res = reverse(arr)
+      case ("mssk"); res = mssk(arr)
+      case ("fit_norm"); res = fit_norm(arr)
+      case ("fit_exp"); res = fit_exp(arr)
+      case ("fit_gamma"); res = fit_gamma(arr)
+      case ("fit_lnorm"); res = fit_lnorm(arr)
+      case ("fit_t"); res = fit_t(arr)
+      case ("fit_chisq"); res = fit_chisq(arr)
+      case ("fit_f"); res = fit_f(arr)
+      case ("fit_beta"); res = fit_beta(arr)
+      case ("fit_logis"); res = fit_logis(arr)
+      case ("fit_sech"); res = fit_sech(arr)
+      case ("fit_laplace"); res = fit_laplace(arr)
+      case ("fit_cauchy"); res = fit_cauchy(arr)
+      case ("fit_ged"); res = fit_ged(arr)
+      case ("fit_hyperb"); res = fit_hyperb(arr)
+      case ("dsech"); res = dsech(arr)
+      case ("psech"); res = psech(arr)
+      case ("qsech"); res = qsech(arr)
       case default
          print *, "Error in apply_vec_func: function '", trim(fname), "' not defined"
          eval_error = .true.
          res = [bad_value]
       end select
    end function apply_vec_func
+
+   pure function lower_str(s) result(out)
+      character(len=*), intent(in) :: s
+      character(len=len(s)) :: out
+      integer :: i, c
+      do i = 1, len(s)
+         c = iachar(s(i:i))
+         if (c >= iachar('A') .and. c <= iachar('Z')) then
+            out(i:i) = achar(c + (iachar('a') - iachar('A')))
+         else
+            out(i:i) = s(i:i)
+         end if
+      end do
+   end function lower_str
 
    recursive function evaluate(str) result(res)
       ! Evaluate the input string str as an expression or assignment
@@ -820,7 +852,7 @@ contains
          !   - unary +/â€“ and exponentiation.
          real(kind=dp), allocatable :: f(:) ! result
          !===================  locals  =====================================
-         real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:)
+         real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:), arg4(:), xmat(:,:)
          real(kind=dp), allocatable :: exponent(:), vvar(:)
          integer, allocatable :: idxv(:)
          character(len=len_name) :: id
@@ -831,7 +863,7 @@ contains
          logical :: toplevel_colon, toplevel_comma, have_dim
          character(len=len_name) :: look_name    ! NEW
          type(arr_t), allocatable :: args(:)
-         character(len=:), allocatable :: labels(:)
+         character(len=:), allocatable :: labels(:), pred_labels(:)
          have_dim = .false.
          dim_val = 1
          call skip_spaces()
@@ -988,6 +1020,16 @@ contains
                         call random_number(f(1))
                      case ("rnorm")
                         f = random_normal(1)
+                     case ("mssk_exp")
+                        f = mssk_exp(1.0_dp)
+                     case ("mssk_lnorm")
+                        f = mssk_lnorm(0.0_dp, 1.0_dp)
+                     case ("mssk_logis")
+                        f = mssk_logis(0.0_dp, 1.0_dp)
+                     case ("mssk_sech")
+                        f = mssk_sech()
+                     case ("mssk_laplace")
+                        f = mssk_laplace(0.0_dp, 1.0_dp)
                      case default
                         print *, "Error: function '"//trim(id)//"' needs arguments"
                         eval_error = .true.
@@ -1092,6 +1134,48 @@ contains
                               call skip_spaces()
                            end if
                         end block
+                     else if (trim(id) == "resample") then
+                        !------------------------------------------------------------
+                        !  resample: parse all args from text; just consume to ')'
+                        !------------------------------------------------------------
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        have_second = .false.
+                     else if (trim(id) == "armafitaic") then
+                        !------------------------------------------------------------
+                        !  armafitaic: allow keyword-only argument after first arg
+                        !------------------------------------------------------------
+                        block
+                           integer :: save_pos
+                           logical :: is_name_eq
+                           save_pos = pos
+                           call next_char()
+                           call skip_spaces()
+                           is_name_eq = .false.
+                           if (is_letter(curr_char)) then
+                              look_name = parse_identifier()
+                              call skip_spaces()
+                              if (curr_char == "=") is_name_eq = .true.
+                           end if
+                           if (is_name_eq) then
+                              pos = save_pos
+                              curr_char = ","
+                              have_second = .false.
+                           else
+                              pos = save_pos
+                              call next_char()
+                              call skip_spaces()
+                              arg2 = parse_expression()
+                              have_second = .true.
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                           end if
+                        end block
                      else
                         !------------------------------------------------------------
                         !  Any other routine â€“ 2â€‘nd positional argument as before
@@ -1152,6 +1236,75 @@ contains
                      !  â€“ optional named arguments in any order
                      !        dim = 1      and/or     mask = logical array
                      !================================================================
+                  case ("resample")
+                     block
+                        logical :: have_n, replace_flag
+                        integer :: n_rs, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_n = .false.
+                        replace_flag = .true.
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           if (len_trim(tok) > 0) then
+                              if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                           end if
+                           ltok = lower_str(tok)
+                           if (index(ltok, "replace") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: replace must be given as replace=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              rval = lower_str(rval)
+                              if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                 replace_flag = .false.
+                              else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                 replace_flag = .true.
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: replace must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 replace_flag = (tmp(1) /= 0.0_dp)
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: resample length must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n_rs = nint(tmp(1))
+                              have_n = .true.
+                           end if
+                        end do
+
+                        if (.not. have_n) n_rs = size(arg1)
+                        if (n_rs < 0) then
+                           print *, "Error: resample length must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (.not. replace_flag .and. n_rs > size(arg1)) then
+                           print *, "Error: resample length exceeds size(x) with replace=.false."
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_n) then
+                           f = resample(arg1, n_rs, replace_flag)
+                        else
+                           f = resample(arg1, replace=replace_flag)
+                        end if
+                     end block
+
                   case ("sum", "product", "minval", "maxval")
                      block
                         !---- local to this block only ---------------------------
@@ -1279,22 +1432,1466 @@ contains
                      end block
 
                   case ("acf")
+                     block
+                        logical :: do_plot
+                        integer :: eqpos
+                        character(len=:), allocatable :: tok, ltok, rval, acf_title
+                        real(kind=dp), allocatable :: tmp(:), lags(:)
+
+                        do_plot = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 3) then
+                           print *, "Error: acf() takes at most three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           if (n_args > 2) then
+                              ! consume everything through ')' for named third-argument parsing
+                              pos = pend + 1
+                              if (pos > lenstr) then
+                                 curr_char = char(0)
+                              else
+                                 curr_char = expr(pos:pos)
+                                 pos = pos + 1
+                              end if
+                              tok = adjustl(labels(3))
+                              ltok = lower_str(tok)
+                              if (index(ltok, "plot") /= 1) then
+                                 print *, "Error: third argument of acf() must be plot=..."
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 eqpos = index(tok, "=")
+                                 if (eqpos == 0) then
+                                    print *, "Error: plot must be given as plot=..."
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    rval = lower_str(rval)
+                                    if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                       do_plot = .false.
+                                    else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                       do_plot = .true.
+                                    else
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    end if
+                                 end if
+                              end if
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_second) then
+                                 print *, "Error: function needs two arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg2) /= 1) then
+                                 print *, "Error: second argument of acf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 2) then
+                                 print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg2(1))
+                                 if (n1 < 1 .or. n1 > size(arg1) - 1) then
+                                    print *, "Error: acf() lag count must be between 1 and ", size(arg1) - 1
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = acf(arg1, n1)
+                                    if (do_plot) then
+                                       lags = arange(size(f))
+                                       acf_title = "acf(" // trim(labels(1)) // ", " // trim(labels(2)) // ")"
+                                       call plot(lags, f, title=acf_title)
+                                    end if
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("pacf")
+                     block
+                        logical :: do_plot
+                        integer :: eqpos
+                        character(len=:), allocatable :: tok, ltok, rval, pacf_title
+                        real(kind=dp), allocatable :: tmp(:), lags(:)
+
+                        do_plot = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 3) then
+                           print *, "Error: pacf() takes at most three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           if (n_args > 2) then
+                              ! consume everything through ')' for named third-argument parsing
+                              pos = pend + 1
+                              if (pos > lenstr) then
+                                 curr_char = char(0)
+                              else
+                                 curr_char = expr(pos:pos)
+                                 pos = pos + 1
+                              end if
+                              tok = adjustl(labels(3))
+                              ltok = lower_str(tok)
+                              if (index(ltok, "plot") /= 1) then
+                                 print *, "Error: third argument of pacf() must be plot=..."
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 eqpos = index(tok, "=")
+                                 if (eqpos == 0) then
+                                    print *, "Error: plot must be given as plot=..."
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    rval = lower_str(rval)
+                                    if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                       do_plot = .false.
+                                    else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                       do_plot = .true.
+                                    else
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    end if
+                                 end if
+                              end if
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_second) then
+                                 print *, "Error: function needs two arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg2) /= 1) then
+                                 print *, "Error: second argument of pacf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 2) then
+                                 print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg2(1))
+                                 if (n1 < 1 .or. n1 > size(arg1) - 1) then
+                                    print *, "Error: pacf() lag count must be between 1 and ", size(arg1) - 1
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = pacf(arg1, n1)
+                                    if (do_plot) then
+                                       lags = arange(size(f))
+                                       pacf_title = "pacf(" // trim(labels(1)) // ", " // trim(labels(2)) // ")"
+                                       call plot(lags, f, title=pacf_title)
+                                    end if
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("fiacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument of fiacf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of fiacf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1) then
+                           print *, "Error: fiacf() lag count must be >= 1"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = fiacf(arg1(1), n1)
+                        end if
+                     end if
+
+                  case ("fracdiff")
+                     block
+                        integer :: mfd
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg2) /= 1) then
+                           print *, "Error: second argument of fracdiff() must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg1) < 1) then
+                           print *, "Error: first argument of fracdiff() must be non-empty"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                           if (n_args > 3) then
+                              print *, "Error: fracdiff() takes at most three arguments"
+                              eval_error = .true.; f = [bad_value]
+                           else if (n_args == 3) then
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: fracdiff() third argument parse failed"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg3 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg3) /= 1) then
+                                    print *, "Error: third argument of fracdiff() must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    mfd = nint(arg3(1))
+                                    if (mfd < 0) then
+                                       print *, "Error: fracdiff() truncation lag must be >= 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = fracdiff(arg1, arg2(1), mfd)
+                                       call skip_spaces()
+                                       if (curr_char == ")") call next_char()
+                                    end if
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           else
+                              f = fracdiff(arg1, arg2(1))
+                           end if
+                        end if
+                     end block
+
+                  case ("acfpacf")
+                     block
+                        logical :: do_plot
+                        integer :: eqpos, j
+                        character(len=:), allocatable :: tok, ltok, rval, tbl_title
+                        real(kind=dp), allocatable :: tmp(:), ac(:), pc(:), lags(:), y2(:,:)
+                        character(len=4) :: legends(2)
+
+                        do_plot = .false.
+                        legends = [character(len=4) :: "ACF", "PACF"]
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 3) then
+                           print *, "Error: acfpacf() takes at most three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           if (n_args > 2) then
+                              ! consume everything through ')' when a third argument is present
+                              pos = pend + 1
+                              if (pos > lenstr) then
+                                 curr_char = char(0)
+                              else
+                                 curr_char = expr(pos:pos)
+                                 pos = pos + 1
+                              end if
+                              tok = adjustl(labels(3))
+                              ltok = lower_str(tok)
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 if (index(ltok, "plot") /= 1) then
+                                    print *, "Error: third argument of acfpacf() must be plot=... or a scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    rval = adjustl(tok(eqpos + 1:))
+                                 end if
+                              else
+                                 rval = tok
+                              end if
+                              if (.not. eval_error) then
+                                 rval = lower_str(rval)
+                                 if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                    do_plot = .false.
+                                 else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                    do_plot = .true.
+                                 else
+                                    tmp = evaluate(rval)
+                                    if (eval_error) then
+                                       f = [bad_value]
+                                    else if (size(tmp) /= 1) then
+                                       print *, "Error: plot argument must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 end if
+                              end if
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_second) then
+                                 print *, "Error: function needs two arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg2) /= 1) then
+                                 print *, "Error: second argument of acfpacf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 2) then
+                                 print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg2(1))
+                                 if (n1 < 1 .or. n1 > size(arg1) - 1) then
+                                    print *, "Error: acfpacf() lag count must be between 1 and ", size(arg1) - 1
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    ac = acf(arg1, n1)
+                                    pc = pacf(arg1, n1)
+                                    print *
+                                    print "(a6,2a14)", "lag", "ACF", "PACF"
+                                    do j = 1, size(ac)
+                                       print "(i6,2f14.6)", j, ac(j), pc(j)
+                                    end do
+                                    if (do_plot) then
+                                       lags = arange(size(ac))
+                                       allocate (y2(size(ac), 2))
+                                       y2(:, 1) = ac
+                                       y2(:, 2) = pc
+                                       tbl_title = "acfpacf(" // trim(labels(1)) // ", " // trim(labels(2)) // ")"
+                                       call plot(lags, y2, title=tbl_title, xlabel="lag", legend_labels=legends)
+                                    end if
+                                    suppress_result = .true.
+                                    f = [real(kind=dp) ::]
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("acfpacfar")
+                     block
+                        logical :: do_plot
+                        integer :: eqpos, j
+                        character(len=:), allocatable :: tok, ltok, rval, tbl_title
+                        real(kind=dp), allocatable :: tmp(:), ac(:), pc(:), ar(:), lags(:), y3(:,:)
+                        character(len=4) :: legends(3)
+
+                        do_plot = .false.
+                        legends = [character(len=4) :: "ACF", "PACF", "AR"]
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 3) then
+                           print *, "Error: acfpacfar() takes at most three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           if (n_args > 2) then
+                              ! consume everything through ')' when a third argument is present
+                              pos = pend + 1
+                              if (pos > lenstr) then
+                                 curr_char = char(0)
+                              else
+                                 curr_char = expr(pos:pos)
+                                 pos = pos + 1
+                              end if
+                              tok = adjustl(labels(3))
+                              ltok = lower_str(tok)
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 if (index(ltok, "plot") /= 1) then
+                                    print *, "Error: third argument of acfpacfar() must be plot=... or a scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    rval = adjustl(tok(eqpos + 1:))
+                                 end if
+                              else
+                                 rval = tok
+                              end if
+                              if (.not. eval_error) then
+                                 rval = lower_str(rval)
+                                 if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                    do_plot = .false.
+                                 else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                    do_plot = .true.
+                                 else
+                                    tmp = evaluate(rval)
+                                    if (eval_error) then
+                                       f = [bad_value]
+                                    else if (size(tmp) /= 1) then
+                                       print *, "Error: plot argument must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 end if
+                              end if
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_second) then
+                                 print *, "Error: function needs two arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg2) /= 1) then
+                                 print *, "Error: second argument of acfpacfar() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 2) then
+                                 print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg2(1))
+                                 if (n1 < 1 .or. n1 > size(arg1) - 1) then
+                                    print *, "Error: acfpacfar() lag count must be between 1 and ", size(arg1) - 1
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    ac = acf(arg1, n1)
+                                    pc = pacf(arg1, n1)
+                                    ar = arcoef(arg1, n1)
+                                    print *
+                                    print "(a6,3a14)", "lag", "ACF", "PACF", "AR"
+                                    do j = 1, size(ac)
+                                       print "(i6,3f14.6)", j, ac(j), pc(j), ar(j)
+                                    end do
+                                    if (do_plot) then
+                                       lags = arange(size(ac))
+                                       allocate (y3(size(ac), 3))
+                                       y3(:, 1) = ac
+                                       y3(:, 2) = pc
+                                       y3(:, 3) = ar
+                                       tbl_title = "acfpacfar(" // trim(labels(1)) // ", " // trim(labels(2)) // ")"
+                                       call plot(lags, y3, title=tbl_title, xlabel="lag", legend_labels=legends)
+                                    end if
+                                    suppress_result = .true.
+                                    f = [real(kind=dp) ::]
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("aracf")
                      if (.not. have_second) then
                         print *, "Error: function needs two arguments"
                         eval_error = .true.; f = [bad_value]
                      else if (size(arg2) /= 1) then
-                        print *, "Error: second argument of acf() must be scalar"
+                        print *, "Error: second argument of aracf() must be scalar"
                         eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) < 2) then
-                        print *, "Error: function array arguments must have sizes > 1, size is ", size(arg1)
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument of aracf() must be non-empty"
                         eval_error = .true.; f = [bad_value]
                      else
                         n1 = nint(arg2(1))
-                        if (n1 < 1 .or. n1 > size(arg1) - 1) then
-                           print *, "Error: acf() lag count must be between 1 and ", size(arg1) - 1
+                        if (n1 < 1) then
+                           print *, "Error: aracf() lag count must be >= 1"
                            eval_error = .true.; f = [bad_value]
                         else
-                           f = acf(arg1, n1)
+                           f = aracf(arg1, n1)
+                        end if
+                     end if
+
+                  case ("arpacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of arpacf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument of arpacf() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1) then
+                           print *, "Error: arpacf() lag count must be >= 1"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = arpacf(arg1, n1)
+                        end if
+                     end if
+
+                  case ("maacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of maacf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument of maacf() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1) then
+                           print *, "Error: maacf() lag count must be >= 1"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = maacf(arg1, n1)
+                        end if
+                     end if
+
+                  case ("quantile")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument of quantile() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else if (any(arg2 < 0.0_dp) .or. any(arg2 > 1.0_dp)) then
+                        print *, "Error: quantile() probabilities must be between 0 and 1"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        f = quantile(arg1, arg2)
+                     end if
+
+                  case ("mssk_exp", "mssk_t", "mssk_chisq")
+                     if (have_second) then
+                        print *, "Error: function takes one argument"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("mssk_exp"); f = mssk_exp(arg1(1))
+                        case ("mssk_t"); f = mssk_t(arg1(1))
+                        case ("mssk_chisq"); f = mssk_chisq(arg1(1))
+                        end select
+                     end if
+
+                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace")
+                     if (.not. have_second) then
+                        if (size(arg1) /= 1) then
+                           print *, "Error: first argument must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           select case (trim(id))
+                           case ("mssk_gamma"); f = mssk_gamma(arg1(1), 1.0_dp)
+                           case ("mssk_lnorm"); f = mssk_lnorm(arg1(1), 1.0_dp)
+                           case ("mssk_logis"); f = mssk_logis(arg1(1), 1.0_dp)
+                           case ("mssk_laplace"); f = mssk_laplace(arg1(1), 1.0_dp)
+                           case default
+                              print *, "Error: function needs two arguments"
+                              eval_error = .true.; f = [bad_value]
+                           end select
+                        end if
+                     else if (size(arg1) /= 1 .or. size(arg2) /= 1) then
+                        print *, "Error: arguments must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("mssk_gamma"); f = mssk_gamma(arg1(1), arg2(1))
+                        case ("mssk_lnorm"); f = mssk_lnorm(arg1(1), arg2(1))
+                        case ("mssk_f"); f = mssk_f(arg1(1), arg2(1))
+                        case ("mssk_beta"); f = mssk_beta(arg1(1), arg2(1))
+                        case ("mssk_logis"); f = mssk_logis(arg1(1), arg2(1))
+                        case ("mssk_laplace"); f = mssk_laplace(arg1(1), arg2(1))
+                        end select
+                     end if
+
+                  case ("dunif")
+                     if (.not. have_second) then
+                        f = dunif(arg1)
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = dunif(arg1, arg2(1), arg3(1))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           f = dunif(arg1, arg2(1))
+                           call skip_spaces()
+                           if (curr_char == ")") call next_char()
+                        end if
+                     end if
+
+                  case ("dexp", "dt", "dchisq")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("dexp"); f = dexp(arg1, arg2(1))
+                        case ("dt"); f = dt(arg1, arg2(1))
+                        case ("dchisq"); f = dchisq(arg1, arg2(1))
+                        end select
+                     end if
+
+                  case ("dged", "dhyperb")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    if (trim(id) == "dged") then
+                                       f = dged(arg1, arg2(1), arg3(1), &
+                                                arg4(1))
+                                    else
+                                       f = dhyperb(arg1, arg2(1), arg3(1), &
+                                                   arg4(1))
+                                    end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("dgamma", "dlnorm", "dnorm", "df", "dbeta", "dlogis", "dlaplace", "dcauchy")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              select case (trim(id))
+                              case ("dgamma"); f = dgamma(arg1, arg2(1), arg3(1))
+                              case ("dlnorm"); f = dlnorm(arg1, arg2(1), arg3(1))
+                              case ("dnorm"); f = dnorm(arg1, arg2(1), arg3(1))
+                              case ("df"); f = df(arg1, arg2(1), arg3(1))
+                              case ("dbeta"); f = dbeta(arg1, arg2(1), arg3(1))
+                              case ("dlogis"); f = dlogis(arg1, arg2(1), arg3(1))
+                              case ("dlaplace"); f = dlaplace(arg1, arg2(1), arg3(1))
+                              case ("dcauchy"); f = dcauchy(arg1, arg2(1), arg3(1))
+                              end select
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("punif")
+                     if (.not. have_second) then
+                        f = punif(arg1)
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = punif(arg1, arg2(1), arg3(1))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           f = punif(arg1, arg2(1))
+                           call skip_spaces()
+                           if (curr_char == ")") call next_char()
+                        end if
+                     end if
+
+                  case ("pexp", "pt", "pchisq")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("pexp"); f = pexp(arg1, arg2(1))
+                        case ("pt"); f = pt(arg1, arg2(1))
+                        case ("pchisq"); f = pchisq(arg1, arg2(1))
+                        end select
+                     end if
+
+                  case ("pged", "phyperb")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    if (trim(id) == "pged") then
+                                       f = pged(arg1, arg2(1), arg3(1), &
+                                                arg4(1))
+                                    else
+                                       f = phyperb(arg1, arg2(1), arg3(1), &
+                                                   arg4(1))
+                                    end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("pgamma", "plnorm", "pf", "pbeta", "plogis", "pnorm", "plaplace", "pcauchy")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              select case (trim(id))
+                              case ("pgamma"); f = pgamma(arg1, arg2(1), arg3(1))
+                              case ("plnorm"); f = plnorm(arg1, arg2(1), arg3(1))
+                              case ("pf"); f = pf(arg1, arg2(1), arg3(1))
+                              case ("pbeta"); f = pbeta(arg1, arg2(1), arg3(1))
+                              case ("plogis"); f = plogis(arg1, arg2(1), arg3(1))
+                              case ("pnorm"); f = pnorm(arg1, arg2(1), arg3(1))
+                              case ("plaplace"); f = plaplace(arg1, arg2(1), arg3(1))
+                              case ("pcauchy"); f = pcauchy(arg1, arg2(1), arg3(1))
+                              end select
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("qunif")
+                     if (.not. have_second) then
+                        f = qunif(arg1)
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = qunif(arg1, arg2(1), arg3(1))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           f = qunif(arg1, arg2(1))
+                           call skip_spaces()
+                           if (curr_char == ")") call next_char()
+                        end if
+                     end if
+
+                  case ("qexp", "qt", "qchisq")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("qexp"); f = qexp(arg1, arg2(1))
+                        case ("qt"); f = qt(arg1, arg2(1))
+                        case ("qchisq"); f = qchisq(arg1, arg2(1))
+                        end select
+                     end if
+
+                  case ("qged", "qhyperb")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    if (trim(id) == "qged") then
+                                       f = qged(arg1, arg2(1), arg3(1), &
+                                                arg4(1))
+                                    else
+                                       f = qhyperb(arg1, arg2(1), arg3(1), &
+                                                   arg4(1))
+                                    end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("qgamma", "qlnorm", "qf", "qbeta", "qlogis", "qnorm", "qlaplace", "qcauchy")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              select case (trim(id))
+                              case ("qgamma"); f = qgamma(arg1, arg2(1), arg3(1))
+                              case ("qlnorm"); f = qlnorm(arg1, arg2(1), arg3(1))
+                              case ("qf"); f = qf(arg1, arg2(1), arg3(1))
+                              case ("qbeta"); f = qbeta(arg1, arg2(1), arg3(1))
+                              case ("qlogis"); f = qlogis(arg1, arg2(1), arg3(1))
+                              case ("qnorm"); f = qnorm(arg1, arg2(1), arg3(1))
+                              case ("qlaplace"); f = qlaplace(arg1, arg2(1), arg3(1))
+                              case ("qcauchy"); f = qcauchy(arg1, arg2(1), arg3(1))
+                              end select
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("mapacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of mapacf() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument of mapacf() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1) then
+                           print *, "Error: mapacf() lag count must be >= 1"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = mapacf(arg1, n1)
+                        end if
+                     end if
+
+                  case ("armaacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              if (size(arg3) /= 1) then
+                                 print *, "Error: third argument of armaacf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg3(1))
+                                 if (n1 < 1) then
+                                    print *, "Error: armaacf() lag count must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = armaacf(arg1, arg2, n1)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("arfimaacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument of arfimaacf() must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument of arfimaacf() must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    n1 = nint(arg4(1))
+                                    if (n1 < 1) then
+                                       print *, "Error: arfimaacf() lag count must be >= 1"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (abs(arg3(1)) >= 0.5_dp) then
+                                       print *, "Error: arfimaacf() requires |d| < 0.5"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = arfimaacf(arg1, arg2, arg3(1), n1)
+                                    end if
+                                 end if
+                                 call skip_spaces()
+                                 if (curr_char == ")") call next_char()
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("armapacf")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              if (size(arg3) /= 1) then
+                                 print *, "Error: third argument of armapacf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg3(1))
+                                 if (n1 < 1) then
+                                    print *, "Error: armapacf() lag count must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = armapacf(arg1, arg2, n1)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("rexp", "rt", "rchisq")
+                     if (.not. have_second) then
+                        if (trim(id) == "rexp") then
+                           if (size(arg1) /= 1) then
+                              print *, "Error: first argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = rexp(n1, 1.0_dp)
+                              end if
+                           end if
+                        else
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        end if
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg1(1))
+                        if (n1 < 1) then
+                           print *, "Error: length must be > 0"
+                           eval_error = .true.; f = [bad_value]
+                        else if (arg2(1) <= 0.0_dp) then
+                           print *, "Error: parameter must be > 0"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           select case (trim(id))
+                           case ("rexp"); f = rexp(n1, arg2(1))
+                           case ("rt"); f = rt(n1, arg2(1))
+                           case ("rchisq"); f = rchisq(n1, arg2(1))
+                           end select
+                           call skip_spaces()
+                           if (curr_char == ")") call next_char()
+                        end if
+                     end if
+
+                  case ("rhyperb")
+                     if (.not. have_second) then
+                        if (size(arg1) /= 1) then
+                           print *, "Error: first argument must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = rhyperb(n1, 0.0_dp, 1.0_dp, 1.0_dp)
+                           end if
+                        end if
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char == ",") then
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    n1 = nint(arg1(1))
+                                    if (n1 < 1) then
+                                       print *, "Error: length must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (arg3(1) <= 0.0_dp .or. arg4(1) <= 0.0_dp) then
+                                       print *, "Error: scale and alpha must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rhyperb(n1, arg2(1), arg3(1), arg4(1))
+                                    end if
+                                 end if
+                              else
+                                 n1 = nint(arg1(1))
+                                 if (n1 < 1) then
+                                    print *, "Error: length must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (arg3(1) <= 0.0_dp) then
+                                    print *, "Error: scale must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = rhyperb(n1, arg2(1), arg3(1), 1.0_dp)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = rhyperb(n1, arg2(1), 1.0_dp, 1.0_dp)
+                           end if
+                        end if
+                     end if
+
+                  case ("rged")
+                     if (.not. have_second) then
+                        if (size(arg1) /= 1) then
+                           print *, "Error: first argument must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = rged(n1, 0.0_dp, 1.0_dp, 2.0_dp)
+                           end if
+                        end if
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char == ",") then
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg4) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    n1 = nint(arg1(1))
+                                    if (n1 < 1) then
+                                       print *, "Error: length must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (arg3(1) <= 0.0_dp .or. &
+                                             arg4(1) <= 0.0_dp) then
+                                       print *, "Error: scale and beta must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rged(n1, arg2(1), arg3(1), &
+                                                arg4(1))
+                                    end if
+                                 end if
+                              else
+                                 n1 = nint(arg1(1))
+                                 if (n1 < 1) then
+                                    print *, "Error: length must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (arg3(1) <= 0.0_dp) then
+                                    print *, "Error: scale must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = rged(n1, arg2(1), arg3(1), 2.0_dp)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = rged(n1, arg2(1), 1.0_dp, 2.0_dp)
+                           end if
+                        end if
+                     end if
+
+                  case ("rgamma", "rlnorm", "rf", "rbeta", "rlogis", "rlaplace", "rcauchy")
+                     if (.not. have_second) then
+                        if (trim(id) == "rlnorm") then
+                           if (size(arg1) /= 1) then
+                              print *, "Error: first argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = rlnorm(n1, 0.0_dp, 1.0_dp)
+                              end if
+                           end if
+                        else if (trim(id) == "rlogis") then
+                           if (size(arg1) /= 1) then
+                              print *, "Error: first argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = rlogis(n1, 0.0_dp, 1.0_dp)
+                              end if
+                           end if
+                        else if (trim(id) == "rlaplace") then
+                           if (size(arg1) /= 1) then
+                              print *, "Error: first argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = rlaplace(n1, 0.0_dp, 1.0_dp)
+                              end if
+                           end if
+                        else if (trim(id) == "rcauchy") then
+                           if (size(arg1) /= 1) then
+                              print *, "Error: first argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = rcauchy(n1, 0.0_dp, 1.0_dp)
+                              end if
+                           end if
+                        else
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        end if
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg1(1))
+                              if (n1 < 1) then
+                                 print *, "Error: length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 select case (trim(id))
+                                 case ("rgamma")
+                                    if (arg2(1) <= 0.0_dp .or. arg3(1) <= 0.0_dp) then
+                                       print *, "Error: shape and scale must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rgamma(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rlnorm")
+                                    if (arg3(1) <= 0.0_dp) then
+                                       print *, "Error: sdlog must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rlnorm(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rf")
+                                    if (arg2(1) <= 0.0_dp .or. arg3(1) <= 0.0_dp) then
+                                       print *, "Error: df1 and df2 must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rf(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rbeta")
+                                    if (arg2(1) <= 0.0_dp .or. arg3(1) <= 0.0_dp) then
+                                       print *, "Error: a and b must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rbeta(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rlogis")
+                                    if (arg3(1) <= 0.0_dp) then
+                                       print *, "Error: scale must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rlogis(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rlaplace")
+                                    if (arg3(1) <= 0.0_dp) then
+                                       print *, "Error: scale must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rlaplace(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rcauchy")
+                                    if (arg3(1) <= 0.0_dp) then
+                                       print *, "Error: scale must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rcauchy(n1, arg2(1), arg3(1))
+                                    end if
+                                 end select
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              select case (trim(id))
+                              case ("rgamma")
+                                 if (arg2(1) <= 0.0_dp) then
+                                    print *, "Error: shape must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = rgamma(n1, arg2(1), 1.0_dp)
+                                 end if
+                              case ("rlnorm")
+                                 f = rlnorm(n1, arg2(1), 1.0_dp)
+                              case ("rlogis")
+                                 f = rlogis(n1, arg2(1), 1.0_dp)
+                              case ("rlaplace")
+                                 f = rlaplace(n1, arg2(1), 1.0_dp)
+                              case ("rcauchy")
+                                 f = rcauchy(n1, arg2(1), 1.0_dp)
+                              case default
+                                 print *, "Error: function needs three arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              end select
+                           end if
+                           call skip_spaces()
+                           if (curr_char == ")") call next_char()
                         end if
                      end if
 
@@ -1329,6 +2926,981 @@ contains
                            f = arsim(n1, arg2)
                         end if
                      end if
+
+                  case ("masim")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument of masim() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (size(arg2) == 1 .and. n_args >= 2) then
+                           if (index(labels(2), "[") == 0) then
+                              print *, "Error: second argument of masim() must be an explicit 1D array"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        end if
+                     end if
+                     if (eval_error) then
+                        f = [bad_value]
+                        return
+                     else if (size(arg2) < 1) then
+                        print *, "Error: second argument of masim() must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg1(1))
+                        if (n1 < 1) then
+                           print *, "Error: masim() length must be > 0"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           f = masim(n1, arg2)
+                        end if
+                     end if
+
+                  case ("armasim")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument of armasim() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                              if (size(arg2) == 1 .and. n_args >= 2) then
+                                 if (index(labels(2), "[") == 0) then
+                                    print *, "Error: second argument of armasim() must be an explicit 1D array"
+                                    eval_error = .true.; f = [bad_value]
+                                 end if
+                              end if
+                              if (size(arg3) == 1 .and. n_args >= 3) then
+                                 if (index(labels(3), "[") == 0) then
+                                    print *, "Error: third argument of armasim() must be an explicit 1D array"
+                                    eval_error = .true.; f = [bad_value]
+                                 end if
+                              end if
+                              if (eval_error) then
+                                 f = [bad_value]
+                                 return
+                              end if
+                              if (size(arg2) < 1 .or. size(arg3) < 1) then
+                                 print *, "Error: second and third arguments of armasim() must be non-empty"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 n1 = nint(arg1(1))
+                                 if (n1 < 1) then
+                                    print *, "Error: armasim() length must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = armasim(n1, arg2, arg3)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("arfimasim")
+                     block
+                        integer :: n_sim, burn_sim, m_sim, eqpos
+                        logical :: have_burn, have_m, have_phi, have_theta
+                        real(kind=dp) :: d_sim
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:), phi_sim(:), theta_sim(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        if (size(arg1) /= 1) then
+                           print *, "Error: first argument of arfimasim() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        n_sim = nint(arg1(1))
+                        if (n_sim < 1) then
+                           print *, "Error: arfimasim() length must be > 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        if (.not. have_second) then
+                           print *, "Error: second argument of arfimasim() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        else if (size(arg2) /= 1) then
+                           print *, "Error: second argument of arfimasim() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        d_sim = arg2(1)
+                        if (abs(d_sim) >= 0.5_dp) then
+                           print *, "Error: arfimasim() requires |d| < 0.5"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        have_burn = .false.; have_m = .false.; have_phi = .false.; have_theta = .false.
+                        phi_sim = [real(kind=dp) ::]
+                        theta_sim = [real(kind=dp) ::]
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           if (len_trim(tok) > 0) then
+                              if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                           end if
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos == 0) then
+                              if (.not. have_phi) then
+                                 phi_sim = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 have_phi = .true.
+                              else if (.not. have_theta) then
+                                 theta_sim = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 have_theta = .true.
+                              else if (.not. have_burn) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: positional burn argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 burn_sim = nint(tmp(1))
+                                 have_burn = .true.
+                              else if (.not. have_m) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: positional m argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 m_sim = nint(tmp(1))
+                                 have_m = .true.
+                              else
+                                 print *, "Error: too many positional arguments for arfimasim()"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           else if (index(ltok, "phi") == 1) then
+                              if (have_phi) then
+                                 print *, "Error: duplicate phi= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              phi_sim = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              have_phi = .true.
+                           else if (index(ltok, "theta") == 1) then
+                              if (have_theta) then
+                                 print *, "Error: duplicate theta= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              theta_sim = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              have_theta = .true.
+                           else if (index(ltok, "burn") == 1) then
+                              if (have_burn) then
+                                 print *, "Error: duplicate burn= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: burn must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              burn_sim = nint(tmp(1))
+                              have_burn = .true.
+                           else if (index(ltok, "m") == 1) then
+                              if (have_m) then
+                                 print *, "Error: duplicate m= argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: m must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              m_sim = nint(tmp(1))
+                              have_m = .true.
+                           else
+                              print *, "Error: arfimasim() optional args are phi/theta and burn/m"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (have_burn .and. burn_sim < 0) then
+                           print *, "Error: burn must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_m .and. m_sim < 0) then
+                           print *, "Error: m must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_burn .and. have_m) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim, m=m_sim)
+                        else if (have_burn) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim)
+                        else if (have_m) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, m=m_sim)
+                        else
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim)
+                        end if
+                     end block
+
+                  case ("armafit")
+                     block
+                        integer :: p, q, iter_arg, eqpos
+                        logical :: have_p, have_q, have_iter
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 3) then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        have_p = .false.; have_q = .false.; have_iter = .false.
+                        iter_arg = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           if (len_trim(tok) > 0) then
+                              if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                           end if
+                           ltok = lower_str(tok)
+                           if (index(ltok, "iter") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: iter must be given as iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else if (.not. have_p) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: second argument of armafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              p = nint(tmp(1))
+                              have_p = .true.
+                           else if (.not. have_q) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: third argument of armafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              q = nint(tmp(1))
+                              have_q = .true.
+                           else
+                              print *, "Error: armafit() takes two orders plus iter=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (.not. have_p .or. .not. have_q) then
+                           print *, "Error: armafit() requires p and q"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (p < 0 .or. q < 0) then
+                           print *, "Error: armafit() orders must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call armafit(arg1, p, q, niter=iter_arg)
+                        else
+                           call armafit(arg1, p, q)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("arfimafit")
+                     block
+                        integer :: p, q, iter_arg, eqpos
+                        logical :: have_p, have_q, have_iter
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 3) then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        have_p = .false.; have_q = .false.; have_iter = .false.
+                        iter_arg = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           if (len_trim(tok) > 0) then
+                              if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                           end if
+                           ltok = lower_str(tok)
+                           if (index(ltok, "iter") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: iter must be given as iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else if (.not. have_p) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: second argument of arfimafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              p = nint(tmp(1))
+                              have_p = .true.
+                           else if (.not. have_q) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: third argument of arfimafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              q = nint(tmp(1))
+                              have_q = .true.
+                           else
+                              print *, "Error: arfimafit() takes two orders plus iter=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (.not. have_p .or. .not. have_q) then
+                           print *, "Error: arfimafit() requires p and q"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (p < 0 .or. q < 0) then
+                           print *, "Error: arfimafit() orders must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call arfimafit(arg1, p, q, niter=iter_arg)
+                        else
+                           call arfimafit(arg1, p, q)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("armafitgrid")
+                     block
+                        integer :: p1, p2, q1, q2, iter_arg, eqpos
+                        logical :: have_p1, have_p2, have_q1, have_q2, have_iter
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 5) then
+                           print *, "Error: function needs five arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        have_p1 = .false.; have_p2 = .false.; have_q1 = .false.; have_q2 = .false.
+                        have_iter = .false.; iter_arg = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "iter") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: iter must be given as iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else if (.not. have_p1) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: second argument of armafitgrid() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              p1 = nint(tmp(1)); have_p1 = .true.
+                           else if (.not. have_p2) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: third argument of armafitgrid() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              p2 = nint(tmp(1)); have_p2 = .true.
+                           else if (.not. have_q1) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: fourth argument of armafitgrid() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              q1 = nint(tmp(1)); have_q1 = .true.
+                           else if (.not. have_q2) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: fifth argument of armafitgrid() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              q2 = nint(tmp(1)); have_q2 = .true.
+                           else
+                              print *, "Error: armafitgrid() takes four orders plus iter=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (.not. have_p1 .or. .not. have_p2 .or. .not. have_q1 .or. .not. have_q2) then
+                           print *, "Error: armafitgrid() requires p1,p2,q1,q2"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (p1 < 0 .or. p2 < p1 .or. q1 < 0 .or. q2 < q1) then
+                           print *, "Error: armafitgrid() order ranges invalid"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call armafitgrid(arg1, p1, p2, q1, q2, niter=iter_arg)
+                        else
+                           call armafitgrid(arg1, p1, p2, q1, q2)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("armafitaic")
+                     block
+                        integer :: pmax, qmax, iter_arg, eqpos
+                        logical :: have_iter
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pmax = 5; qmax = 5
+                        have_iter = .false.; iter_arg = 0
+                        if (n_args > 1) then
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              if (len_trim(tok) > 0) then
+                                 if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                              end if
+                              ltok = lower_str(tok)
+                              if (index(ltok, "iter") == 1) then
+                                 eqpos = index(tok, "=")
+                                 if (eqpos == 0) then
+                                    print *, "Error: iter must be given as iter=..."
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: iter must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 iter_arg = nint(tmp(1))
+                                 have_iter = .true.
+                              else if (pmax == 5 .and. qmax == 5) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: second argument of armafitaic() must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 pmax = nint(tmp(1))
+                              else if (qmax == 5) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: third argument of armafitaic() must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 qmax = nint(tmp(1))
+                              else
+                                 print *, "Error: armafitaic() takes up to two order args plus iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           end do
+                        end if
+                        if (pmax < 0 .or. qmax < 0) then
+                           print *, "Error: armafitaic() max orders must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call armafitaic(arg1, pmax, qmax, niter=iter_arg)
+                        else
+                           call armafitaic(arg1, pmax, qmax)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("regress")
+                     block
+                        logical :: use_intcp
+                        integer :: n_pred, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 2 .or. .not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        use_intcp = .true.
+                        allocate (args(n_args - 1))
+                        n_pred = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "intcp") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: intcp must be given as intcp=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              rval = lower_str(rval)
+                              if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                 use_intcp = .false.
+                              else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                 use_intcp = .true.
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 use_intcp = (tmp(1) /= 0.0_dp)
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: predictor must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n_pred = n_pred + 1
+                              args(n_pred)%v = tmp
+                           end if
+                        end do
+                        if (eval_error) return
+                        if (n_pred < 1) then
+                           print *, "Error: regress() needs at least one predictor"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (allocated(pred_labels)) deallocate(pred_labels)
+                        allocate (character(len=len(labels(1))) :: pred_labels(n_pred))
+                        n_pred = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "intcp") == 1) cycle
+                           n_pred = n_pred + 1
+                           pred_labels(n_pred) = tok
+                        end do
+
+                        n1 = size(arg1)
+                        if (n1 < 2) then
+                           print *, "Error: function array arguments must have sizes > 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        do i_arg = 1, size(pred_labels)
+                           if (size(args(i_arg)%v) /= n1) then
+                              print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
+                                 n1, size(args(i_arg)%v), " must be equal"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (eval_error) return
+
+                        if (size(pred_labels) == 1) then
+                           call regress(arg1, args(1)%v, intcp=use_intcp)
+                        else
+                           allocate (xmat(n1, size(pred_labels)))
+                           do i_arg = 1, size(pred_labels)
+                              xmat(:, i_arg) = args(i_arg)%v
+                           end do
+                           call regress_multi(arg1, xmat, pred_labels, intcp=use_intcp)
+                        end if
+                       suppress_result = .true.
+                       f = [real(kind=dp) ::]
+                     end block
+
+                  case ("arfit")
+                     block
+                        logical :: have_k1, have_k2, have_acf, have_lb
+                        integer :: acf_lags, lb_lags, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        have_k1 = .false.
+                        have_k2 = .false.
+                        have_acf = .false.
+                        have_lb = .false.
+                        acf_lags = 0
+                        lb_lags = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "acf") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: acf must be given as acf=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: acf must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              acf_lags = nint(tmp(1))
+                              have_acf = .true.
+                           else if (index(ltok, "lb") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: lb must be given as lb=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: lb must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              lb_lags = nint(tmp(1))
+                              have_lb = .true.
+                           else if (.not. have_k1) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: second argument of arfit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n1 = nint(tmp(1))
+                              have_k1 = .true.
+                           else if (.not. have_k2) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: third argument of arfit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n2 = nint(tmp(1))
+                              have_k2 = .true.
+                           else
+                              print *, "Error: arfit() takes at most 3 arguments plus acf=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (.not. have_k1) then
+                           print *, "Error: arfit() requires a lag order"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (n1 < 0 .or. (have_k2 .and. n2 < 0) .or. acf_lags < 0 .or. lb_lags < 0) then
+                           print *, "Error: arfit() lag order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_k2) then
+                           if (have_acf .and. have_lb) then
+                              call arfit(arg1, n1, n2, nacf=acf_lags, nlb=lb_lags)
+                           else if (have_acf) then
+                              call arfit(arg1, n1, n2, nacf=acf_lags)
+                           else if (have_lb) then
+                              call arfit(arg1, n1, n2, nlb=lb_lags)
+                           else
+                              call arfit(arg1, n1, n2)
+                           end if
+                        else
+                           if (have_acf .and. have_lb) then
+                              call arfit(arg1, n1, nacf=acf_lags, nlb=lb_lags)
+                           else if (have_acf) then
+                              call arfit(arg1, n1, nacf=acf_lags)
+                           else if (have_lb) then
+                              call arfit(arg1, n1, nlb=lb_lags)
+                           else
+                              call arfit(arg1, n1)
+                           end if
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("mafit")
+                     block
+                        logical :: have_k1, have_k2, have_acf, have_lb, have_iter
+                        integer :: acf_lags, lb_lags, iter_arg, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        have_k1 = .false.
+                        have_k2 = .false.
+                        have_acf = .false.
+                        have_lb = .false.
+                        have_iter = .false.
+                        acf_lags = 0
+                        lb_lags = 0
+                        iter_arg = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "acf") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: acf must be given as acf=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: acf must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              acf_lags = nint(tmp(1))
+                              have_acf = .true.
+                           else if (index(ltok, "lb") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: lb must be given as lb=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: lb must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              lb_lags = nint(tmp(1))
+                              have_lb = .true.
+                           else if (index(ltok, "iter") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: iter must be given as iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else if (.not. have_k1) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: second argument of mafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n1 = nint(tmp(1))
+                              have_k1 = .true.
+                           else if (.not. have_k2) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: third argument of mafit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n2 = nint(tmp(1))
+                              have_k2 = .true.
+                           else
+                              print *, "Error: mafit() takes at most 3 arguments plus acf=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+                        if (.not. have_k1) then
+                           print *, "Error: mafit() requires a lag order"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (n1 < 0 .or. (have_k2 .and. n2 < 0) .or. acf_lags < 0 .or. lb_lags < 0) then
+                           print *, "Error: mafit() lag order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_k2) then
+                           if (have_acf .and. have_lb .and. have_iter) then
+                              call mafit(arg1, n1, n2, nacf=acf_lags, nlb=lb_lags, niter=iter_arg)
+                           else if (have_acf .and. have_lb) then
+                              call mafit(arg1, n1, n2, nacf=acf_lags, nlb=lb_lags)
+                           else if (have_acf .and. have_iter) then
+                              call mafit(arg1, n1, n2, nacf=acf_lags, niter=iter_arg)
+                           else if (have_lb .and. have_iter) then
+                              call mafit(arg1, n1, n2, nlb=lb_lags, niter=iter_arg)
+                           else if (have_acf) then
+                              call mafit(arg1, n1, n2, nacf=acf_lags)
+                           else if (have_lb) then
+                              call mafit(arg1, n1, n2, nlb=lb_lags)
+                           else if (have_iter) then
+                              call mafit(arg1, n1, n2, niter=iter_arg)
+                           else
+                              call mafit(arg1, n1, n2)
+                           end if
+                        else
+                           if (have_acf .and. have_lb .and. have_iter) then
+                              call mafit(arg1, n1, nacf=acf_lags, nlb=lb_lags, niter=iter_arg)
+                           else if (have_acf .and. have_lb) then
+                              call mafit(arg1, n1, nacf=acf_lags, nlb=lb_lags)
+                           else if (have_acf .and. have_iter) then
+                              call mafit(arg1, n1, nacf=acf_lags, niter=iter_arg)
+                           else if (have_lb .and. have_iter) then
+                              call mafit(arg1, n1, nlb=lb_lags, niter=iter_arg)
+                           else if (have_acf) then
+                              call mafit(arg1, n1, nacf=acf_lags)
+                           else if (have_lb) then
+                              call mafit(arg1, n1, nlb=lb_lags)
+                           else if (have_iter) then
+                              call mafit(arg1, n1, niter=iter_arg)
+                           else
+                              call mafit(arg1, n1)
+                           end if
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
 
                   case ("cor", "cov", "dot") ! correlation, covariance, dot product
                      if (.not. have_second) then
@@ -1414,7 +3986,7 @@ contains
                      end if
                      !---------------------------------------------------------------
 
-                  case ("runif", "rnorm", "arange", "zeros", "ones") ! one-arg
+                  case ("runif", "rnorm", "rsech", "arange", "zeros", "ones") ! one-arg
                      if (have_second) then
                         print *, "Error: function takes one argument"
                         eval_error = .true.; f = [bad_value]
@@ -1423,11 +3995,12 @@ contains
                         select case (id)
                         case ("runif"); f = runif(nsize)
                         case ("rnorm"); f = random_normal(nsize)
+                        case ("rsech"); f = rsech(nsize)
                         case ("arange"); f = arange(nsize)
                         case ("zeros"); f = zeros(nsize)
                         case ("ones"); f = ones(nsize)
                         end select
-                     end if
+                    end if
 
                   case ("grid") ! grid(n,x0,xh)
                      if (.not. have_second) then
@@ -1466,7 +4039,7 @@ contains
                         "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "unique", "stdz", "reverse", "median", "head", "tail", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "head", "tail", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then

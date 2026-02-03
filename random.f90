@@ -4,9 +4,9 @@ module random_mod
   implicit none
   private
   public :: random_normal, random_gamma, random_student_t, &
-            random_seed_init, runif
+            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
   interface runif
-    module procedure runif_scalar, runif_vec
+    module procedure runif_scalar, runif_vec, runif_mat
   end interface runif
   interface random_normal
      module procedure random_normal_scalar, random_normal_vec, &
@@ -154,5 +154,232 @@ else
   call random_number(r)
 end if
 end function runif_vec
+
+function runif_mat(n1,n2) result(r)
+integer, intent(in)  :: n1,n2
+real(kind=dp), allocatable :: r(:,:)
+allocate (r(n1,n2))
+call random_number(r)
+end function runif_mat
+
+function rexp(n, rate) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in), optional :: rate
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u, rate_
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+if (present(rate)) then
+   rate_ = rate
+else
+   rate_ = 1.0_dp
+end if
+allocate(r(n))
+do i=1,n
+  call random_number(u)
+  if (u <= 0.0_dp) u = 1.0e-12_dp
+  r(i) = -log(u) / rate_
+end do
+end function rexp
+
+function rgamma(n, shape, scale) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: shape, scale
+real(kind=dp), allocatable :: r(:)
+integer :: i
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  r(i) = random_gamma(shape, scale)
+end do
+end function rgamma
+
+function rlnorm(n, meanlog, sdlog) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: meanlog, sdlog
+real(kind=dp), allocatable :: r(:)
+integer :: i
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  r(i) = exp(meanlog + sdlog * random_normal())
+end do
+end function rlnorm
+
+function rt(n, df) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: df
+real(kind=dp), allocatable :: r(:)
+integer :: i
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  r(i) = random_student_t(df)
+end do
+end function rt
+
+function rchisq(n, df) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: df
+real(kind=dp), allocatable :: r(:)
+integer :: i
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  r(i) = random_gamma(df/2.0_dp, 2.0_dp)
+end do
+end function rchisq
+
+function rf(n, df1, df2) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: df1, df2
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: x1, x2
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  x1 = random_gamma(df1/2.0_dp, 2.0_dp) / df1
+  x2 = random_gamma(df2/2.0_dp, 2.0_dp) / df2
+  r(i) = x1 / x2
+end do
+end function rf
+
+function rbeta(n, a, b) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: a, b
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: x1, x2
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  x1 = random_gamma(a, 1.0_dp)
+  x2 = random_gamma(b, 1.0_dp)
+  r(i) = x1 / (x1 + x2)
+end do
+end function rbeta
+
+function rlogis(n, loc, scale) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  call random_number(u)
+  if (u <= 0.0_dp) u = 1.0e-12_dp
+  if (u >= 1.0_dp) u = 1.0_dp - 1.0e-12_dp
+  r(i) = loc + scale * log(u / (1.0_dp - u))
+end do
+end function rlogis
+
+function rsech(n) result(r)
+integer, intent(in) :: n
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  call random_number(u)
+  if (u <= 0.0_dp) u = 1.0e-12_dp
+  if (u >= 1.0_dp) u = 1.0_dp - 1.0e-12_dp
+  r(i) = (2.0_dp / pi) * log(tan(0.5_dp * pi * u))
+end do
+end function rsech
+
+function rlaplace(n, loc, scale) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  call random_number(u)
+  if (u < 0.5_dp) then
+     r(i) = loc + scale * log(2.0_dp * u)
+  else
+     r(i) = loc - scale * log(2.0_dp * (1.0_dp - u))
+  end if
+end do
+end function rlaplace
+
+function rcauchy(n, loc, scale) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  call random_number(u)
+  if (u <= 0.0_dp) u = 1.0e-12_dp
+  if (u >= 1.0_dp) u = 1.0_dp - 1.0e-12_dp
+  r(i) = loc + scale * tan(pi * (u - 0.5_dp))
+end do
+end function rcauchy
+
+function rged(n, loc, scale, beta) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: u, g, sgn, a
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+a = 1.0_dp / beta
+do i=1,n
+  call random_number(u)
+  if (u < 0.5_dp) then
+     sgn = -1.0_dp
+  else
+     sgn = 1.0_dp
+  end if
+  g = random_gamma(a, 1.0_dp)
+  r(i) = loc + scale * sgn * g**(1.0_dp / beta)
+end do
+end function rged
 
 end module random_mod

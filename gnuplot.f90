@@ -94,13 +94,14 @@ contains
   end subroutine plot_1d
 
 
-  subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file)
+  subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file, legend_labels)
     ! Plot multiple series (columns of y(:,j)) versus x(:)
     real(kind=dp), intent(in)               :: x(:), y(:, :)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
     character(len=*), intent(in), optional   :: data_file, script_file
+    character(len=*), intent(in), optional   :: legend_labels(:)
 
-    character(len=:), allocatable :: fn_data, fn_script, st
+    character(len=:), allocatable :: fn_data, fn_script, st, plot_cmd
     character(len=512)            :: cmd
     integer                       :: i, n, ns, unit_data, unit_script
     character(len=10)             :: col_max
@@ -150,9 +151,20 @@ contains
       end if
       write(unit_script,"(A)") "set grid"
 
-      write(col_max,"(I0)") ns + 1
-      write(unit_script,"(A)") &
-           "plot for [col=2:"//trim(col_max)//"] '"//trim(fn_data)//"' using 1:col with "//trim(st)
+      if (present(legend_labels) .and. size(legend_labels) == ns) then
+        plot_cmd = "plot "
+        do i = 1, ns
+          if (i > 1) plot_cmd = trim(plot_cmd)//", "
+          write(col_max,"(I0)") i + 1
+          plot_cmd = trim(plot_cmd)//"'"//trim(fn_data)//"' using 1:"//trim(col_max)// &
+                     " with "//trim(st)//" title '"//trim(legend_labels(i))//"'"
+        end do
+        write(unit_script,"(A)") trim(plot_cmd)
+      else
+        write(col_max,"(I0)") ns + 1
+        write(unit_script,"(A)") &
+             "plot for [col=2:"//trim(col_max)//"] '"//trim(fn_data)//"' using 1:col with "//trim(st)
+      end if
       write(unit_script,"(A)") "pause -1"
     close(unit_script)
 
