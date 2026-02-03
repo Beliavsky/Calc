@@ -120,11 +120,11 @@ z = x^2
 regress(y, x, z)                  ! multiple predictors via regress(...)
 
 ! AR/MA/ARMA fitting helpers
-arfit(y, 1, 5)
-mafit(y, 1, 5)
-armafit(y, 1, 1)
-armafitgrid(y, 0, 3, 0, 3)
-armafitaic(y, 0, 5, 0, 5)
+arfit(y, 1, 5)                    ! fit AR orders 1..5 and report fit metrics
+mafit(y, 1, 5)                    ! fit MA orders 1..5 and report fit metrics
+armafit(y, 1, 1)                  ! fit one ARMA(1,1) model
+armafitgrid(y, 0, 3, 0, 3)        ! grid search over ARMA(p,q), p=0..3 and q=0..3
+armafitaic(y, 0, 5, 0, 5)         ! choose ARMA order by information criterion over p,q ranges
 ```
 
 `arfimafit(x, p, q)` prints a fit table including `npar` (number of estimated parameters), RMSE/AIC/BIC, and parameter estimates.
