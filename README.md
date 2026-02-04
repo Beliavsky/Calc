@@ -105,10 +105,26 @@ max(x, 0.5)                       ! element-wise maximum of x and scalar 0.5
 ?vars                              ! list currently defined variables and their values
 read prices.csv                    ! read columns from prices.csv into workspace variables
 clear                              ! remove all user-defined variables from the workspace
+
+! Control flow
+if (mean(x) > 0.5) then
+  "high"
+else
+  "low"
+end if
+do i=1,5
+  i, i^2
+end do
+do i=1,5 i,i^2                     ! one-line do loop
+for z in [0.1, 0.2, 0.3]
+  z, sqrt(z)
+end for
+for z in [0.1, 0.2, 0.3] z,sqrt(z) ! one-line for loop
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
 `head`/`tail` accept an optional second argument for the number of elements to return.
+One-line `do`/`for` loop bodies must be a single statement (you can still use `;` within that statement).
 
 ## Regression and model fitting
 
@@ -214,7 +230,11 @@ Typical output:
 make
 ```
 
-- Run interpreter executable (name depends on your build target/toolchain).
+- Run interpreter executable:
+
+```bat
+fcalc.exe
+```
 
 ## Transpiler (`transpile_session.py`)
 
@@ -240,6 +260,7 @@ make -f Makefile_tests
     - `call read_vec("spy.csv", x, 2)`
     - `x = log(x)`
 - Supports top-level `acf(..., plot=...)` / `pacf(..., plot=...)` by generating explicit plotting blocks in Fortran.
+- Supports `for ... in ...` / `end for` and one-line `for`/`do` loop forms.
 - Rewrites legacy ARFIMA simulation call form when possible:
   - `arfimasim(n, [phi], [theta], d)` -> `arfimasim(n, d, phi=[phi], theta=[theta])`
 
