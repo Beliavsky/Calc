@@ -73,6 +73,10 @@ ARRAY_FUNCS = {
     "ttest2",
     "ks2_test",
     "kernelreg",
+    "lowess",
+    "lowesscv",
+    "knnreg",
+    "knnregcv",
     "splinereg",
     "naturalspline",
     "mssk",
@@ -269,6 +273,10 @@ MODULE_EXPORTS = {
         "ttest2",
         "ks2_test",
         "kernelreg",
+        "lowess",
+        "lowesscv",
+        "knnreg",
+        "knnregcv",
         "splinereg",
         "naturalspline",
         "regress",
@@ -1073,6 +1081,114 @@ def rewrite_kernelreg_order_args(expr):
     return "".join(out)
 
 
+def rewrite_lowess_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b(lowesscv|lowess)\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        fname = m.group(1)
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        if len(args) >= 4 and "=" not in args[3]:
+            args[3] = to_int_arg(args[3])
+        for idx in range(2, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key == "it":
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+        out.append(fname + "(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_knnreg_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b(knnregcv|knnreg)\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        fname = m.group(1)
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        if len(args) >= 3 and "=" not in args[2]:
+            args[2] = to_int_arg(args[2])
+        if len(args) >= 4 and "=" not in args[3]:
+            args[3] = to_int_arg(args[3])
+        for idx in range(2, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"k", "order"}:
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+        out.append(fname + "(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def rewrite_splinereg_args(expr):
     def to_int_arg(a):
         s = a.strip()
@@ -1435,6 +1551,8 @@ def transpile_expr(expr):
     expr = rewrite_default_optional_calls(expr)
     expr = rewrite_functions(expr)
     expr = rewrite_kernelreg_order_args(expr)
+    expr = rewrite_lowess_args(expr)
+    expr = rewrite_knnreg_args(expr)
     expr = rewrite_splinereg_args(expr)
     expr = rewrite_naturalspline_args(expr)
     expr = rewrite_cpsim_args(expr)

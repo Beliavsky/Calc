@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
@@ -5599,6 +5599,462 @@ contains
                         end if
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
+                     end block
+
+                  case ("lowess")
+                     block
+                        logical :: have_span, do_plot, do_points
+                        integer :: eqpos, nit
+                        real(kind=dp), allocatable :: spanv(:), tmp(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) /= size(arg2)) then
+                           print "(a,i0,1x,i0,a)", "Error: lowess() argument sizes ", &
+                              size(arg1), size(arg2), " must be equal"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) < 2) then
+                           print *, "Error: lowess() needs size >= 2"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_span = .false.
+                        nit = 2
+                        do_plot = .true.
+                        do_points = .true.
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in lowess()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (index(ltok, "span") == 1) then
+                                 spanv = tmp
+                                 have_span = .true.
+                              else if (index(ltok, "it") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: it must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 nit = max(0, nint(tmp(1)))
+                              else if (index(ltok, "plot") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in lowess()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in lowess()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_span) then
+                                 spanv = tmp
+                                 have_span = .true.
+                              else if (size(tmp) == 1) then
+                                 if (i_arg == 4) then
+                                    nit = max(0, nint(tmp(1)))
+                                 else if (i_arg == 5) then
+                                    do_plot = (tmp(1) /= 0.0_dp)
+                                 else if (i_arg == 6) then
+                                    do_points = (tmp(1) /= 0.0_dp)
+                                 else
+                                    print *, "Error: too many arguments for lowess()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                              else
+                                 print *, "Error: too many arguments for lowess()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
+                        if (have_span) then
+                           if (any(spanv <= 0.0_dp) .or. any(spanv > 1.0_dp)) then
+                              print *, "Error: lowess() span must satisfy 0 < span <= 1"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                        end if
+
+                        if (.not. have_span) then
+                           f = lowess(arg1, arg2, it=nit, plot=do_plot, points=do_points)
+                        else if (size(spanv) == 1) then
+                           f = lowess(arg1, arg2, spanv(1), it=nit, plot=do_plot, points=do_points)
+                        else
+                           f = lowess(arg1, arg2, spanv, it=nit, plot=do_plot, points=do_points)
+                        end if
+                     end block
+
+                  case ("lowesscv")
+                     block
+                        logical :: have_span, do_plot, do_points
+                        integer :: eqpos, nit
+                        real(kind=dp), allocatable :: spanv(:), tmp(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) /= size(arg2)) then
+                           print "(a,i0,1x,i0,a)", "Error: lowesscv() argument sizes ", &
+                              size(arg1), size(arg2), " must be equal"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) < 3) then
+                           print *, "Error: lowesscv() needs size >= 3"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_span = .false.
+                        nit = 2
+                        do_plot = .true.
+                        do_points = .true.
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in lowesscv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (index(ltok, "span") == 1) then
+                                 spanv = tmp
+                                 have_span = .true.
+                              else if (index(ltok, "it") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: it must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 nit = max(0, nint(tmp(1)))
+                              else if (index(ltok, "plot") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in lowesscv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in lowesscv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_span) then
+                                 spanv = tmp
+                                 have_span = .true.
+                              else if (size(tmp) == 1) then
+                                 if (i_arg == 4) then
+                                    nit = max(0, nint(tmp(1)))
+                                 else if (i_arg == 5) then
+                                    do_plot = (tmp(1) /= 0.0_dp)
+                                 else if (i_arg == 6) then
+                                    do_points = (tmp(1) /= 0.0_dp)
+                                 else
+                                    print *, "Error: too many arguments for lowesscv()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                              else
+                                 print *, "Error: too many arguments for lowesscv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
+                        if (have_span) then
+                           if (any(spanv <= 0.0_dp) .or. any(spanv > 1.0_dp)) then
+                              print *, "Error: lowesscv() span must satisfy 0 < span <= 1"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                        end if
+
+                        if (.not. have_span) then
+                           f = lowesscv(arg1, arg2, it=nit, plot=do_plot, points=do_points)
+                        else if (size(spanv) == 1) then
+                           f = lowesscv(arg1, arg2, spanv(1), it=nit, plot=do_plot, points=do_points)
+                        else
+                           f = lowesscv(arg1, arg2, spanv, it=nit, plot=do_plot, points=do_points)
+                        end if
+                     end block
+
+                  case ("knnreg")
+                     block
+                        logical :: have_k, do_plot, do_points
+                        integer :: eqpos, ord
+                        real(kind=dp), allocatable :: kv_r(:), tmp(:)
+                        integer, allocatable :: kv(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) /= size(arg2)) then
+                           print "(a,i0,1x,i0,a)", "Error: knnreg() argument sizes ", &
+                              size(arg1), size(arg2), " must be equal"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) < 2) then
+                           print *, "Error: knnreg() needs size >= 2"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_k = .false.
+                        ord = 0
+                        do_plot = .true.
+                        do_points = .true.
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in knnreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (index(ltok, "k") == 1) then
+                                 kv_r = tmp
+                                 kv = nint(kv_r)
+                                 if (any(kv < 1)) then
+                                    print *, "Error: k values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_k = .true.
+                              else if (index(ltok, "order") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: order must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 ord = max(0, nint(tmp(1)))
+                              else if (index(ltok, "plot") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in knnreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in knnreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_k) then
+                                 kv_r = tmp
+                                 kv = nint(kv_r)
+                                 if (any(kv < 1)) then
+                                    print *, "Error: k values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_k = .true.
+                              else if (i_arg == 4 .and. size(tmp) == 1) then
+                                 ord = max(0, nint(tmp(1)))
+                              else if (i_arg == 5 .and. size(tmp) == 1) then
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (i_arg == 6 .and. size(tmp) == 1) then
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: too many arguments for knnreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
+
+                        if (.not. have_k) then
+                           f = knnreg(arg1, arg2, order=ord, plot=do_plot, points=do_points)
+                        else if (size(kv) == 1) then
+                           f = knnreg(arg1, arg2, kv(1), order=ord, plot=do_plot, points=do_points)
+                        else
+                           f = knnreg(arg1, arg2, kv, order=ord, plot=do_plot, points=do_points)
+                        end if
+                     end block
+
+                  case ("knnregcv")
+                     block
+                        logical :: have_k, do_plot, do_points
+                        integer :: eqpos, ord
+                        real(kind=dp), allocatable :: kv_r(:), tmp(:)
+                        integer, allocatable :: kv(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) /= size(arg2)) then
+                           print "(a,i0,1x,i0,a)", "Error: knnregcv() argument sizes ", &
+                              size(arg1), size(arg2), " must be equal"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) < 3) then
+                           print *, "Error: knnregcv() needs size >= 3"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_k = .false.
+                        ord = 0
+                        do_plot = .true.
+                        do_points = .true.
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in knnregcv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (index(ltok, "k") == 1) then
+                                 kv_r = tmp
+                                 kv = nint(kv_r)
+                                 if (any(kv < 1)) then
+                                    print *, "Error: k values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_k = .true.
+                              else if (index(ltok, "order") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: order must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 ord = max(0, nint(tmp(1)))
+                              else if (index(ltok, "plot") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in knnregcv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in knnregcv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_k) then
+                                 kv_r = tmp
+                                 kv = nint(kv_r)
+                                 if (any(kv < 1)) then
+                                    print *, "Error: k values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_k = .true.
+                              else if (i_arg == 4 .and. size(tmp) == 1) then
+                                 ord = max(0, nint(tmp(1)))
+                              else if (i_arg == 5 .and. size(tmp) == 1) then
+                                 do_plot = (tmp(1) /= 0.0_dp)
+                              else if (i_arg == 6 .and. size(tmp) == 1) then
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: too many arguments for knnregcv()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
+
+                        if (.not. have_k) then
+                           f = knnregcv(arg1, arg2, order=ord, plot=do_plot, points=do_points)
+                        else if (size(kv) == 1) then
+                           f = knnregcv(arg1, arg2, kv(1), order=ord, plot=do_plot, points=do_points)
+                        else
+                           f = knnregcv(arg1, arg2, kv, order=ord, plot=do_plot, points=do_points)
+                        end if
                      end block
 
                   case ("kernelreg")

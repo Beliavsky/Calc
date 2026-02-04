@@ -8,7 +8,7 @@ implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, kde, &
+          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, kde, &
           acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
@@ -23,6 +23,28 @@ interface kernelreg
    module procedure kernelreg_scalar_ordvec
    module procedure kernelreg_vec_ordvec
 end interface kernelreg
+
+interface lowess
+   module procedure lowess_scalar
+   module procedure lowess_vec
+end interface lowess
+
+interface lowesscv
+   module procedure lowesscv_default
+   module procedure lowesscv_scalar
+   module procedure lowesscv_vec
+end interface lowesscv
+
+interface knnreg
+   module procedure knnreg_scalar
+   module procedure knnreg_vec
+end interface knnreg
+
+interface knnregcv
+   module procedure knnregcv_default
+   module procedure knnregcv_scalar
+   module procedure knnregcv_vec
+end interface knnregcv
 
 interface splinereg
    module procedure splinereg_scalar
@@ -4818,6 +4840,684 @@ do i = 1, n
    end do
 end do
 end function kernelreg_core
+
+function lowess_scalar(y, x, span, it, plot, points) result(yhat)
+! LOWESS smoother with tricube neighborhood weights and optional robust iterations.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+real(kind=dp), intent(in), optional :: span
+integer, intent(in), optional :: it
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: frac
+integer :: n, nit
+logical :: do_plot, do_points
+character(len=48) :: ttl
+
+n = size(x)
+if (n < 2 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+frac = 0.30_dp
+if (present(span)) frac = span
+nit = 2
+if (present(it)) nit = max(0, it)
+yhat = lowess_core(y, x, frac, nit)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0)") "lowess (#obs=", n
+   ttl = trim(ttl)//")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function lowess_scalar
+
+function lowess_vec(y, x, span, it, plot, points) result(yhat)
+! LOWESS with multiple spans; plots all fitted curves.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:), span(:)
+integer, intent(in), optional :: it
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=16), allocatable :: legends(:)
+integer :: n, j, nit
+logical :: do_plot, do_points
+character(len=48) :: ttl
+
+n = size(x)
+if (n < 2 .or. size(y) /= n .or. size(span) < 1) then
+   allocate (yhat(0))
+   return
+end if
+nit = 2
+if (present(it)) nit = max(0, it)
+allocate (y2(n, size(span)), legends(size(span)))
+do j = 1, size(span)
+   y2(:, j) = lowess_core(y, x, span(j), nit)
+   write (legends(j), "(a,f7.4)") "span=", span(j)
+end do
+yhat = y2(:, 1)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0)") "lowess (#obs=", n
+   ttl = trim(ttl)//")"
+   if (do_points) then
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
+   else
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
+   end if
+end if
+deallocate (y2, legends)
+end function lowess_vec
+
+function lowess_core(y, x, span, it) result(yhat)
+real(kind=dp), intent(in) :: y(:), x(:), span
+integer, intent(in) :: it
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: rw(:), dabs(:), ds(:), ww(:), d(:), r(:)
+real(kind=dp) :: frac, h, u, w, s0, s1, s2, t0, t1, den, eps, smad, ur
+integer :: n, i, j, q, iter
+
+n = size(x)
+allocate (yhat(n))
+eps = 1.0e-12_dp
+frac = span
+if (frac <= 0.0_dp .or. frac > 1.0_dp) then
+   yhat = nanv()
+   return
+end if
+q = max(2, min(n, ceiling(frac*real(n, dp))))
+allocate (rw(n), dabs(n), ds(n), ww(n), d(n), r(n))
+rw = 1.0_dp
+
+do iter = 0, max(0, it)
+   do i = 1, n
+      dabs = abs(x - x(i))
+      ds = sorted(dabs)
+      h = max(ds(q), eps)
+      s0 = 0.0_dp
+      s1 = 0.0_dp
+      s2 = 0.0_dp
+      t0 = 0.0_dp
+      t1 = 0.0_dp
+      do j = 1, n
+         u = abs(x(j) - x(i))/h
+         if (u < 1.0_dp) then
+            w = (1.0_dp - u**3)**3
+         else
+            w = 0.0_dp
+         end if
+         ww(j) = w*rw(j)
+         d(j) = x(j) - x(i)
+         s0 = s0 + ww(j)
+         s1 = s1 + ww(j)*d(j)
+         s2 = s2 + ww(j)*d(j)*d(j)
+         t0 = t0 + ww(j)*y(j)
+         t1 = t1 + ww(j)*d(j)*y(j)
+      end do
+      if (s0 <= eps) then
+         yhat(i) = nanv()
+      else
+         den = s0*s2 - s1*s1
+         if (abs(den) <= eps) then
+            yhat(i) = t0/s0
+         else
+            yhat(i) = (s2*t0 - s1*t1)/den
+         end if
+      end if
+   end do
+
+   if (iter >= max(0, it)) exit
+   r = y - yhat
+   smad = median(abs(r))
+   if (smad <= eps) exit
+   do j = 1, n
+      ur = abs(r(j))/(6.0_dp*smad)
+      if (ur < 1.0_dp) then
+         rw(j) = (1.0_dp - ur*ur)**2
+      else
+         rw(j) = 0.0_dp
+      end if
+   end do
+end do
+
+deallocate (rw, dabs, ds, ww, d, r)
+end function lowess_core
+
+function lowesscv_default(y, x, it, plot, points) result(yhat)
+! LOWESS with span selected by leave-one-out CV over a default span grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in), optional :: it
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), dimension(8) :: span_grid
+real(kind=dp) :: best_span
+integer :: nit, n
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+span_grid = [0.10_dp, 0.15_dp, 0.20_dp, 0.30_dp, 0.40_dp, 0.50_dp, 0.60_dp, 0.80_dp]
+nit = 2
+if (present(it)) nit = max(0, it)
+yhat = lowesscv_choose(y, x, span_grid, nit, best_span)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,f6.3,a,i0,a)") "lowesscv (span=", best_span, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function lowesscv_default
+
+function lowesscv_scalar(y, x, span, it, plot, points) result(yhat)
+! LOWESS with span selected by leave-one-out CV over [0.05, span].
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:), span
+integer, intent(in), optional :: it
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: span_grid(:)
+real(kind=dp) :: best_span
+integer :: i, nit, n, ng
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n .or. span <= 0.0_dp .or. span > 1.0_dp) then
+   allocate (yhat(0))
+   return
+end if
+ng = 10
+allocate (span_grid(ng))
+do i = 1, ng
+   span_grid(i) = 0.05_dp + (span - 0.05_dp)*real(i - 1, dp)/real(max(1, ng - 1), dp)
+end do
+span_grid(ng) = span
+nit = 2
+if (present(it)) nit = max(0, it)
+yhat = lowesscv_choose(y, x, span_grid, nit, best_span)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,f6.3,a,i0,a)") "lowesscv (span=", best_span, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+deallocate (span_grid)
+end function lowesscv_scalar
+
+function lowesscv_vec(y, x, span, it, plot, points) result(yhat)
+! LOWESS with span selected by leave-one-out CV over supplied span grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:), span(:)
+integer, intent(in), optional :: it
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: best_span
+integer :: nit, n
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n .or. size(span) < 1) then
+   allocate (yhat(0))
+   return
+end if
+if (any(span <= 0.0_dp) .or. any(span > 1.0_dp)) then
+   allocate (yhat(0))
+   return
+end if
+nit = 2
+if (present(it)) nit = max(0, it)
+yhat = lowesscv_choose(y, x, span, nit, best_span)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,f6.3,a,i0,a)") "lowesscv (span=", best_span, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function lowesscv_vec
+
+function lowesscv_choose(y, x, span_grid, it, best_span) result(yhat)
+real(kind=dp), intent(in) :: y(:), x(:), span_grid(:)
+integer, intent(in) :: it
+real(kind=dp), intent(out) :: best_span
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: mse, best_mse
+integer :: j, best_j
+
+allocate (yhat(size(y)))
+best_j = 1
+best_mse = huge(1.0_dp)
+do j = 1, size(span_grid)
+   mse = lowess_loo_mse(y, x, span_grid(j), it)
+   if (mse < best_mse) then
+      best_mse = mse
+      best_j = j
+   end if
+end do
+best_span = span_grid(best_j)
+yhat = lowess_core(y, x, best_span, it)
+end function lowesscv_choose
+
+function lowess_loo_mse(y, x, span, it) result(mse)
+real(kind=dp), intent(in) :: y(:), x(:), span
+integer, intent(in) :: it
+real(kind=dp) :: mse
+real(kind=dp), allocatable :: ysub(:), xsub(:), yhat_sub(:)
+integer :: n, i, k
+
+n = size(x)
+if (n < 3) then
+   mse = huge(1.0_dp)
+   return
+end if
+allocate (ysub(n - 1), xsub(n - 1))
+mse = 0.0_dp
+do i = 1, n
+   k = 0
+   if (i > 1) then
+      xsub(1:i - 1) = x(1:i - 1)
+      ysub(1:i - 1) = y(1:i - 1)
+      k = i - 1
+   end if
+   if (i < n) then
+      xsub(k + 1:n - 1) = x(i + 1:n)
+      ysub(k + 1:n - 1) = y(i + 1:n)
+   end if
+   yhat_sub = lowess_core(ysub, xsub, span, it)
+   mse = mse + (y(i) - lowess_predict_at(x(i), xsub, yhat_sub))**2
+end do
+mse = mse/real(n, dp)
+deallocate (ysub, xsub)
+end function lowess_loo_mse
+
+pure function lowess_predict_at(x0, x, yhat) result(v)
+real(kind=dp), intent(in) :: x0, x(:), yhat(:)
+real(kind=dp) :: v, dmin
+integer :: i, idx
+
+idx = 1
+dmin = abs(x(1) - x0)
+do i = 2, size(x)
+   if (abs(x(i) - x0) < dmin) then
+      dmin = abs(x(i) - x0)
+      idx = i
+   end if
+end do
+v = yhat(idx)
+end function lowess_predict_at
+
+function knnreg_scalar(y, x, k, order, plot, points) result(yhat)
+! k-nearest-neighbors local polynomial regression at observed x.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in), optional :: k, order
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+integer :: n, kk, ord
+logical :: do_plot, do_points
+character(len=48) :: ttl
+
+n = size(x)
+if (n < 2 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+kk = max(2, min(n, max(10, ceiling(0.1_dp*real(n, dp)))))
+if (present(k)) kk = max(1, min(n, k))
+ord = 0
+if (present(order)) ord = max(0, order)
+yhat = knnreg_core(y, x, kk, ord)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0)") "knnreg (#obs=", n
+   ttl = trim(ttl)//")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function knnreg_scalar
+
+function knnreg_vec(y, x, k, order, plot, points) result(yhat)
+! k-nearest-neighbors regression for multiple k values; plots all curves.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k(:)
+integer, intent(in), optional :: order
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=16), allocatable :: legends(:)
+integer :: n, j, ord, kk
+logical :: do_plot, do_points
+character(len=48) :: ttl
+
+n = size(x)
+if (n < 2 .or. size(y) /= n .or. size(k) < 1) then
+   allocate (yhat(0))
+   return
+end if
+ord = 0
+if (present(order)) ord = max(0, order)
+allocate (y2(n, size(k)), legends(size(k)))
+do j = 1, size(k)
+   kk = max(1, min(n, k(j)))
+   y2(:, j) = knnreg_core(y, x, kk, ord)
+   write (legends(j), "(a,i0)") "k=", kk
+end do
+yhat = y2(:, 1)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0)") "knnreg (#obs=", n
+   ttl = trim(ttl)//")"
+   if (do_points) then
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
+   else
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
+   end if
+end if
+deallocate (y2, legends)
+end function knnreg_vec
+
+function knnreg_core(y, x, k, order) result(yhat)
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k, order
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: dabs(:), ds(:), d(:), xtwx(:,:), xtwy(:), beta(:)
+logical, allocatable :: use_j(:)
+real(kind=dp) :: h, s0, t0
+integer :: n, i, j, a, b, p, ord, ord_try, nin
+logical :: ok
+
+n = size(x)
+allocate (yhat(n), dabs(n), ds(n), d(n), use_j(n))
+if (k < 1 .or. order < 0) then
+   yhat = nanv()
+   return
+end if
+ord = min(order, n - 1)
+
+do i = 1, n
+   dabs = abs(x - x(i))
+   ds = sorted(dabs)
+   h = max(ds(min(max(1, k), n)), 1.0e-12_dp)
+   use_j = (dabs <= h)
+   nin = count(use_j)
+   yhat(i) = nanv()
+   if (nin < 1) cycle
+
+   do ord_try = min(ord, nin - 1), 0, -1
+      if (ord_try <= 0) then
+         s0 = 0.0_dp
+         t0 = 0.0_dp
+         do j = 1, n
+            if (.not. use_j(j)) cycle
+            s0 = s0 + 1.0_dp
+            t0 = t0 + y(j)
+         end do
+         if (s0 > 0.0_dp) yhat(i) = t0/s0
+         exit
+      end if
+
+      p = ord_try + 1
+      allocate (xtwx(p, p), xtwy(p), beta(p))
+      xtwx = 0.0_dp
+      xtwy = 0.0_dp
+      do j = 1, n
+         if (.not. use_j(j)) cycle
+         d(j) = x(j) - x(i)
+         do a = 0, ord_try
+            xtwy(a + 1) = xtwy(a + 1) + d(j)**a*y(j)
+            do b = 0, ord_try
+               xtwx(a + 1, b + 1) = xtwx(a + 1, b + 1) + d(j)**(a + b)
+            end do
+         end do
+      end do
+      call solve_linear(xtwx, xtwy, beta, ok)
+      if (ok) then
+         yhat(i) = beta(1)
+         deallocate (xtwx, xtwy, beta)
+         exit
+      end if
+      deallocate (xtwx, xtwy, beta)
+   end do
+end do
+end function knnreg_core
+
+function knnregcv_default(y, x, plot, points, order) result(yhat)
+! kNN regression with k selected by leave-one-out CV over a default k grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+logical, intent(in), optional :: plot, points
+integer, intent(in), optional :: order
+real(kind=dp), allocatable :: yhat(:)
+integer, allocatable :: kgrid(:)
+integer :: n, ord, best_k
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+ord = 0
+if (present(order)) ord = max(0, order)
+kgrid = knn_default_grid(n)
+yhat = knnregcv_choose(y, x, kgrid, ord, best_k)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0,a,i0,a)") "knnregcv (k=", best_k, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function knnregcv_default
+
+function knnregcv_scalar(y, x, k, order, plot, points) result(yhat)
+! kNN regression with k selected by leave-one-out CV over k=2..k.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k
+integer, intent(in), optional :: order
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+integer, allocatable :: kgrid(:)
+integer :: n, ord, best_k, j, kmax
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+kmax = max(2, min(n - 1, k))
+allocate (kgrid(kmax - 1))
+do j = 2, kmax
+   kgrid(j - 1) = j
+end do
+ord = 0
+if (present(order)) ord = max(0, order)
+yhat = knnregcv_choose(y, x, kgrid, ord, best_k)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0,a,i0,a)") "knnregcv (k=", best_k, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+deallocate (kgrid)
+end function knnregcv_scalar
+
+function knnregcv_vec(y, x, k, order, plot, points) result(yhat)
+! kNN regression with k selected by leave-one-out CV over supplied k grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k(:)
+integer, intent(in), optional :: order
+logical, intent(in), optional :: plot, points
+real(kind=dp), allocatable :: yhat(:)
+integer, allocatable :: kgrid(:)
+integer :: n, ord, best_k
+logical :: do_plot, do_points
+character(len=64) :: ttl
+
+n = size(x)
+if (n < 3 .or. size(y) /= n .or. size(k) < 1) then
+   allocate (yhat(0))
+   return
+end if
+allocate (kgrid(size(k)))
+kgrid = max(2, min(n - 1, k))
+ord = 0
+if (present(order)) ord = max(0, order)
+yhat = knnregcv_choose(y, x, kgrid, ord, best_k)
+do_plot = .true.
+if (present(plot)) do_plot = plot
+do_points = .true.
+if (present(points)) do_points = points
+if (do_plot) then
+   write (ttl, "(a,i0,a,i0,a)") "knnregcv (k=", best_k, ", #obs=", n, ")"
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+deallocate (kgrid)
+end function knnregcv_vec
+
+function knnregcv_choose(y, x, kgrid, order, best_k) result(yhat)
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: kgrid(:), order
+integer, intent(out) :: best_k
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: mse, best_mse
+integer :: j, best_j
+
+allocate (yhat(size(y)))
+best_j = 1
+best_mse = huge(1.0_dp)
+do j = 1, size(kgrid)
+   mse = knnreg_loo_mse(y, x, kgrid(j), order)
+   if (mse < best_mse) then
+      best_mse = mse
+      best_j = j
+   end if
+end do
+best_k = kgrid(best_j)
+yhat = knnreg_core(y, x, best_k, order)
+end function knnregcv_choose
+
+function knnreg_loo_mse(y, x, k, order) result(mse)
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k, order
+real(kind=dp) :: mse
+real(kind=dp), allocatable :: ysub(:), xsub(:), yhat_sub(:)
+integer :: n, i, kk, nsub
+
+n = size(x)
+if (n < 3) then
+   mse = huge(1.0_dp)
+   return
+end if
+nsub = n - 1
+allocate (ysub(nsub), xsub(nsub))
+mse = 0.0_dp
+do i = 1, n
+   if (i > 1) then
+      xsub(1:i - 1) = x(1:i - 1)
+      ysub(1:i - 1) = y(1:i - 1)
+   end if
+   if (i < n) then
+      xsub(i:nsub) = x(i + 1:n)
+      ysub(i:nsub) = y(i + 1:n)
+   end if
+   kk = max(1, min(nsub, k))
+   yhat_sub = knnreg_core(ysub, xsub, kk, order)
+   mse = mse + (y(i) - lowess_predict_at(x(i), xsub, yhat_sub))**2
+end do
+mse = mse/real(n, dp)
+deallocate (ysub, xsub)
+end function knnreg_loo_mse
+
+function knn_default_grid(n) result(kgrid)
+integer, intent(in) :: n
+integer, allocatable :: kgrid(:)
+integer :: vals(8), j, m
+
+vals = [2, 4, 6, 8, 12, 16, 24, 32]
+m = 0
+do j = 1, size(vals)
+   if (vals(j) <= n - 1) m = m + 1
+end do
+if (m < 1) then
+   allocate (kgrid(1))
+   kgrid = [max(2, n - 1)]
+   return
+end if
+allocate (kgrid(m))
+m = 0
+do j = 1, size(vals)
+   if (vals(j) <= n - 1) then
+      m = m + 1
+      kgrid(m) = vals(j)
+   end if
+end do
+end function knn_default_grid
 
 subroutine regress(y, x, intcp)
 ! simple linear regression y = a*x + b with diagnostics

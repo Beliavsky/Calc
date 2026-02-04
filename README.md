@@ -222,6 +222,16 @@ yh = kernelreg(yg, xg, 0.06, 1)    ! local linear fit (order=1)
 yh = kernelreg(yg, xg, 0.06, order=[0,1,2]) ! one bandwidth, multiple orders (plotted together)
 yh = kernelreg(yg, xg, [0.03,0.06], order=[0,1,2]) ! tensor product of bw and order curves
 yh = kernelreg(yg, xg, 0.06, points=.true.) ! overlay sample points on the fit plot
+yh = lowess(yg, xg)                         ! LOWESS with default span=0.3 and robust iterations
+yh = lowess(yg, xg, 0.2, it=1)              ! smaller span, one robust iteration
+yh = lowess(yg, xg, [0.15,0.3,0.5], plot=.true.) ! compare multiple spans on one plot
+yh = lowesscv(yg, xg)                       ! choose span by LOOCV over a default span grid
+yh = lowesscv(yg, xg, [0.1,0.2,0.3,0.4])    ! choose span by LOOCV over user grid
+yh = knnreg(yg, xg, 25)                     ! k-nearest-neighbors smoother (order=0 default)
+yh = knnreg(yg, xg, 25, order=1)            ! local linear fit on k-neighborhood
+yh = knnreg(yg, xg, [15,30,60], plot=.true.) ! compare multiple k values on one plot
+yh = knnregcv(yg, xg)                       ! choose k by LOOCV over a default k grid
+yh = knnregcv(yg, xg, [8,12,20,30], order=1) ! choose k by LOOCV over user k grid
 
 ! Spline regression (plots fitted curve by default)
 yh = splinereg(yg, xg, 4)                    ! cubic spline with 4 interior knots
