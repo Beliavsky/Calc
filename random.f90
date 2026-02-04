@@ -1,10 +1,11 @@
 module random_mod
   use kind_mod, only: dp
   use constants_mod, only: pi
+  use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
   implicit none
   private
   public :: random_normal, random_gamma, random_student_t, &
-            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rnct, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
   interface runif
     module procedure runif_scalar, runif_vec, runif_mat
   end interface runif
@@ -247,6 +248,53 @@ do i=1,n
   r(i) = z / sqrt(v / df)
 end do
 end function rnct
+
+function rmixnorm(n, wgt, mean, sd) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: wgt(:), mean(:), sd(:)
+real(kind=dp), allocatable :: r(:)
+real(kind=dp), allocatable :: wn(:), cw(:)
+real(kind=dp) :: sw, u
+integer :: i, j, k, comp
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+k = size(wgt)
+allocate(r(n))
+if (k < 1 .or. size(mean) /= k .or. size(sd) /= k) then
+  r = ieee_value(0.0_dp, ieee_quiet_nan)
+  return
+end if
+if (any(wgt < 0.0_dp) .or. any(sd <= 0.0_dp)) then
+  r = ieee_value(0.0_dp, ieee_quiet_nan)
+  return
+end if
+sw = sum(wgt)
+if (sw <= 0.0_dp) then
+  r = ieee_value(0.0_dp, ieee_quiet_nan)
+  return
+end if
+allocate(wn(k), cw(k))
+wn = wgt / sw
+cw(1) = wn(1)
+do j = 2, k
+  cw(j) = cw(j - 1) + wn(j)
+end do
+cw(k) = 1.0_dp
+do i = 1, n
+  call random_number(u)
+  comp = k
+  do j = 1, k
+    if (u <= cw(j)) then
+      comp = j
+      exit
+    end if
+  end do
+  r(i) = mean(comp) + sd(comp) * random_normal()
+end do
+deallocate(wn, cw)
+end function rmixnorm
 
 function rchisq(n, df) result(r)
 integer, intent(in) :: n
