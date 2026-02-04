@@ -68,6 +68,7 @@ ARRAY_FUNCS = {
     "ttest1",
     "ttest2",
     "ks2_test",
+    "kernelreg",
     "mssk",
     "mssk_exp",
     "mssk_gamma",
@@ -256,6 +257,7 @@ MODULE_EXPORTS = {
         "ttest1",
         "ttest2",
         "ks2_test",
+        "kernelreg",
         "regress",
         "regress_multi",
         "poly1reg",
@@ -1017,12 +1019,54 @@ def rewrite_int_args(expr):
     return expr
 
 
+def rewrite_kernelreg_order_args(expr):
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bkernelreg\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = split_top_level(expr[lpar + 1 : j], ",")
+        args = [a.strip() for a in args]
+        if len(args) >= 4 and "=" not in args[3]:
+            a4 = args[3]
+            low4 = a4.lower()
+            if not (low4.startswith("nint(") or low4.startswith("int(")):
+                args[3] = f"nint(1.0*({a4}))"
+        out.append("kernelreg(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def transpile_expr(expr):
     expr = rewrite_arfimasim_calls(expr)
     expr = rewrite_acf_pacf_plot_args(expr)
     expr = rewrite_reduction_calls(expr)
     expr = rewrite_default_optional_calls(expr)
     expr = rewrite_functions(expr)
+    expr = rewrite_kernelreg_order_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
     expr = replace_ops(expr)
