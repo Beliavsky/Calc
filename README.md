@@ -8,6 +8,7 @@ Calc is a Fortran-based interactive statistics interpreter with a session-to-For
 - Array literals, slicing, arithmetic, reductions, and basic control flow.
 - Random simulation, fitting, and properties of many [probability distributions](distributions.md).
 - Time-series helpers including ACF/PACF and AR/MA/ARMA/ARFIMA utilities.
+- Robust summaries, common statistical tests, and AIC-based distribution scanning.
 - Plotting via gnuplot.
 
 Some interpreter code examples:
@@ -43,6 +44,7 @@ x = runif(10)                                ! 10 iid Uniform(0,1) draws
 x0 = runif()                                 ! one Uniform(0,1) draw
 rn = rnorm(5)                                ! 5 iid standard Normal draws
 tn = rnct(5, 8.0, 1.5)                       ! 5 iid noncentral t draws (df=8, ncp=1.5)
+mx = rmixnorm(5, [0.7,0.3], [0.0,2.0], [1.0,0.5]) ! 5 draws from a 2-component normal mixture
 arsim(1000, [0.5, -0.4])                     ! simulate AR(2) series
 acf(x, 10)                                   ! sample ACF for lags 1..10
 acf(x, 10, plot=.true.)                      ! sample ACF and plot
@@ -62,6 +64,10 @@ arfimasim(1000, 0.25, phi=[0.4], theta=[0.2]) ! simulate ARFIMA(1,d,1)
 sum(x)
 product(x)
 mean(x)
+trimmean(x, 0.1)
+winsor_mean(x, 0.1)
+mad(x)
+iqr_scale(x)
 geomean(x)
 harmean(x)
 sd(x)
@@ -101,6 +107,8 @@ cor(x, y, z)                      ! labeled correlation matrix for the listed ve
 dot(x, y)                         ! dot product of x and y
 min(x, y)                         ! element-wise minimum of x and y
 max(x, 0.5)                       ! element-wise maximum of x and scalar 0.5
+ttest2(x, y)                      ! Welch two-sample t test -> [t, df, p]
+ks2_test(x, y)                    ! two-sample KS test -> [D, p]
 
 ! Workspace
 ?vars                              ! list currently defined variables and their values
@@ -139,6 +147,7 @@ regress(x, y, intcp=0)            ! no-intercept regression
 ! Multiple regression
 z = x^2
 regress(y, x, z)                  ! multiple predictors via regress(...)
+poly1reg(y, x, 3)                 ! polynomial regression in one predictor up to degree 3
 
 ! AR/MA/ARMA fitting helpers
 arfit(y, 1, 5)                    ! fit AR orders 1..5 and report fit metrics
@@ -146,6 +155,8 @@ mafit(y, 1, 5)                    ! fit MA orders 1..5 and report fit metrics
 armafit(y, 1, 1)                  ! fit one ARMA(1,1) model
 armafitgrid(y, 0, 3, 0, 3)        ! grid search over ARMA(p,q), p=0..3 and q=0..3
 armafitaic(y, 0, 5, 0, 5)         ! choose ARMA order by information criterion over p,q ranges
+fit_mixnorm(y, 2)                 ! fit a 2-component normal mixture [wgt, mean, sd]
+fit_mixnorm_aic(y, 1, 5, nstart=5, verbose=.true., plot=.true.) ! choose mixture size by AIC
 
 ```
 
@@ -170,6 +181,7 @@ x = rnct(5000, 8.0, 1.5)
 mssk(x)                            ! empirical [mean, sd, skew, excess kurtosis]
 mssk_nct(8.0, 1.5)                 ! theoretical noncentral t moments
 fit_nct(x)                         ! MLE fit, returns [df, ncp]
+distaicscan(abs(x), 1)             ! fit compatible distributions and rank by AIC
 ```
 
 See [distributions.md](distributions.md) for interpreter-name to statistical-name mapping.
@@ -180,6 +192,25 @@ See [distributions.md](distributions.md) for interpreter-name to statistical-nam
 read prices.csv                   ! REPL command: load named columns into workspace variables
 x = read("spy.csv", 2)            ! function form: read numeric column 2 as a vector
 ret = diff(log(read("spy.csv", 2)))
+```
+
+## Robust stats and tests
+
+```text
+x = rnorm(300)
+y = rnorm(250)
+
+trimmean(x)                        ! default 10% trimmed mean
+trimmean(x, 0.2)                   ! 20% trimmed mean
+winsor_mean(x, 0.1)                ! 10% winsorized mean
+mad(x)                             ! median absolute deviation
+iqr_scale(x)                       ! robust scale = IQR/1.349
+
+jb_test(x)                         ! Jarque-Bera normality test -> [JB, p]
+ttest1(x, 0.0)                     ! one-sample t test -> [t, df, p]
+ttest2(x, y)                       ! Welch two-sample t test -> [t, df, p]
+ttest2(x, y, 1)                    ! pooled-variance two-sample t test
+ks2_test(x, y)                     ! two-sample KS test -> [D, p]
 ```
 
 ## Sample session
@@ -271,6 +302,7 @@ make -f Makefile_tests
     - `x = log(x)`
 - Supports top-level `acf(..., plot=...)` / `pacf(..., plot=...)` by generating explicit plotting blocks in Fortran.
 - Supports `for ... in ...` / `end for` and one-line `for`/`do` loop forms.
+- Supports the newer analysis helpers used above (`poly1reg`, `distaicscan`, robust stats, and tests).
 - Rewrites legacy ARFIMA simulation call form when possible:
   - `arfimasim(n, [phi], [theta], d)` -> `arfimasim(n, d, phi=[phi], theta=[theta])`
 
