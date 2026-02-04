@@ -9,7 +9,7 @@ private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
           geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, kde, &
-          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
+          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
@@ -23,6 +23,16 @@ interface kernelreg
    module procedure kernelreg_scalar_ordvec
    module procedure kernelreg_vec_ordvec
 end interface kernelreg
+
+interface splinereg
+   module procedure splinereg_scalar
+   module procedure splinereg_degvec
+end interface splinereg
+
+interface naturalspline
+   module procedure naturalspline_scalar
+   module procedure naturalspline_kvec
+end interface naturalspline
 
 abstract interface
    function obj_fun(x) result(f)
@@ -4588,14 +4598,17 @@ v(1) = d
 v(2) = p
 end function ks2_test
 
-pure function kernelreg_scalar(y, x, bw, order) result(yhat)
+function kernelreg_scalar(y, x, bw, order, points) result(yhat)
 ! Nadaraya-Watson Gaussian-kernel regression evaluated at x.
+use plot_mod, only: gplot => plot
 real(kind=dp), intent(in) :: y(:), x(:)
 real(kind=dp), intent(in), optional :: bw
 integer, intent(in), optional :: order
+logical, intent(in), optional :: points
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: h, sx
 integer :: n, ord
+logical :: do_points
 
 n = size(x)
 if (n < 2 .or. size(y) /= n) then
@@ -4611,18 +4624,23 @@ end if
 ord = 0
 if (present(order)) ord = order
 yhat = kernelreg_core(y, x, h, ord)
+do_points = .false.
+if (present(points)) do_points = points
+if (do_points) call gplot(x, yhat, title="kernelreg", xlabel="x", points_y=y)
 end function kernelreg_scalar
 
-function kernelreg_vec(y, x, bw, order) result(yhat)
+function kernelreg_vec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with multiple bandwidths; plots all estimates.
 use plot_mod, only: gplot => plot
 real(kind=dp), intent(in) :: y(:), x(:)
 real(kind=dp), intent(in) :: bw(:)
 integer, intent(in), optional :: order
+logical, intent(in), optional :: points
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
 integer :: n, j, ord
+logical :: do_points
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(bw) < 1) then
@@ -4637,20 +4655,28 @@ do j = 1, size(bw)
    write (legends(j), "(a,f7.4)") "bw=", bw(j)
 end do
 yhat = y2(:, 1)
-call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+do_points = .false.
+if (present(points)) do_points = points
+if (do_points) then
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+else
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+end if
 deallocate (y2, legends)
 end function kernelreg_vec
 
-function kernelreg_scalar_ordvec(y, x, bw, order) result(yhat)
+function kernelreg_scalar_ordvec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with one bandwidth and multiple orders; plots all estimates.
 use plot_mod, only: gplot => plot
 real(kind=dp), intent(in) :: y(:), x(:)
 real(kind=dp), intent(in) :: bw
 integer, intent(in) :: order(:)
+logical, intent(in), optional :: points
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
 integer :: n, j
+logical :: do_points
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(order) < 1) then
@@ -4663,20 +4689,28 @@ do j = 1, size(order)
    write (legends(j), "(a,i0)") "ord=", order(j)
 end do
 yhat = y2(:, 1)
-call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+do_points = .false.
+if (present(points)) do_points = points
+if (do_points) then
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+else
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+end if
 deallocate (y2, legends)
 end function kernelreg_scalar_ordvec
 
-function kernelreg_vec_ordvec(y, x, bw, order) result(yhat)
+function kernelreg_vec_ordvec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with multiple bandwidths and orders; plots tensor-product curves.
 use plot_mod, only: gplot => plot
 real(kind=dp), intent(in) :: y(:), x(:)
 real(kind=dp), intent(in) :: bw(:)
 integer, intent(in) :: order(:)
+logical, intent(in), optional :: points
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=24), allocatable :: legends(:)
 integer :: n, j, k, idx, ncurves
+logical :: do_points
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(bw) < 1 .or. size(order) < 1) then
@@ -4694,7 +4728,13 @@ do k = 1, size(order)
    end do
 end do
 yhat = y2(:, 1)
-call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+do_points = .false.
+if (present(points)) do_points = points
+if (do_points) then
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+else
+   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+end if
 deallocate (y2, legends)
 end function kernelreg_vec_ordvec
 
@@ -5055,6 +5095,423 @@ end do
 call regress_multi(y, xmat, labels, intcp=use_intcp)
 deallocate (xmat, labels)
 end subroutine poly1reg
+
+function splinereg_scalar(y, x, k, degree, intcp, plot, points) result(yhat)
+! Truncated-power spline regression with one predictor.
+! Basis: [x, x^2, ..., x^degree, (x-knot_j)_+^degree].
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k
+integer, intent(in), optional :: degree, intcp, plot
+logical, intent(in), optional :: points
+real(kind=dp), allocatable :: yhat(:)
+integer :: deg
+logical :: use_intcp, do_plot, do_points
+
+deg = 3
+if (present(degree)) deg = degree
+use_intcp = .true.
+if (present(intcp)) use_intcp = (intcp /= 0)
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_points = .false.
+if (present(points)) do_points = points
+yhat = splinereg_core(y, x, k, deg, use_intcp)
+if (do_plot .and. size(yhat) > 0) then
+   if (do_points) then
+      call gplot(x, yhat, title="splinereg", xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title="splinereg", xlabel="x")
+   end if
+end if
+end function splinereg_scalar
+
+function splinereg_degvec(y, x, k, degree, intcp, plot, points) result(yhat)
+! Spline regression with multiple degrees; plots all estimates.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k
+integer, intent(in) :: degree(:)
+integer, intent(in), optional :: intcp, plot
+logical, intent(in), optional :: points
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=16), allocatable :: legends(:)
+integer :: n, j
+logical :: use_intcp, do_plot, do_points
+
+n = size(x)
+if (n /= size(y) .or. n < 2 .or. size(degree) < 1) then
+   allocate (yhat(0))
+   return
+end if
+use_intcp = .true.
+if (present(intcp)) use_intcp = (intcp /= 0)
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_points = .false.
+if (present(points)) do_points = points
+allocate (y2(n, size(degree)), legends(size(degree)))
+do j = 1, size(degree)
+   y2(:, j) = splinereg_core(y, x, k, degree(j), use_intcp)
+   write (legends(j), "(a,i0)") "deg=", degree(j)
+end do
+yhat = y2(:, 1)
+if (do_plot) then
+   if (do_points) then
+      call gplot(x, y2, title="splinereg", xlabel="x", legend_labels=legends, points_y=y)
+   else
+      call gplot(x, y2, title="splinereg", xlabel="x", legend_labels=legends)
+   end if
+end if
+deallocate (y2, legends)
+end function splinereg_degvec
+
+function splinereg_core(y, x, k, degree, use_intcp) result(yhat)
+! Core spline fit for a single degree, optionally with intercept.
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k, degree
+logical, intent(in) :: use_intcp
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: xmat(:,:), xtx(:,:), xty(:), beta(:), q(:), knots(:)
+integer :: n, deg, j, ncol, kk
+logical :: ok
+
+deg = degree
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   print *, "Error: splinereg() requires equal-size arrays with size > 1"
+   allocate (yhat(0))
+   return
+end if
+if (k < 0) then
+   print *, "Error: splinereg() requires k >= 0"
+   allocate (yhat(0))
+   return
+end if
+if (deg < 0) then
+   print *, "Error: splinereg() requires degree >= 0"
+   allocate (yhat(0))
+   return
+end if
+kk = min(k, max(0, n - 1))
+if (kk > 0) then
+   allocate (q(kk), knots(kk))
+   do j = 1, kk
+      q(j) = real(j, dp)/real(kk + 1, dp)
+   end do
+   knots = quantile(x, q)
+end if
+
+ncol = deg + kk
+if (ncol < 1) then
+   print *, "Error: splinereg() needs degree > 0 or k > 0"
+   allocate (yhat(0))
+   if (allocated(q)) deallocate (q, knots)
+   return
+end if
+allocate (xmat(n, ncol))
+do j = 1, deg
+   xmat(:, j) = x**j
+end do
+do j = 1, kk
+   xmat(:, deg + j) = max(x - knots(j), 0.0_dp)**deg
+end do
+
+if (use_intcp) then
+   allocate (xtx(ncol + 1, ncol + 1), xty(ncol))
+   xtx = 0.0_dp
+   xtx(1, 1) = real(n, dp)
+   xtx(1, 2:) = sum(xmat, dim=1)
+   xtx(2:, 1) = xtx(1, 2:)
+   xtx(2:, 2:) = matmul(transpose(xmat), xmat)
+   xty = matmul(transpose(xmat), y)
+   allocate (beta(ncol + 1))
+   call solve_linear(xtx, [sum(y), xty], beta, ok)
+   if (.not. ok) then
+      print *, "Error: splinereg() singular design matrix"
+      allocate (yhat(0))
+      if (allocated(q)) deallocate (q, knots)
+      deallocate (xmat, xtx, xty, beta)
+      return
+   end if
+   allocate (yhat(n))
+   yhat = beta(1) + matmul(xmat, beta(2:))
+else
+   xtx = matmul(transpose(xmat), xmat)
+   xty = matmul(transpose(xmat), y)
+   call solve_linear(xtx, xty, beta, ok)
+   if (.not. ok) then
+      print *, "Error: splinereg() singular design matrix"
+      allocate (yhat(0))
+      if (allocated(q)) deallocate (q, knots)
+      deallocate (xmat, xtx, xty)
+      return
+   end if
+   allocate (yhat(n))
+   yhat = matmul(xmat, beta)
+end if
+
+if (allocated(q)) deallocate (q, knots)
+deallocate (xmat, xtx, xty, beta)
+end function splinereg_core
+
+pure function ns_dplus3(xv, knot) result(v)
+real(kind=dp), intent(in) :: xv(:), knot
+real(kind=dp) :: v(size(xv))
+v = max(xv - knot, 0.0_dp)**3
+end function ns_dplus3
+
+pure function ns_hfun(xv, kj, k1, k2) result(v)
+real(kind=dp), intent(in) :: xv(:), kj, k1, k2
+real(kind=dp) :: v(size(xv))
+v = ns_dplus3(xv, kj) - ns_dplus3(xv, k1)*(k2 - kj)/(k2 - k1) + ns_dplus3(xv, k2)*(k1 - kj)/(k2 - k1)
+end function ns_hfun
+
+function naturalspline_predict(y_train, x_train, k, x_out, use_intcp, ok) result(yhat_out)
+! Fit natural spline on training data and predict at x_out.
+real(kind=dp), intent(in) :: y_train(:), x_train(:), x_out(:)
+integer, intent(in) :: k
+logical, intent(in) :: use_intcp
+logical, intent(out) :: ok
+real(kind=dp), allocatable :: yhat_out(:)
+real(kind=dp), allocatable :: xmat(:,:), xout_mat(:,:), xtx(:,:), xty(:), beta(:)
+real(kind=dp), allocatable :: q(:), iknots(:), knots(:)
+real(kind=dp) :: xmin, xmax, eps, ref1, ref2, den
+integer :: n, nout, kk, j, ncol, nkn
+
+ok = .false.
+n = size(x_train)
+nout = size(x_out)
+if (n /= size(y_train) .or. n < 2 .or. nout < 1 .or. k < 0) then
+   allocate (yhat_out(0))
+   return
+end if
+xmin = minval(x_train)
+xmax = maxval(x_train)
+if (xmax <= xmin) then
+   allocate (yhat_out(0))
+   return
+end if
+kk = min(k, max(0, n - 2))
+if (kk > 0) then
+   allocate (q(kk), iknots(kk))
+   do j = 1, kk
+      q(j) = real(j, dp)/real(kk + 1, dp)
+   end do
+   iknots = quantile(x_train, q)
+   eps = max(1.0e-12_dp, 1.0e-8_dp*(xmax - xmin))
+   iknots = max(min(iknots, xmax - eps), xmin + eps)
+end if
+
+nkn = kk + 2
+allocate (knots(nkn))
+knots(1) = xmin
+if (kk > 0) knots(2:kk + 1) = iknots
+knots(nkn) = xmax
+
+ncol = 1 + kk
+allocate (xmat(n, ncol), xout_mat(nout, ncol))
+xmat(:, 1) = x_train
+xout_mat(:, 1) = x_out
+if (kk > 0) then
+   ref1 = knots(kk + 1)
+   ref2 = knots(kk + 2)
+   den = ref2 - ref1
+   if (den <= 0.0_dp) then
+      allocate (yhat_out(0))
+      if (allocated(q)) deallocate (q, iknots)
+      deallocate (knots, xmat, xout_mat)
+      return
+   end if
+   do j = 1, kk
+      xmat(:, 1 + j) = ns_hfun(x_train, knots(j + 1), ref1, ref2)
+      xout_mat(:, 1 + j) = ns_hfun(x_out, knots(j + 1), ref1, ref2)
+   end do
+end if
+
+if (use_intcp) then
+   allocate (xtx(ncol + 1, ncol + 1), xty(ncol), beta(ncol + 1))
+   xtx = 0.0_dp
+   xtx(1, 1) = real(n, dp)
+   xtx(1, 2:) = sum(xmat, dim=1)
+   xtx(2:, 1) = xtx(1, 2:)
+   xtx(2:, 2:) = matmul(transpose(xmat), xmat)
+   xty = matmul(transpose(xmat), y_train)
+   call solve_linear(xtx, [sum(y_train), xty], beta, ok)
+   if (.not. ok) then
+      allocate (yhat_out(0))
+      if (allocated(q)) deallocate (q, iknots)
+      deallocate (knots, xmat, xout_mat, xtx, xty, beta)
+      return
+   end if
+   allocate (yhat_out(nout))
+   yhat_out = beta(1) + matmul(xout_mat, beta(2:))
+else
+   xtx = matmul(transpose(xmat), xmat)
+   xty = matmul(transpose(xmat), y_train)
+   call solve_linear(xtx, xty, beta, ok)
+   if (.not. ok) then
+      allocate (yhat_out(0))
+      if (allocated(q)) deallocate (q, iknots)
+      deallocate (knots, xmat, xout_mat, xtx, xty)
+      return
+   end if
+   allocate (yhat_out(nout))
+   yhat_out = matmul(xout_mat, beta)
+end if
+
+if (allocated(q)) deallocate (q, iknots)
+deallocate (knots, xmat, xout_mat, xtx, xty, beta)
+end function naturalspline_predict
+
+function naturalspline_scalar(y, x, k, intcp, plot, points) result(yhat)
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in), optional :: k
+integer, intent(in), optional :: intcp, plot
+logical, intent(in), optional :: points
+real(kind=dp), allocatable :: yhat(:), ytr(:), xtr(:), yva(:), xva(:), ypred(:)
+real(kind=dp) :: cv, best_cv
+integer :: n, i, f, folds, ntr, nva, ktry, best_k, kmax
+logical :: use_intcp, do_plot, do_points, ok
+character(len=48) :: ttl
+
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   print *, "Error: naturalspline() requires equal-size arrays with size > 1"
+   allocate (yhat(0))
+   return
+end if
+use_intcp = .true.
+if (present(intcp)) use_intcp = (intcp /= 0)
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_points = .false.
+if (present(points)) do_points = points
+
+if (present(k)) then
+   if (k < 0) then
+      print *, "Error: naturalspline() requires k >= 0"
+      allocate (yhat(0))
+      return
+   end if
+   best_k = k
+else
+   kmax = min(12, max(0, n - 2))
+   if (kmax <= 0) then
+      best_k = 0
+   else
+      folds = min(5, n)
+      best_cv = huge(1.0_dp)
+      best_k = 0
+      do ktry = 0, kmax
+         cv = 0.0_dp
+         do f = 1, folds
+            nva = 0
+            do i = 1, n
+               if (mod(i - 1, folds) == (f - 1)) nva = nva + 1
+            end do
+            ntr = n - nva
+            if (ntr < 3 .or. nva < 1) cycle
+            allocate (xtr(ntr), ytr(ntr), xva(nva), yva(nva))
+            ntr = 0; nva = 0
+            do i = 1, n
+               if (mod(i - 1, folds) == (f - 1)) then
+                  nva = nva + 1
+                  xva(nva) = x(i); yva(nva) = y(i)
+               else
+                  ntr = ntr + 1
+                  xtr(ntr) = x(i); ytr(ntr) = y(i)
+               end if
+            end do
+            ypred = naturalspline_predict(ytr, xtr, ktry, xva, use_intcp, ok)
+            if (.not. ok .or. size(ypred) /= size(yva)) then
+               cv = huge(1.0_dp)
+               deallocate (xtr, ytr, xva, yva)
+               exit
+            end if
+            cv = cv + sum((yva - ypred)**2)
+            deallocate (xtr, ytr, xva, yva)
+         end do
+         if (cv < best_cv) then
+            best_cv = cv
+            best_k = ktry
+         end if
+      end do
+   end if
+end if
+
+yhat = naturalspline_predict(y, x, best_k, x, use_intcp, ok)
+if (.not. ok) then
+   print *, "Error: naturalspline() singular design matrix"
+   if (.not. allocated(yhat)) allocate (yhat(0))
+   return
+end if
+if (do_plot .and. size(yhat) > 0) then
+   if (present(k)) then
+      ttl = "naturalspline"
+   else
+      write (ttl, "(a,i0)") "naturalspline (cv k=", best_k
+      ttl = trim(ttl)//")"
+   end if
+   if (do_points) then
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
+   else
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
+   end if
+end if
+end function naturalspline_scalar
+
+function naturalspline_kvec(y, x, k, intcp, plot, points) result(yhat)
+! Natural cubic spline regression with multiple knot counts; plots all estimates.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: k(:)
+integer, intent(in), optional :: intcp, plot
+logical, intent(in), optional :: points
+real(kind=dp), allocatable :: yhat(:), tmp(:), y2(:,:)
+character(len=12), allocatable :: legends(:)
+integer :: n, j, intcp_i
+logical :: do_plot, do_points
+
+n = size(x)
+if (n /= size(y) .or. n < 2 .or. size(k) < 1) then
+   allocate (yhat(0))
+   return
+end if
+if (any(k < 0)) then
+   print *, "Error: naturalspline() requires k >= 0"
+   allocate (yhat(0))
+   return
+end if
+intcp_i = 1
+if (present(intcp)) intcp_i = intcp
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_points = .false.
+if (present(points)) do_points = points
+allocate (y2(n, size(k)), legends(size(k)))
+do j = 1, size(k)
+   tmp = naturalspline_scalar(y, x, k(j), intcp=intcp_i, plot=0)
+   if (size(tmp) /= n) then
+      allocate (yhat(0))
+      deallocate (y2, legends)
+      return
+   end if
+   y2(:, j) = tmp
+   write (legends(j), "(a,i0)") "k=", k(j)
+end do
+yhat = y2(:, 1)
+if (do_plot) then
+   if (do_points) then
+      call gplot(x, y2, title="naturalspline", xlabel="x", legend_labels=legends, points_y=y)
+   else
+      call gplot(x, y2, title="naturalspline", xlabel="x", legend_labels=legends)
+   end if
+end if
+deallocate (y2, legends)
+end function naturalspline_kvec
 
 subroutine distaicscan(x, verbose)
 ! Fit sensible distributions to x and print AIC ranking table.

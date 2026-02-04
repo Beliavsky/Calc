@@ -215,12 +215,27 @@ ks2_test(x, y)                     ! two-sample KS test -> [D, p]
 ! Kernel regression (1 predictor)
 xg = arange(300)/300
 yg = sin(6*xg) + 0.2*rnorm(300)
-yh = kernelreg(yg, xg)             ! NW estimate with default bandwidth
+yh = kernelreg(yg, xg)             ! Nadaraya-Watson estimate with default bandwidth
 yh = kernelreg(yg, xg, 0.06)       ! scalar bandwidth
 yh = kernelreg(yg, xg, [0.03,0.06,0.12]) ! vector bandwidth: plots one curve per bandwidth
 yh = kernelreg(yg, xg, 0.06, 1)    ! local linear fit (order=1)
 yh = kernelreg(yg, xg, 0.06, order=[0,1,2]) ! one bandwidth, multiple orders (plotted together)
 yh = kernelreg(yg, xg, [0.03,0.06], order=[0,1,2]) ! tensor product of bw and order curves
+yh = kernelreg(yg, xg, 0.06, points=.true.) ! overlay sample points on the fit plot
+
+! Spline regression (plots fitted curve by default)
+yh = splinereg(yg, xg, 4)                    ! cubic spline with 4 interior knots
+yh = splinereg(yg, xg, 4, degree=1)          ! linear spline
+yh = splinereg(yg, xg, 4, degree=[1,2,3])    ! plots one fitted curve per degree
+yh = splinereg(yg, xg, 4, points=.true.)     ! overlay sample points on the fit plot
+yh = splinereg(yg, xg, 4, degree=3, plot=.false.) ! compute only (no plot)
+
+! Natural cubic spline regression (plots by default)
+yh = naturalspline(yg, xg)                   ! choose k by cross validation (plot title shows selected k)
+yh = naturalspline(yg, xg, 4)                ! natural cubic with 4 interior knots
+yh = naturalspline(yg, xg, [2,4,8])          ! plots one fitted curve per k
+yh = naturalspline(yg, xg, 4, points=.true.) ! overlay sample points on the fit plot
+yh = naturalspline(yg, xg, 4, plot=.false.)  ! compute only (no plot)
 ```
 
 ## Sample session

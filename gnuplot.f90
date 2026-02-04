@@ -27,16 +27,19 @@ contains
                  script_file)
   end subroutine plot_y
 
-  subroutine plot_1d(x, y, title, xlabel, ylabel, style, data_file, script_file)
+  subroutine plot_1d(x, y, title, xlabel, ylabel, style, data_file, script_file, points_y)
     ! Plot a single series y(:) versus x(:)
     real(kind=dp), intent(in)               :: x(:), y(:)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
     character(len=*), intent(in), optional   :: data_file, script_file
+    real(kind=dp), intent(in), optional      :: points_y(:)
 
     character(len=:), allocatable :: fn_data, fn_script, st
     character(len=512)            :: cmd
     integer                       :: i, n, unit_data, unit_script
+    logical                       :: with_points
     character(len=*), parameter   :: fmt = "(F12.6,1x,F12.6)"
+    character(len=*), parameter   :: fmtp = "(F12.6,1x,F12.6,1x,F12.6)"
 
     n = size(x)
 
@@ -59,10 +62,16 @@ contains
       st = "lines"
     end if
 
+    with_points = present(points_y) .and. size(points_y) == n
+
     !── write data
     open(newunit=unit_data, file=fn_data,   status="replace", action="write")
       do i = 1, n
-        write(unit_data, fmt) x(i), y(i)
+        if (with_points) then
+          write(unit_data, fmtp) x(i), y(i), points_y(i)
+        else
+          write(unit_data, fmt) x(i), y(i)
+        end if
       end do
     close(unit_data)
 
@@ -78,7 +87,12 @@ contains
         write(unit_script,"(A)") "set ylabel '"//trim(ylabel)//"'"
       end if
       write(unit_script,"(A)") "set grid"
-      write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " notitle"
+      if (with_points) then
+        write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " title 'fit', " // &
+                                  "'"//trim(fn_data)//"' using 1:3 with points pt 7 ps 0.6 title 'data'"
+      else
+        write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " notitle"
+      end if
       write(unit_script,"(A)") "pause -1"
     close(unit_script)
 
@@ -94,12 +108,13 @@ contains
   end subroutine plot_1d
 
 
-  subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file, legend_labels)
+  subroutine plot_2d(x, y, title, xlabel, ylabel, style, data_file, script_file, legend_labels, points_y)
     ! Plot multiple series (columns of y(:,j)) versus x(:)
     real(kind=dp), intent(in)               :: x(:), y(:, :)
     character(len=*), intent(in), optional   :: title, xlabel, ylabel, style
     character(len=*), intent(in), optional   :: data_file, script_file
     character(len=*), intent(in), optional   :: legend_labels(:)
+    real(kind=dp), intent(in), optional      :: points_y(:)
 
     character(len=:), allocatable :: fn_data, fn_script, st, plot_cmd
     character(len=512)            :: cmd
@@ -107,6 +122,8 @@ contains
     character(len=10)             :: col_max
     character(len=*), parameter   :: fmt1 = "(F12.6,1x)"
     character(len=*), parameter   :: fmty = "(1x,*(F12.6,1x))"
+    character(len=*), parameter   :: fmtp = "(1x,*(F12.6,1x),F12.6)"
+    logical                       :: with_points
 
     n  = size(x)
     ns = size(y,2)
@@ -130,11 +147,17 @@ contains
       st = "lines"
     end if
 
+    with_points = present(points_y) .and. size(points_y) == n
+
     !── write data
     open(newunit=unit_data, file=fn_data,   status="replace", action="write")
       do i = 1, n
         write(unit_data, fmt1, advance="no") x(i)
-        write(unit_data, fmty             ) y(i,1:ns)
+        if (with_points) then
+          write(unit_data, fmtp) y(i,1:ns), points_y(i)
+        else
+          write(unit_data, fmty) y(i,1:ns)
+        end if
       end do
     close(unit_data)
 
@@ -159,11 +182,21 @@ contains
           plot_cmd = trim(plot_cmd)//"'"//trim(fn_data)//"' using 1:"//trim(col_max)// &
                      " with "//trim(st)//" title '"//trim(legend_labels(i))//"'"
         end do
+        if (with_points) then
+          write(col_max,"(I0)") ns + 2
+          plot_cmd = trim(plot_cmd)//", '"//trim(fn_data)//"' using 1:"//trim(col_max)// &
+                     " with points pt 7 ps 0.6 title 'data'"
+        end if
         write(unit_script,"(A)") trim(plot_cmd)
       else
         write(col_max,"(I0)") ns + 1
-        write(unit_script,"(A)") &
-             "plot for [col=2:"//trim(col_max)//"] '"//trim(fn_data)//"' using 1:col with "//trim(st)
+        plot_cmd = "plot for [col=2:"//trim(col_max)//"] '"//trim(fn_data)//"' using 1:col with "//trim(st)
+        if (with_points) then
+          write(col_max,"(I0)") ns + 2
+          plot_cmd = trim(plot_cmd)//", '"//trim(fn_data)//"' using 1:"//trim(col_max)// &
+                     " with points pt 7 ps 0.6 title 'data'"
+        end if
+        write(unit_script,"(A)") trim(plot_cmd)
       end if
       write(unit_script,"(A)") "pause -1"
     close(unit_script)

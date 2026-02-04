@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
@@ -4540,6 +4540,281 @@ contains
                         f = [real(kind=dp) ::]
                      end block
 
+                  case ("splinereg")
+                     block
+                        integer :: kk, deg, intcp_i, plot_i, anon_idx, eqpos
+                        integer, allocatable :: degv(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        logical :: have_degree_vec, do_points
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 3 .or. .not. have_second) then
+                           print *, "Error: splinereg() needs at least three arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        tok = adjustl(labels(3))
+                        tmp = evaluate(tok)
+                        if (eval_error .or. size(tmp) /= 1) then
+                           print *, "Error: third argument k must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        kk = nint(tmp(1))
+                        if (kk < 0) then
+                           print *, "Error: splinereg() requires k >= 0"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        deg = 3
+                        have_degree_vec = .false.
+                        intcp_i = 1
+                        plot_i = 1
+                        do_points = .false.
+                        anon_idx = 0
+                        do i_arg = 4, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (index(ltok, "degree") == 1) then
+                                 if (eval_error .or. size(tmp) < 1) then
+                                    print *, "Error: degree must be non-empty"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 if (size(tmp) == 1) then
+                                    deg = nint(tmp(1))
+                                    have_degree_vec = .false.
+                                 else
+                                    degv = nint(tmp)
+                                    have_degree_vec = .true.
+                                 end if
+                              else if (index(ltok, "intcp") == 1) then
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 intcp_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "plot") == 1) then
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 plot_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in splinereg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              anon_idx = anon_idx + 1
+                              select case (anon_idx)
+                              case (1)
+                                 if (eval_error .or. size(tmp) < 1) then
+                                    print *, "Error: degree must be non-empty"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 if (size(tmp) == 1) then
+                                    deg = nint(tmp(1))
+                                    have_degree_vec = .false.
+                                 else
+                                    degv = nint(tmp)
+                                    have_degree_vec = .true.
+                                 end if
+                              case (2)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 intcp_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              case (3)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 plot_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              case (4)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              case default
+                                 print *, "Error: too many optional arguments for splinereg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end select
+                           end if
+                        end do
+                        if (have_degree_vec) then
+                           if (any(degv < 0)) then
+                              print *, "Error: splinereg() requires degree >= 0"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                           f = splinereg(arg1, arg2, kk, degree=degv, intcp=intcp_i, plot=plot_i, points=do_points)
+                        else
+                           if (deg < 0) then
+                              print *, "Error: splinereg() requires degree >= 0"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                           f = splinereg(arg1, arg2, kk, degree=deg, intcp=intcp_i, plot=plot_i, points=do_points)
+                        end if
+                     end block
+
+                  case ("naturalspline")
+                     block
+                        integer :: kk, intcp_i, plot_i, anon_idx, eqpos
+                        integer, allocatable :: kv(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        logical :: have_k, have_kvec, do_points
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 2 .or. .not. have_second) then
+                           print *, "Error: naturalspline() needs at least two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        have_k = .false.
+                        have_kvec = .false.
+                        intcp_i = 1
+                        plot_i = 1
+                        do_points = .false.
+                        anon_idx = 0
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in naturalspline()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (index(ltok, "k") == 1) then
+                                 have_k = .true.
+                                 have_kvec = (size(tmp) > 1)
+                                 if (have_kvec) then
+                                    kv = nint(tmp)
+                                 else
+                                    kk = nint(tmp(1))
+                                 end if
+                              else if (index(ltok, "intcp") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 intcp_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "plot") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 plot_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unknown optional argument in naturalspline()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in naturalspline()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_k) then
+                                 have_k = .true.
+                                 have_kvec = (size(tmp) > 1)
+                                 if (have_kvec) then
+                                    kv = nint(tmp)
+                                 else
+                                    kk = nint(tmp(1))
+                                 end if
+                              else
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: optional arguments must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 anon_idx = anon_idx + 1
+                                 select case (anon_idx)
+                                 case (1)
+                                    intcp_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case (2)
+                                    plot_i = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case (3)
+                                    do_points = (tmp(1) /= 0.0_dp)
+                                 case default
+                                    print *, "Error: too many optional arguments for naturalspline()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end select
+                              end if
+                           end if
+                        end do
+                        if (have_k) then
+                           if (have_kvec) then
+                              if (any(kv < 0)) then
+                                 print *, "Error: naturalspline() requires k >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              f = naturalspline(arg1, arg2, kv, intcp=intcp_i, plot=plot_i, points=do_points)
+                           else
+                              if (kk < 0) then
+                                 print *, "Error: naturalspline() requires k >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              f = naturalspline(arg1, arg2, kk, intcp=intcp_i, plot=plot_i, points=do_points)
+                           end if
+                        else
+                           f = naturalspline(arg1, arg2, intcp=intcp_i, plot=plot_i, points=do_points)
+                        end if
+                     end block
+
                   case ("distaicscan")
                      block
                         logical :: do_verbose
@@ -4941,85 +5216,128 @@ contains
                      end block
 
                   case ("kernelreg")
-                     if (.not. have_second) then
-                        print *, "Error: function needs two arguments"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) /= size(arg2)) then
-                        print "(a,i0,1x,i0,a)", "Error: kernelreg() argument sizes ", &
-                           size(arg1), size(arg2), " must be equal"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) < 2) then
-                        print *, "Error: kernelreg() needs size >= 2"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        n1 = 0
-                        call skip_spaces()
-                        if (curr_char == ",") then
-                           call next_char()
-                           call skip_spaces()
-                           arg3 = parse_expression()
-                           if (eval_error) then
-                              f = [bad_value]
-                           else if (size(arg3) < 1) then
-                              print *, "Error: third argument must be non-empty"
-                              eval_error = .true.; f = [bad_value]
-                           else
-                              call skip_spaces()
-                              if (curr_char == ",") then
-                                 call next_char()
-                                 call skip_spaces()
-                                 if (pos - 1 + 4 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 4)) == "order") then
-                                    call advance_token(5)
-                                    call skip_spaces()
-                                    if (curr_char /= "=") then
-                                       print *, "Error: expected '=' after order"
-                                       eval_error = .true.; f = [bad_value]
-                                    else
-                                       call next_char()
-                                       call skip_spaces()
-                                    end if
-                                 end if
-                                 if (.not. eval_error) then
-                                    arg4 = parse_expression()
-                                    if (eval_error .or. size(arg4) < 1) then
-                                       print *, "Error: fourth argument (order) must be non-empty"
-                                       eval_error = .true.; f = [bad_value]
-                                    else
-                                       if (any(nint(arg4) < 0)) then
-                                          print *, "Error: order values must be >= 0"
-                                          eval_error = .true.; f = [bad_value]
-                                       else
-                                          if (size(arg4) == 1) then
-                                             n1 = nint(arg4(1))
-                                             if (size(arg3) == 1) then
-                                                f = kernelreg(arg1, arg2, arg3(1), n1)
-                                             else
-                                                f = kernelreg(arg1, arg2, arg3, n1)
-                                             end if
-                                          else
-                                             if (size(arg3) == 1) then
-                                                f = kernelreg(arg1, arg2, arg3(1), nint(arg4))
-                                             else
-                                                f = kernelreg(arg1, arg2, arg3, nint(arg4))
-                                             end if
-                                          end if
-                                       end if
-                                    end if
-                                 end if
-                              else
-                                 if (size(arg3) == 1) then
-                                    f = kernelreg(arg1, arg2, arg3(1))
-                                 else
-                                    f = kernelreg(arg1, arg2, arg3)
-                                 end if
+                     block
+                        logical :: have_bw, have_order, do_points
+                        integer :: eqpos
+                        real(kind=dp), allocatable :: bwv(:), ordv_r(:), tmp(:)
+                        integer, allocatable :: ordv(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) /= size(arg2)) then
+                           print "(a,i0,1x,i0,a)", "Error: kernelreg() argument sizes ", &
+                              size(arg1), size(arg2), " must be equal"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        if (size(arg1) < 2) then
+                           print *, "Error: kernelreg() needs size >= 2"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_bw = .false.
+                        have_order = .false.
+                        do_points = .false.
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid optional argument in kernelreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
                               end if
-                              call skip_spaces()
-                              if (curr_char == ")") call next_char()
+                              if (index(ltok, "order") == 1) then
+                                 ordv_r = tmp
+                                 ordv = nint(ordv_r)
+                                 if (any(ordv < 0)) then
+                                    print *, "Error: order values must be >= 0"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_order = .true.
+                              else if (index(ltok, "points") == 1) then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: points must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else if (index(ltok, "bw") == 1) then
+                                 bwv = tmp
+                                 have_bw = .true.
+                              else
+                                 print *, "Error: unknown optional argument in kernelreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in kernelreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (.not. have_bw) then
+                                 bwv = tmp
+                                 have_bw = .true.
+                              else if (.not. have_order) then
+                                 ordv_r = tmp
+                                 ordv = nint(ordv_r)
+                                 if (any(ordv < 0)) then
+                                    print *, "Error: order values must be >= 0"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 have_order = .true.
+                              else if (size(tmp) == 1) then
+                                 do_points = (tmp(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: too many arguments for kernelreg()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
+
+                        if (.not. have_bw) then
+                           if (have_order .and. size(ordv) > 1) then
+                              print *, "Error: vector order requires explicit bw"
+                              eval_error = .true.; f = [bad_value]
+                           else if (have_order) then
+                              f = kernelreg(arg1, arg2, order=ordv(1), points=do_points)
+                           else
+                              f = kernelreg(arg1, arg2, points=do_points)
+                           end if
+                        else if (.not. have_order) then
+                           if (size(bwv) == 1) then
+                              f = kernelreg(arg1, arg2, bwv(1), points=do_points)
+                           else
+                              f = kernelreg(arg1, arg2, bwv, points=do_points)
                            end if
                         else
-                           f = kernelreg(arg1, arg2)
+                           if (size(ordv) == 1) then
+                              if (size(bwv) == 1) then
+                                 f = kernelreg(arg1, arg2, bwv(1), ordv(1), points=do_points)
+                              else
+                                 f = kernelreg(arg1, arg2, bwv, ordv(1), points=do_points)
+                              end if
+                           else
+                              if (size(bwv) == 1) then
+                                 f = kernelreg(arg1, arg2, bwv(1), ordv, points=do_points)
+                              else
+                                 f = kernelreg(arg1, arg2, bwv, ordv, points=do_points)
+                              end if
+                           end if
                         end if
-                     end if
+                     end block
 
                   case ("cor", "cov", "dot") ! correlation, covariance, dot product
                      if (.not. have_second) then
