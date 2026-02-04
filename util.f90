@@ -49,7 +49,7 @@ elemental logical function matched_brackets(s) result(is_valid)
   is_valid = balance == 0
 end function matched_brackets
 
-function arange(n) result(vec)
+pure function arange(n) result(vec)
 ! return an array of 1.0 through n inclusive
 integer, intent(in) :: n
 real(kind=dp) :: vec(n)
@@ -59,7 +59,7 @@ do i=1,n
 end do
 end function arange
 
-function grid(n, x0, xh) result(vec)
+pure function grid(n, x0, xh) result(vec)
 ! return a grid of n values starting at x0 with increment of xh
 integer, intent(in) :: n
 real(kind=dp) :: vec(n)
@@ -127,7 +127,7 @@ else
 end if
 end subroutine print_real
 
-function replace(string, old, new) result(string_new)
+pure function replace(string, old, new) result(string_new)
 ! replace – return a copy of string with every occurrence of old replaced by new
 character(len=*), intent(in) :: string, old, new
 character(len=:), allocatable :: string_new
@@ -194,7 +194,7 @@ call get_environment_variable("PATH", pathstring)
 tf = pathstring(1:1) /= "/"
 end function windows
 
-function rep_vec(x, n) result(y)
+pure function rep_vec(x, n) result(y)
 ! repeat a 1D array to get a new 1D array
 real(kind=dp), intent(in)  :: x(:)  ! array to copy
 integer      , intent(in)  :: n     ! number of copies
@@ -214,7 +214,7 @@ do i=1,n
 end do
 end function rep_vec
 
-function matrix(x) result(xmat)
+pure function matrix(x) result(xmat)
 ! convert scalar to 1x1 matrix
 real(kind=dp), intent(in) :: x
 real(kind=dp)             :: xmat(1,1)
@@ -295,7 +295,7 @@ subroutine read_vec(file, x, icol)
    end if
 end subroutine read_vec
 
-function reverse(arr) result(res)
+pure function reverse(arr) result(res)
     real(kind=dp), intent(in) :: arr(:)
     real(kind=dp), allocatable :: res(:)
     integer :: n

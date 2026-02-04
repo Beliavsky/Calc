@@ -1,11 +1,11 @@
 program xinterpret
   use interpret_mod, only: eval_print, tunit, code_transcript_file, &
-                           vars, write_code, echo_code
+                           vars, write_code, echo_code, get_prompt_depth
   use util_mod, only: replace, windows
   use kind_mod, only: dp
   use plot_mod, only: use_windows
   implicit none
-  integer :: i, iostat_err, varu, narg
+  integer :: i, iostat_err, varu, narg, indent
   character (len=1000) :: line, arg
   logical, parameter :: write_vars_at_end = .false., &
                         time_code=.false., run_sample_code=.false.
@@ -44,7 +44,8 @@ program xinterpret
   end if
   echo_code = .false.
   do
-     write (*,"('> ')", advance="no")
+     indent = 3*max(0, get_prompt_depth())
+     write (*,"(a)", advance="no") repeat(" ", indent)//"> "
      read (*,"(a)", iostat=iostat_err) line
      if (iostat_err /= 0) exit
      if (line == "exit" .or. line == "exit()" .or. line == "quit" .or. line == "quit()" .or. line == "q" .or. line == "q()") exit

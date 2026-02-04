@@ -354,7 +354,7 @@ do t = 1, n
 end do
 end function fracdiff
 
-function arcoef(x, k) result(phi)
+pure function arcoef(x, k) result(phi)
 ! fit AR(k) coefficients by least squares
 real(kind=dp), intent(in) :: x(:)
 integer, intent(in) :: k
@@ -503,7 +503,7 @@ if (q > 0) then
 end if
 
 contains
-   subroutine unpack_params(u, phi_p, theta_q, d_out)
+   pure subroutine unpack_params(u, phi_p, theta_q, d_out)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp), intent(out) :: phi_p(:), theta_q(:), d_out
       integer :: k
@@ -520,7 +520,7 @@ contains
       d_out = 0.49_dp * tanh(u(p + q + 1))
    end subroutine unpack_params
 
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f
       real(kind=dp), allocatable :: phi_l(:), theta_l(:), g(:)
@@ -1492,7 +1492,7 @@ do i = 1, size(x)
 end do
 end function pnorm
 
-pure function hyperb_pdf_scalar(x, loc, scale, alpha) result(y)
+elemental function hyperb_pdf_scalar(x, loc, scale, alpha) result(y)
 ! Symmetric hyperbolic density (scalar).
 real(kind=dp), intent(in) :: x, loc, scale, alpha
 real(kind=dp) :: y
@@ -1511,7 +1511,7 @@ r = sqrt(scale * scale + (x - loc)**2)
 y = c * exp(-alpha * r)
 end function hyperb_pdf_scalar
 
-pure function hyperb_int(t, loc, scale, alpha) result(area)
+elemental function hyperb_int(t, loc, scale, alpha) result(area)
 ! Integral of symmetric hyperbolic density from 0 to t.
 real(kind=dp), intent(in) :: t, loc, scale, alpha
 real(kind=dp) :: area
@@ -1551,7 +1551,7 @@ do
 end do
 end function hyperb_int
 
-pure function inv_norm(p) result(x)
+elemental function inv_norm(p) result(x)
 ! Inverse standard normal CDF.
 real(kind=dp), intent(in) :: p
 real(kind=dp) :: x, q, r
@@ -2177,7 +2177,7 @@ do i = 1, n
 end do
 end function rhyperb
 
-pure function besseli0(x) result(y)
+elemental function besseli0(x) result(y)
 ! Modified Bessel function I0.
 real(kind=dp), intent(in) :: x
 real(kind=dp) :: y, ax, y2
@@ -2194,7 +2194,7 @@ else
 end if
 end function besseli0
 
-pure function besseli1(x) result(y)
+elemental function besseli1(x) result(y)
 ! Modified Bessel function I1.
 real(kind=dp), intent(in) :: x
 real(kind=dp) :: y, ax, y2
@@ -2212,7 +2212,7 @@ else
 end if
 end function besseli1
 
-pure function besselk0(x) result(y)
+elemental function besselk0(x) result(y)
 ! Modified Bessel function K0.
 real(kind=dp), intent(in) :: x
 real(kind=dp) :: y, y2
@@ -2233,7 +2233,7 @@ else
 end if
 end function besselk0
 
-pure function besselk1(x) result(y)
+elemental function besselk1(x) result(y)
 ! Modified Bessel function K1.
 real(kind=dp), intent(in) :: x
 real(kind=dp) :: y, y2
@@ -2254,7 +2254,7 @@ else
 end if
 end function besselk1
 
-pure function log1pexp(t) result(y)
+elemental function log1pexp(t) result(y)
 ! Stable log(1+exp(t)).
 real(kind=dp), intent(in) :: t
 real(kind=dp) :: y
@@ -2265,7 +2265,7 @@ else
 end if
 end function log1pexp
 
-pure function log_beta(a, b) result(y)
+elemental function log_beta(a, b) result(y)
 ! Log beta function.
 real(kind=dp), intent(in) :: a, b
 real(kind=dp) :: y
@@ -2294,7 +2294,7 @@ pars(1) = ubest(1)
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, mu, sd
       mu = u(1)
@@ -2326,7 +2326,7 @@ ubest = nelder_mead(loglik, u0, 0.1_dp, 200, tol)
 pars(1) = exp(ubest(1))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, rate
       rate = exp(u(1))
@@ -2362,7 +2362,7 @@ pars(1) = exp(ubest(1))
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, shape, scale
       shape = exp(u(1))
@@ -2375,7 +2375,7 @@ contains
    end function loglik
 end function fit_gamma
 
-function fit_lnorm(x) result(pars)
+pure function fit_lnorm(x) result(pars)
 ! Method-of-moments then MLE for lognormal distribution.
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: pars(2)
@@ -2427,7 +2427,7 @@ pars(3) = 2.0_dp + exp(ubest(3))
 deallocate (z)
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, mu, sigma, df
       mu = mu0 + sd0 * u(1)
@@ -2461,7 +2461,7 @@ ubest = nelder_mead(loglik, u0, 0.1_dp, 300, tol)
 pars(1) = exp(ubest(1))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, df
       df = exp(u(1))
@@ -2504,7 +2504,7 @@ pars(1) = exp(ubest(1))
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, df1, df2, a, b
       df1 = exp(u(1))
@@ -2545,7 +2545,7 @@ pars(1) = exp(ubest(1))
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, a, b
       a = exp(u(1)); b = exp(u(2))
@@ -2577,7 +2577,7 @@ pars(1) = ubest(1)
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, loc, scale
       integer :: i
@@ -2594,7 +2594,7 @@ contains
    end function loglik
 end function fit_logis
 
-function fit_laplace(x) result(pars)
+pure function fit_laplace(x) result(pars)
 ! Method-of-moments fit for Laplace distribution.
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: pars(2)
@@ -2629,7 +2629,7 @@ pars(1) = ubest(1)
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, loc, scale, z
       integer :: i
@@ -2669,7 +2669,7 @@ pars(2) = exp(ubest(2))
 pars(3) = exp(ubest(3))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, loc, scale, beta
       loc = u(1)
@@ -2713,7 +2713,7 @@ pars(2) = exp(ubest(2))
 pars(3) = exp(ubest(3))
 
 contains
-   function hyperb_scale_from_sd(alpha, sd) result(scale)
+   elemental function hyperb_scale_from_sd(alpha, sd) result(scale)
       real(kind=dp), intent(in) :: alpha, sd
       real(kind=dp) :: scale, lo, hi, mid, v
       integer :: it
@@ -2735,7 +2735,7 @@ contains
       scale = 0.5_dp * (lo + hi)
    end function hyperb_scale_from_sd
 
-   function hyperb_var(scale, alpha) result(v)
+   elemental function hyperb_var(scale, alpha) result(v)
       real(kind=dp), intent(in) :: scale, alpha
       real(kind=dp) :: v, k0, k1, k2, x
       if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
@@ -2753,7 +2753,7 @@ contains
       v = (scale / alpha) * (k2 / k1)
    end function hyperb_var
 
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, loc, scale, alpha, k1
       loc = u(1)
@@ -2793,7 +2793,7 @@ pars(1) = ubest(1)
 pars(2) = exp(ubest(2))
 
 contains
-   function loglik(u) result(f)
+   pure function loglik(u) result(f)
       real(kind=dp), intent(in) :: u(:)
       real(kind=dp) :: f, loc, scale
       integer :: i
@@ -4380,7 +4380,7 @@ if (lb_lags > 0) then
 end if
 end subroutine mafit
 
-pure function tcdf(t, df) result(p)
+elemental function tcdf(t, df) result(p)
 ! Student t CDF using incomplete beta
 real(kind=dp), intent(in) :: t
 integer, intent(in) :: df
@@ -4405,7 +4405,7 @@ else
 end if
 end function tcdf
 
-pure function betai(a, b, x) result(bt)
+elemental function betai(a, b, x) result(bt)
 ! Regularized incomplete beta function.
 real(kind=dp), intent(in) :: a, b, x
 real(kind=dp) :: bt, front
@@ -4424,7 +4424,7 @@ else
 end if
 end function betai
 
-pure function chisq_cdf(x, df) result(p)
+elemental function chisq_cdf(x, df) result(p)
 ! Chi-square CDF.
 real(kind=dp), intent(in) :: x
 integer, intent(in) :: df
@@ -4436,7 +4436,7 @@ else
 end if
 end function chisq_cdf
 
-pure function gammp(a, x) result(gp)
+elemental function gammp(a, x) result(gp)
 ! Regularized lower incomplete gamma.
 real(kind=dp), intent(in) :: a, x
 real(kind=dp) :: gp
@@ -4453,7 +4453,7 @@ else
 end if
 end function gammp
 
-pure function gser(a, x, gln) result(gser_out)
+elemental function gser(a, x, gln) result(gser_out)
 ! Series for incomplete gamma.
 real(kind=dp), intent(in) :: a, x, gln
 real(kind=dp) :: gser_out
@@ -4478,7 +4478,7 @@ end do
 gser_out = sum * exp(-x + a * log(x) - gln)
 end function gser
 
-pure function gcf(a, x, gln) result(gcf_out)
+elemental function gcf(a, x, gln) result(gcf_out)
 ! Continued fraction for incomplete gamma.
 real(kind=dp), intent(in) :: a, x, gln
 real(kind=dp) :: gcf_out
@@ -4507,7 +4507,7 @@ end do
 gcf_out = exp(-x + a * log(x) - gln) * h
 end function gcf
 
-pure function betacf(a, b, x) result(cf)
+elemental function betacf(a, b, x) result(cf)
 ! Continued fraction for incomplete beta.
 real(kind=dp), intent(in) :: a, b, x
 real(kind=dp) :: cf

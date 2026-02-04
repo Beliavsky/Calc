@@ -1,4 +1,4 @@
-﻿module interpret_mod
+module interpret_mod
    use kind_mod, only: dp
    use stats_mod, only: mean, sd, cor, cov, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dt, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pt, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qt, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
@@ -14,7 +14,7 @@
    implicit none
    private
    public :: eval_print, tunit, code_transcript_file, vars, write_code, &
-             echo_code
+             echo_code, get_loop_depth, get_prompt_depth
 
    integer, parameter :: max_vars = 100, len_name = 32
    integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
@@ -44,18 +44,28 @@
    character(len=:), allocatable :: line_cp
    logical, save :: in_loop_execute = .false.   ! .true. only inside run_loop_body
    logical, save :: exit_loop = .false., cycle_loop = .false.
+   integer, save :: exit_target_depth = 0       ! loop depth targeted by EXIT
+   integer, save :: cycle_target_depth = 0      ! loop depth targeted by CYCLE
+   integer, save :: loop_exec_base_depth = 0    ! depth being executed by run_loop_body
+   logical, save :: if_collecting = .false.
+   integer, save :: if_collect_depth = 0
+   character(len=32768), save :: if_collect_body = ""
+   integer, save :: loop_if_collect_depth = 0
    logical, parameter :: debug_read = .false.
 
-!â€“â€“â€“ support for DO â€¦ ENDÂ DO loops â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
-!â”€â”€ Maximum nesting and a fixed buffer for every loop level
+!––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
+!── Maximum nesting and a fixed buffer for every loop level
    integer, parameter :: max_loop_depth = 8
    character(len=4096), save :: loop_body(max_loop_depth) = ""   ! collected lines
    character(len=len_name), save :: loop_var(max_loop_depth) = ""   ! i , j , ...
    integer, save :: loop_start(max_loop_depth) = 0
    integer, save :: loop_end(max_loop_depth) = 0
    integer, save :: loop_step(max_loop_depth) = 1
+   logical, save :: loop_is_unbounded(max_loop_depth) = .false.
+   logical, save :: loop_is_for(max_loop_depth) = .false.
+   character(len=2048), save :: loop_for_expr(max_loop_depth) = ""
    integer, save :: loop_depth = 0                     ! current level
-!â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
+!––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 
 contains
 
@@ -596,7 +606,7 @@ contains
       end select
    end function apply_vec_func
 
-   pure function lower_str(s) result(out)
+   elemental function lower_str(s) result(out)
       character(len=*), intent(in) :: s
       character(len=len(s)) :: out
       integer :: i, c
@@ -609,6 +619,508 @@ contains
          end if
       end do
    end function lower_str
+
+   pure logical function is_end_if_line(tl) result(ok)
+      character(len=*), intent(in) :: tl
+      character(len=:), allocatable :: t
+      t = trim(lower_str(adjustl(tl)))
+      ok = (t == "end if" .or. t == "endif" .or. t == "end if;" .or. t == "endif;")
+   end function is_end_if_line
+
+   pure logical function is_else_line(tl) result(ok)
+      character(len=*), intent(in) :: tl
+      character(len=:), allocatable :: t
+      t = trim(lower_str(adjustl(tl)))
+      ok = (t == "else" .or. t == "else;")
+   end function is_else_line
+
+   pure logical function is_end_for_line(tl) result(ok)
+      character(len=*), intent(in) :: tl
+      character(len=:), allocatable :: t
+      t = trim(lower_str(adjustl(tl)))
+      ok = (t == "end for" .or. t == "endfor" .or. t == "end for;" .or. t == "endfor;")
+   end function is_end_for_line
+
+   pure logical function is_op_char(ch) result(ok)
+      character(len=1), intent(in) :: ch
+      ok = (index("+-*/^<>=:&|", ch) > 0)
+   end function is_op_char
+
+   pure subroutine split_expr_tail(rem, expr_part, tail_part)
+      character(len=*), intent(in) :: rem
+      character(len=:), allocatable, intent(out) :: expr_part, tail_part
+      character(len=:), allocatable :: left, right
+      integer :: i, n, dpar, dbr
+      logical :: in_str
+
+      expr_part = trim(rem)
+      tail_part = ""
+      n = len_trim(rem)
+      dpar = 0
+      dbr = 0
+      in_str = .false.
+      do i = 1, n
+         if (rem(i:i) == '"') then
+            in_str = .not. in_str
+         else if (.not. in_str) then
+            select case (rem(i:i))
+            case ("(")
+               dpar = dpar + 1
+            case (")")
+               if (dpar > 0) dpar = dpar - 1
+            case ("[")
+               dbr = dbr + 1
+            case ("]")
+               if (dbr > 0) dbr = dbr - 1
+            case (" ")
+               if (dpar == 0 .and. dbr == 0) then
+                  if (i > 1 .and. i < n) then
+                     left = trim(rem(1:i - 1))
+                     right = adjustl(rem(i + 1:n))
+                     if (len_trim(left) > 0 .and. len_trim(right) > 0) then
+                        if (.not. is_op_char(left(len_trim(left):len_trim(left))) .and. &
+                            .not. is_op_char(right(1:1))) then
+                           expr_part = left
+                           tail_part = right
+                           exit
+                        end if
+                     end if
+                  end if
+               end if
+            end select
+         end if
+      end do
+   end subroutine split_expr_tail
+
+   pure subroutine parse_for_header(line, lhs, rhs_expr, rhs_tail, ok)
+      character(len=*), intent(in) :: line
+      character(len=:), allocatable, intent(out) :: lhs, rhs_expr, rhs_tail
+      logical, intent(out) :: ok
+      character(len=:), allocatable :: s, low, rem
+      integer :: p_in
+
+      lhs = ""
+      rhs_expr = ""
+      rhs_tail = ""
+      ok = .false.
+
+      s = adjustl(line)
+      low = lower_str(s)
+      if (index(low, "for ") /= 1) return
+      p_in = index(low, " in ")
+      if (p_in <= 5) return
+      lhs = adjustl(s(5:p_in - 1))
+      rem = adjustl(s(p_in + 4:))
+      if (.not. is_alnum_string(lhs) .or. len_trim(rem) == 0) return
+      call split_expr_tail(rem, rhs_expr, rhs_tail)
+      if (len_trim(rhs_expr) == 0) return
+      ok = .true.
+   end subroutine parse_for_header
+
+   pure subroutine parse_do_header(line, lhs, start_expr, end_expr, step_expr, rhs_tail, ok)
+      character(len=*), intent(in) :: line
+      character(len=:), allocatable, intent(out) :: lhs, start_expr, end_expr, step_expr, rhs_tail
+      logical, intent(out) :: ok
+      character(len=:), allocatable :: s, low, rem, rhs
+      integer :: p_eq, p_com1, p_com2
+
+      lhs = ""
+      start_expr = ""
+      end_expr = ""
+      step_expr = ""
+      rhs_tail = ""
+      ok = .false.
+
+      s = adjustl(line)
+      low = lower_str(s)
+      if (index(low, "do ") /= 1) return
+      if (trim(low) == "do") return
+      p_eq = index(s, "=")
+      if (p_eq == 0) return
+      lhs = adjustl(s(3:p_eq - 1))
+      if (.not. is_alnum_string(lhs)) return
+      rem = adjustl(s(p_eq + 1:))
+      if (len_trim(rem) == 0) return
+      call split_expr_tail(rem, rhs, rhs_tail)
+      p_com1 = index(rhs, ",")
+      if (p_com1 == 0) return
+      p_com2 = index(rhs(p_com1 + 1:), ",")
+      if (p_com2 > 0) p_com2 = p_com1 + p_com2
+      start_expr = adjustl(rhs(1:p_com1 - 1))
+      if (p_com2 == 0) then
+         end_expr = adjustl(rhs(p_com1 + 1:))
+         step_expr = "1"
+      else
+         end_expr = adjustl(rhs(p_com1 + 1:p_com2 - 1))
+         step_expr = adjustl(rhs(p_com2 + 1:))
+      end if
+      if (len_trim(start_expr) == 0 .or. len_trim(end_expr) == 0 .or. len_trim(step_expr) == 0) return
+      ok = .true.
+   end subroutine parse_do_header
+
+   pure subroutine parse_if_then_header(line, is_else_if, cond, ok)
+      character(len=*), intent(in) :: line
+      logical, intent(in) :: is_else_if
+      character(len=:), allocatable, intent(out) :: cond
+      logical, intent(out) :: ok
+      character(len=:), allocatable :: s, ls, prefix, tail
+      integer :: p_lpar, p_rpar, depth, n
+
+      ok = .false.
+      cond = ""
+      s = adjustl(line)
+      ls = lower_str(s)
+      n = len_trim(s)
+      if (n <= 0) return
+
+      p_lpar = index(s, "(")
+      if (p_lpar <= 1) return
+
+      prefix = trim(lower_str(adjustl(s(1:p_lpar - 1))))
+      if (is_else_if) then
+         if (prefix /= "else if" .and. prefix /= "elseif") return
+      else
+         if (prefix /= "if") return
+      end if
+
+      p_rpar = p_lpar
+      depth = 1
+      do while (p_rpar < n .and. depth > 0)
+         p_rpar = p_rpar + 1
+         select case (s(p_rpar:p_rpar))
+         case ("(")
+            depth = depth + 1
+         case (")")
+            depth = depth - 1
+         end select
+      end do
+      if (depth /= 0) return
+
+      if (p_rpar < n) then
+         tail = trim(lower_str(adjustl(s(p_rpar + 1:n))))
+      else
+         tail = ""
+      end if
+      if (tail /= "then" .and. tail /= "then;") return
+
+      cond = adjustl(s(p_lpar + 1:p_rpar - 1))
+      if (len_trim(cond) == 0) return
+      ok = .true.
+   end subroutine parse_if_then_header
+
+   pure logical function is_block_if_start_line(line) result(ok)
+      character(len=*), intent(in) :: line
+      character(len=:), allocatable :: cond
+      logical :: parsed
+      call parse_if_then_header(line, .false., cond, parsed)
+      ok = parsed
+   end function is_block_if_start_line
+
+   pure logical function is_else_if_line(line) result(ok)
+      character(len=*), intent(in) :: line
+      character(len=:), allocatable :: cond
+      logical :: parsed
+      call parse_if_then_header(line, .true., cond, parsed)
+      ok = parsed
+   end function is_else_if_line
+
+   subroutine execute_if_block(body)
+      character(len=*), intent(in) :: body
+      integer, parameter :: max_if_branches = 16
+      character(len=4096) :: branch_cond(max_if_branches)
+      character(len=32768) :: branch_body(max_if_branches)
+      logical :: branch_else(max_if_branches)
+      character(len=:), allocatable :: line, tline, cond
+      real(kind=dp), allocatable :: cv(:)
+      integer :: nlen, p1, p2, depth_if, b, active_branch, n_branch
+      logical :: ok, have_else, take_branch
+
+      branch_cond = ""
+      branch_body = ""
+      branch_else = .false.
+      nlen = len_trim(body)
+      if (nlen == 0) return
+
+      p1 = 1
+      p2 = index(body(p1:), new_line("a"))
+      if (p2 == 0) then
+         line = body(p1:nlen)
+      else
+         line = body(p1:p1 + p2 - 2)
+      end if
+      call parse_if_then_header(line, .false., cond, ok)
+      if (.not. ok) then
+         print *, "Error: malformed IF header"
+         eval_error = .true.
+         return
+      end if
+      n_branch = 1
+      active_branch = 1
+      branch_cond(1) = trim(cond)
+      depth_if = 1
+      have_else = .false.
+      if (p2 == 0) then
+         print *, "Error: missing END IF"
+         eval_error = .true.
+         return
+      end if
+      p1 = p1 + p2
+
+      do
+         p2 = index(body(p1:), new_line("a"))
+         if (p2 == 0) then
+            line = body(p1:nlen)
+         else
+            line = body(p1:p1 + p2 - 2)
+         end if
+         tline = lower_str(adjustl(line))
+
+         if (is_block_if_start_line(line)) then
+            depth_if = depth_if + 1
+            if (len_trim(branch_body(active_branch)) + len_trim(line) + 1 > len(branch_body(active_branch))) then
+               print *, "Error: IF body too large"
+               eval_error = .true.
+               return
+            end if
+            branch_body(active_branch) = trim(branch_body(active_branch))//trim(line)//new_line("a")
+         else if (is_end_if_line(tline)) then
+            depth_if = depth_if - 1
+            if (depth_if == 0) exit
+            if (depth_if < 0) then
+               print *, "Error: unmatched END IF"
+               eval_error = .true.
+               return
+            end if
+            if (len_trim(branch_body(active_branch)) + len_trim(line) + 1 > len(branch_body(active_branch))) then
+               print *, "Error: IF body too large"
+               eval_error = .true.
+               return
+            end if
+            branch_body(active_branch) = trim(branch_body(active_branch))//trim(line)//new_line("a")
+         else if (depth_if == 1 .and. is_else_if_line(line)) then
+            if (have_else) then
+               print *, "Error: ELSE IF after ELSE is not allowed"
+               eval_error = .true.
+               return
+            end if
+            if (n_branch >= max_if_branches) then
+               print *, "Error: too many ELSE IF branches"
+               eval_error = .true.
+               return
+            end if
+            call parse_if_then_header(line, .true., cond, ok)
+            if (.not. ok) then
+               print *, "Error: malformed ELSE IF header"
+               eval_error = .true.
+               return
+            end if
+            n_branch = n_branch + 1
+            active_branch = n_branch
+            branch_cond(active_branch) = trim(cond)
+            branch_body(active_branch) = ""
+            branch_else(active_branch) = .false.
+         else if (depth_if == 1 .and. is_else_line(tline)) then
+            if (have_else) then
+               print *, "Error: duplicate ELSE branch"
+               eval_error = .true.
+               return
+            end if
+            if (n_branch >= max_if_branches) then
+               print *, "Error: too many IF branches"
+               eval_error = .true.
+               return
+            end if
+            have_else = .true.
+            n_branch = n_branch + 1
+            active_branch = n_branch
+            branch_cond(active_branch) = ""
+            branch_body(active_branch) = ""
+            branch_else(active_branch) = .true.
+         else
+            if (len_trim(branch_body(active_branch)) + len_trim(line) + 1 > len(branch_body(active_branch))) then
+               print *, "Error: IF body too large"
+               eval_error = .true.
+               return
+            end if
+            branch_body(active_branch) = trim(branch_body(active_branch))//trim(line)//new_line("a")
+         end if
+
+         if (p2 == 0) exit
+         p1 = p1 + p2
+      end do
+
+      if (depth_if /= 0) then
+         print *, "Error: missing END IF"
+         eval_error = .true.
+         return
+      end if
+
+      do b = 1, n_branch
+         if (branch_else(b)) then
+            take_branch = .true.
+         else
+            cv = evaluate(trim(branch_cond(b)))
+            if (eval_error) return
+            if (size(cv) /= 1) then
+               print *, "Error: IF condition must be scalar"
+               eval_error = .true.
+               return
+            end if
+            take_branch = (cv(1) /= 0.0_dp)
+         end if
+         if (take_branch) then
+            if (len_trim(branch_body(b)) > 0) call run_loop_body(branch_body(b))
+            return
+         end if
+      end do
+   end subroutine execute_if_block
+
+   subroutine collect_loop_definition_line(line_in, had_error, consumed)
+      character(len=*), intent(in) :: line_in
+      logical, intent(out) :: had_error, consumed
+      character(len=:), allocatable :: tl, low, lhs, rhs, rhs_tail, dstart, dend, dstep
+      integer :: i
+      logical :: ok_for, ok_do
+
+      had_error = .false.
+      consumed = .false.
+      tl = adjustl(line_in)
+      low = lower_str(tl)
+
+      if (index(low, "for ") == 1) then
+         call parse_for_header(tl, lhs, rhs, rhs_tail, ok_for)
+         if (.not. ok_for) then
+            print *, "Error: malformed FOR header: ", trim(line_in)
+            had_error = .true.
+            consumed = .true.
+            return
+         end if
+         if (len_trim(rhs_tail) > 0) then
+            ! One-line FOR stays within the current body; do not change nesting depth.
+            loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+            consumed = .true.
+            return
+         end if
+         do i = 1, loop_depth
+            if (trim(loop_var(i)) == trim(lhs)) then
+               print *, "Error: nested loop variable '", trim(lhs), "' already used by an outer loop"
+               had_error = .true.
+               consumed = .true.
+               return
+            end if
+         end do
+         loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+         if (loop_depth >= max_loop_depth) then
+            print *, "Error: loop nesting deeper than ", max_loop_depth
+            had_error = .true.
+            consumed = .true.
+            return
+         end if
+         loop_depth = loop_depth + 1
+         loop_var(loop_depth) = lhs
+         loop_is_unbounded(loop_depth) = .false.
+         loop_is_for(loop_depth) = .true.
+         loop_for_expr(loop_depth) = rhs
+         consumed = .true.
+         return
+      else if (index(low, "do ") == 1 .or. trim(low) == "do") then
+         if (trim(tl) /= "do") then
+            call parse_do_header(tl, lhs, dstart, dend, dstep, rhs_tail, ok_do)
+            if (.not. ok_do) then
+               print *, "Error: malformed DO header: ", trim(line_in)
+               had_error = .true.
+               consumed = .true.
+               return
+            end if
+            if (len_trim(rhs_tail) > 0) then
+               loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+               consumed = .true.
+               return
+            end if
+            do i = 1, loop_depth
+               if (trim(loop_var(i)) == trim(lhs)) then
+                  print *, "Error: nested loop variable '", trim(lhs), "' already used by an outer loop"
+                  had_error = .true.
+                  consumed = .true.
+                  return
+               end if
+            end do
+         else
+            lhs = ""
+         end if
+         loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+         if (loop_depth >= max_loop_depth) then
+            print *, "Error: loop nesting deeper than ", max_loop_depth
+            had_error = .true.
+            consumed = .true.
+            return
+         end if
+         loop_depth = loop_depth + 1
+         loop_var(loop_depth) = lhs
+         loop_is_unbounded(loop_depth) = (trim(low) == "do")
+         loop_is_for(loop_depth) = .false.
+         loop_for_expr(loop_depth) = ""
+         consumed = .true.
+         return
+      else if (trim(low) == "end do" .or. trim(low) == "enddo" .or. is_end_for_line(low)) then
+         if (loop_depth > 1) then
+            loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+            loop_var(loop_depth) = ""
+            loop_is_unbounded(loop_depth) = .false.
+            loop_is_for(loop_depth) = .false.
+            loop_for_expr(loop_depth) = ""
+            loop_depth = loop_depth - 1
+            consumed = .true.
+            return
+         end if
+         consumed = .false.
+         return
+      else
+         if (index(tl, "const") > 0) then
+            print *, "Error: const not allowed inside loops or blocks"
+            had_error = .true.
+            consumed = .true.
+            return
+         end if
+         loop_body(1) = trim(loop_body(1))//trim(line_in)//new_line("a")
+         if (is_block_if_start_line(tl)) then
+            loop_if_collect_depth = loop_if_collect_depth + 1
+         else if (is_end_if_line(tl)) then
+            loop_if_collect_depth = max(0, loop_if_collect_depth - 1)
+         end if
+         consumed = .true.
+         return
+      end if
+   end subroutine collect_loop_definition_line
+
+   pure integer function get_loop_depth() result(d)
+      d = loop_depth
+   end function get_loop_depth
+
+   pure integer function get_prompt_depth() result(d)
+      d = max(0, loop_depth + if_collect_depth + loop_if_collect_depth)
+   end function get_prompt_depth
+
+   pure logical function is_alnum_string(s) result(ok)
+      character(len=*), intent(in) :: s
+      integer :: i, n
+      n = len_trim(s)
+      if (n < 1) then
+         ok = .false.
+         return
+      end if
+      if (.not. (is_letter(s(1:1)) .or. s(1:1) == "_")) then
+         ok = .false.
+         return
+      end if
+      do i = 2, n
+         if (.not. (is_alphanumeric(s(i:i)) .or. s(i:i) == "_")) then
+            ok = .false.
+            return
+         end if
+      end do
+      ok = .true.
+   end function is_alnum_string
 
    recursive function evaluate(str) result(res)
       ! Evaluate the input string str as an expression or assignment
@@ -629,7 +1141,7 @@ contains
 
       ! look for an *assignment* = that is **not** part of >= <= == <=
 !------------------------------------------------------------------
-!  find a topâ€‘level â€œ=â€ that is **not** part of  >= <= == /=  etc.
+!  find a top‑level “=” that is **not** part of  >= <= == /=  etc.
 !------------------------------------------------------------------
       eqpos = 0
       depth_p = 0          ! nesting level ()
@@ -648,7 +1160,7 @@ contains
                end if
                if (i < lenstr .and. expr(i + 1:i + 1) == "=") cycle
                eqpos = i
-               exit                            ! first *topâ€‘level* â€œ=â€ wins
+               exit                            ! first *top‑level* “=” wins
             end if
          end select
       end do
@@ -846,10 +1358,10 @@ contains
       recursive function parse_factor() result(f)
          ! Parse a single factor in an expression, handling:
          !   - numeric literals
-         !   - parenthesized subâ€‘expressions
+         !   - parenthesized sub‑expressions
          !   - array literals
          !   - identifiers (variable lookup, function calls, slicing)
-         !   - unary +/â€“ and exponentiation.
+         !   - unary +/– and exponentiation.
          real(kind=dp), allocatable :: f(:) ! result
          !===================  locals  =====================================
          real(kind=dp), allocatable :: arg1(:), arg2(:), arg3(:), arg4(:), xmat(:,:)
@@ -913,10 +1425,10 @@ contains
 
 !=================================================================
 !  read("file.txt" [, col | col = n])
-!      â†’ calls  read_vec(file , f , icol = n)
+!      → calls  read_vec(file , f , icol = n)
 !
-!  â€¢ first argument must be a doubleâ€‘quoted file name
-!  â€¢ second argument is optional; if omitted defaults to columnÂ 1
+!  • first argument must be a double‑quoted file name
+!  • second argument is optional; if omitted defaults to column 1
 !    It can be given positionally ( e.g. read("f.txt",3) )
 !    or by keyword         ( e.g. read("f.txt", col = 3) )
 !=================================================================
@@ -979,7 +1491,7 @@ contains
                                  eval_error = .true.; f = [bad_value]; return
                               end if
                            else
-                              ! no keyword â†’ rewind; treat as positional
+                              ! no keyword → rewind; treat as positional
                               pos = save_pos
                               curr_char = expr(pos - 1:pos - 1)
                            end if
@@ -1091,18 +1603,18 @@ contains
                                           "sum", "product", "minval", "maxval"])) then
                         !------------------------------------------------------------
                         !  2nd *token* can be either
-                        !     â€¢ a positional DIM value       â†’  sum(x , 1)
-                        !     â€¢ a named argument             â†’  sum(x , mask = â€¦)
+                        !     • a positional DIM value       →  sum(x , 1)
+                        !     • a named argument             →  sum(x , mask = …)
                         !------------------------------------------------------------
                         block
                            integer :: save_pos
                            logical :: is_name_eq
                            real(kind=dp), allocatable :: tmp(:)
                            save_pos = pos          ! index **after** the comma
-                           call next_char()          ! step over â€˜,â€™
+                           call next_char()          ! step over ‘,’
                            call skip_spaces()
 
-                           !â€“â€“ look ahead:  identifier followed by '='  ? â€“â€“
+                           !–– look ahead:  identifier followed by '='  ? ––
                            is_name_eq = .false.
                            if (is_letter(curr_char)) then
                               look_name = parse_identifier()
@@ -1111,13 +1623,13 @@ contains
                            end if
 
                            if (is_name_eq) then
-                              !â€“â€“ restore â†’ namedâ€‘argument loop will handle it â€“â€“
+                              !–– restore → named‑argument loop will handle it ––
                               pos = save_pos
                               curr_char = ","
                            else
-                              !â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
+                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
                               !  **Positional DIM value**
-                              !â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
+                              !–––––––––––––––––––––––––––––––––––––––––––––––––––
                               pos = save_pos          ! we already skipped the comma
                               call next_char()
                               call skip_spaces()
@@ -1178,7 +1690,7 @@ contains
                         end block
                      else
                         !------------------------------------------------------------
-                        !  Any other routine â€“ 2â€‘nd positional argument as before
+                        !  Any other routine – 2‑nd positional argument as before
                         !------------------------------------------------------------
                         call next_char()          ! consume ','
                         call skip_spaces()
@@ -1233,7 +1745,7 @@ contains
 
                      !================================================================
                      !  SUM / PRODUCT / MINVAL / MAXVAL
-                     !  â€“ optional named arguments in any order
+                     !  – optional named arguments in any order
                      !        dim = 1      and/or     mask = logical array
                      !================================================================
                   case ("resample")
@@ -1317,7 +1829,7 @@ contains
                         have_mask = .false.
 
                         !---------------------------------------------------------
-                        ! first positional argument already parsed  â†’  ARG1
+                        ! first positional argument already parsed  →  ARG1
                         ! now parse any  , name = expr  pairs
                         do
                            call skip_spaces()
@@ -1409,7 +1921,7 @@ contains
 
                         case ("product")
                            if (have_mask) then
-                              ! PRODUCT(mask=â€¦) is F2003; use PACK for portability
+                              ! PRODUCT(mask=…) is F2003; use PACK for portability
                               f = [product(pack(arg1, lmask))]
                            else
                               f = [product(arg1)]
@@ -3986,6 +4498,25 @@ contains
                      end if
                      !---------------------------------------------------------------
 
+                  case ("head", "tail")
+                     if (.not. have_second) then
+                        if (trim(id) == "head") then
+                           f = head(arg1)
+                        else
+                           f = tail(arg1)
+                        end if
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of ", trim(id), "() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        nsize = nint(arg2(1))
+                        if (trim(id) == "head") then
+                           f = head(arg1, nsize)
+                        else
+                           f = tail(arg1, nsize)
+                        end if
+                     end if
+
                   case ("runif", "rnorm", "rsech", "arange", "zeros", "ones") ! one-arg
                      if (have_second) then
                         print *, "Error: function takes one argument"
@@ -4039,7 +4570,7 @@ contains
                         "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "head", "tail", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then
@@ -4090,7 +4621,7 @@ contains
                         f = [bad_value]
                      else
                         call plot(arg1, arg2, title=plot_to_label(line_cp))         ! <-- actual drawing
-                        allocate (f(0))                ! return â€œnothingâ€
+                        allocate (f(0))                ! return “nothing”
                      end if
 
                   case default ! subscript  x(i)
@@ -4338,8 +4869,8 @@ contains
       ! * LHS is of the form  var(indices)  where **indices** may be a scalar
       !   or a vector.
       ! * If RVAL has size 1  -> broadcast to every index in INDICES
-      ! * If RVAL size equals size(INDICES) -> elementâ€“wise assignment
-      ! * Otherwise â†’ size-mismatch error
+      ! * If RVAL size equals size(INDICES) -> element–wise assignment
+      ! * Otherwise → size-mismatch error
       ! ---------------------------------------------------------------------------
       character(len=*), intent(in)  :: lhs
       real(kind=dp), allocatable, intent(in)  :: rval(:)
@@ -4350,7 +4881,7 @@ contains
       integer, allocatable  :: idx(:)
       integer :: p_lpar, p_rpar, vi, n_idx
 
-      ! ---- split "var( â€¦ )" into name and index string ---------------------
+      ! ---- split "var( … )" into name and index string ---------------------
       p_lpar = index(lhs, "(")
       p_rpar = index(lhs, ")")
       name = adjustl(lhs(1:p_lpar - 1))
@@ -4428,12 +4959,13 @@ contains
       real(dp), allocatable   :: r(:), tmp(:)
       integer, allocatable   :: rint(:)
       integer                       :: p, repeat_count
-      logical :: print_array_as_int, run_then, had_error, in_quote, comment_only
+      integer                       :: prev_loop_exec_base
+      logical :: print_array_as_int, run_then, had_error, in_quote, comment_only, consumed_loop_line, ok_for, prev_exec
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
-      character(len=:), allocatable :: lhs, rhs
-      integer :: p_eq, p_com1, p_com2, p_lpar, p_rpar, depth, len_adj, comment_pos, i_c
+      character(len=:), allocatable :: lhs, rhs, rhs_tail
+      integer :: p_lpar, p_rpar, depth, len_adj, comment_pos, i_c
       integer :: n_names
-      character(len=:), allocatable :: cond_txt, then_txt
+      character(len=:), allocatable :: cond_txt, then_txt, low_adj
       line_eval = line
       in_quote = .false.
       comment_pos = 0
@@ -4465,7 +4997,37 @@ contains
       len_adj = len_trim(adj_line)
       line_cp = line
       had_error = .false.
+      if (if_collecting) then
+         if (len_trim(line_eval) > 0) then
+            if (len_trim(if_collect_body) + len_trim(line_eval) + 1 > len(if_collect_body)) then
+               print *, "Error: IF block too large"
+               eval_error = .true.
+               goto 9000
+            end if
+            if_collect_body = trim(if_collect_body)//trim(line_eval)//new_line("a")
+            if (is_block_if_start_line(adj_line)) if_collect_depth = if_collect_depth + 1
+            if (is_end_if_line(adj_line)) if_collect_depth = if_collect_depth - 1
+            if (if_collect_depth < 0) then
+               print *, "Error: unmatched END IF"
+               eval_error = .true.
+               if_collecting = .false.
+               if_collect_depth = 0
+               if_collect_body = ""
+               goto 9000
+            end if
+            if (if_collect_depth == 0) then
+               if_collecting = .false.
+               call execute_if_block(if_collect_body)
+               if_collect_body = ""
+            end if
+         end if
+         goto 9000
+      end if
       if (len_trim(line_eval) == 0) goto 9000
+      if (loop_depth > 0 .and. .not. in_loop_execute) then
+         call collect_loop_definition_line(line_eval, had_error, consumed_loop_line)
+         if (had_error .or. consumed_loop_line) goto 9000
+      end if
       if (adj_line == "compiler_version()") then
          print "(a)", trim(compiler_version())
          goto 9000
@@ -4473,9 +5035,76 @@ contains
          print "(a)", trim(compiler_version())
          print "(a)", trim(compiler_options())
          goto 9000
-      else if (adj_line == "exit") then
-         exit_loop = .true.
-         goto 9000
+      else if (index(adj_line, "exit") == 1 .and. .not. (loop_depth > 0 .and. .not. in_loop_execute)) then
+         block
+            character(len=:), allocatable :: exarg
+            integer :: d
+            if (len_trim(adj_line) > 4) then
+               exarg = adjustl(adj_line(5:))
+            else
+               exarg = ""
+            end if
+            if (loop_depth == 0) then
+               print *, "Error: exit used outside loop"
+               had_error = .true.
+               goto 9000
+            end if
+            if (len_trim(exarg) == 0) then
+               exit_target_depth = loop_depth
+               exit_loop = .true.
+               goto 9000
+            end if
+            if (.not. is_alnum_string(exarg)) then
+               print *, "Error: exit expects loop variable name, e.g. exit i"
+               had_error = .true.
+               goto 9000
+            end if
+            do d = loop_depth, 1, -1
+               if (trim(loop_var(d)) == trim(exarg)) then
+                  exit_target_depth = d
+                  exit_loop = .true.
+                  goto 9000
+               end if
+            end do
+            print *, "Error: no active loop with variable '", trim(exarg), "'"
+            had_error = .true.
+            goto 9000
+         end block
+      else if (index(adj_line, "cycle") == 1 .and. .not. (loop_depth > 0 .and. .not. in_loop_execute)) then
+         block
+            character(len=:), allocatable :: cyarg
+            integer :: d
+            if (len_trim(adj_line) > 5) then
+               cyarg = adjustl(adj_line(6:))
+            else
+               cyarg = ""
+            end if
+            if (loop_depth == 0) then
+               print *, "Error: cycle used outside loop"
+               had_error = .true.
+               goto 9000
+            end if
+            if (len_trim(cyarg) == 0) then
+               cycle_target_depth = loop_depth
+               cycle_loop = .true.
+               goto 9000
+            end if
+            if (.not. is_alnum_string(cyarg)) then
+               print *, "Error: cycle expects loop variable name, e.g. cycle i"
+               had_error = .true.
+               goto 9000
+            end if
+            do d = loop_depth, 1, -1
+               if (trim(loop_var(d)) == trim(cyarg)) then
+                  cycle_target_depth = d
+                  cycle_loop = .true.
+                  goto 9000
+               end if
+            end do
+            print *, "Error: no active loop with variable '", trim(cyarg), "'"
+            had_error = .true.
+            goto 9000
+         end block
       else if (adj_line == "print") then
          print*
          goto 9000
@@ -4500,7 +5129,7 @@ contains
             ! find first space after the count
             p = index(line_eval(2:), " ")
             if (p > 0) then
-               ! parse the count expression between columnÂ 2 and p
+               ! parse the count expression between column 2 and p
                tmp = evaluate(line_eval(2:p))     ! e.g. line_eval(2:p) == "n" or "10"
                if (eval_error) then
                   had_error = .true.
@@ -4524,28 +5153,50 @@ contains
          end if
       end if
 
-      if (loop_depth > 0 .and. .not. in_loop_execute) then
+      if (loop_depth > loop_exec_base_depth .and. in_loop_execute) then
          block
-            character(len=:), allocatable :: tl
+            character(len=:), allocatable :: tl, for_lhs, for_rhs, for_tail, do_lhs, do_start, do_end, do_step, do_tail
+            logical :: is_for_header, is_do_header
             tl = adjustl(line_eval)
-            if (index(tl, "do ") == 1 &  ! a â€œdo i=â€¦â€ header
-                .or. trim(tl) == "end do" &
-                .or. trim(tl) == "enddo") then
-               ! fall through into the normal do/end-do handlers
+            is_for_header = .false.
+            is_do_header = .false.
+            if (index(lower_str(tl), "for ") == 1) then
+               call parse_for_header(tl, for_lhs, for_rhs, for_tail, is_for_header)
+               if (is_for_header .and. len_trim(for_tail) > 0) is_for_header = .false.
+            end if
+            if (index(lower_str(tl), "do ") == 1) then
+               call parse_do_header(tl, do_lhs, do_start, do_end, do_step, do_tail, is_do_header)
+               if (is_do_header .and. len_trim(do_tail) > 0) is_do_header = .false.
+            end if
+            if (is_for_header .or. is_end_for_line(tl) .or. is_do_header .or. &
+                trim(tl) == "do" .or. trim(tl) == "end do" .or. trim(tl) == "enddo") then
+               ! fall through into normal do/end-do handlers
             else
                if (index(tl, "const") > 0) then
                   print *, "Error: const not allowed inside loops or blocks"
                   had_error = .true.
                   goto 9000
                end if
-               ! buffer everything else
                loop_body(loop_depth) = trim(loop_body(loop_depth))//trim(line_eval)//new_line("a")
                goto 9000
             end if
          end block
       end if
 
-      ! â”€â”€â”€ run("file") : execute the contents of a text file â”€â”€â”€
+      ! ─── run("file") : execute the contents of a text file ───
+      low_adj = lower_str(adj_line)
+      if (is_block_if_start_line(adj_line)) then
+         if_collecting = .true.
+         if_collect_depth = 1
+         if_collect_body = trim(line_eval)//new_line("a")
+         goto 9000
+      end if
+      if (is_else_if_line(adj_line) .or. is_else_line(low_adj) .or. is_end_if_line(low_adj)) then
+         print *, "Error: IF/ELSE branch without matching block IF"
+         had_error = .true.
+         goto 9000
+      end if
+
       if (index(adj_line, 'run(') == 1) then
          block
             integer :: p1, p2
@@ -4567,7 +5218,7 @@ contains
          p_lpar = index(adj_line, "(")
          if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
-            ! find matching â€œ)â€
+            ! find matching “)”
             p_rpar = p_lpar
             depth = 1
             do while (p_rpar < len_trim(adj_line) .and. depth > 0)
@@ -4581,58 +5232,116 @@ contains
             cond_txt = adjustl(adj_line(p_lpar + 1:p_rpar - 1))
             then_txt = adjustl(adj_line(p_rpar + 1:))
 
-            tmp = evaluate(cond_txt)
-            if (eval_error) had_error = .true.
-            if (.not. eval_error .and. size(tmp) == 1) then
-               if (tmp(1) /= 0.0_dp) call eval_print(then_txt)
+            if (trim(lower_str(then_txt)) /= "then" .and. trim(lower_str(then_txt)) /= "then;") then
+               tmp = evaluate(cond_txt)
+               if (eval_error) had_error = .true.
+               if (.not. eval_error .and. size(tmp) == 1) then
+                  if (tmp(1) /= 0.0_dp) call eval_print(then_txt)
+               end if
+               goto 9000
             end if
-
-            goto 9000
          end if
       end if
 
-      if (in_loop_execute .and. adjustl(line_eval) == "cycle") then
-         cycle_loop = .true.
-         goto 9000        ! skip everything else in this iteration
-      end if
 
-!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+!─────────────────────────────
 !  Loop handling
-!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+!─────────────────────────────
       select case (adjustl(line_eval))
-      case ("end do", "enddo", "enddo;", "end do;")
+      case ("end do", "enddo", "enddo;", "end do;", "end for", "endfor", "endfor;", "end for;")
          if (loop_depth == 0) then
-            print *, "Error: 'end do' without matching 'do'"
+            print *, "Error: loop end without matching loop start"
             had_error = .true.
             goto 9000
          end if
 
-         print *
-         do ivar = loop_start(loop_depth), loop_end(loop_depth), loop_step(loop_depth)
-            call set_variable(loop_var(loop_depth), [real(ivar, dp)])
-            call run_loop_body(loop_body(loop_depth))
-            if (exit_loop) then        ! â† exit from the DO
-               exit
+         if (loop_is_for(loop_depth)) then
+            tmp = evaluate(loop_for_expr(loop_depth))
+            if (eval_error) then
+               had_error = .true.
+               goto 9000
             end if
-         end do
-
-         exit_loop = .false.          ! clear the flag for next loop
-         call set_variable(loop_var(loop_depth), [real(ivar, dp)])
+            do ivar = 1, size(tmp)
+               call set_variable(loop_var(loop_depth), [tmp(ivar)])
+               call run_loop_body(loop_body(loop_depth))
+               if (exit_loop) then
+                  exit
+               end if
+               if (cycle_loop) then
+                  if (cycle_target_depth < loop_depth) then
+                     exit
+                  else if (cycle_target_depth == loop_depth) then
+                     cycle_loop = .false.
+                     cycle_target_depth = 0
+                     cycle
+                  end if
+               end if
+            end do
+         else if (loop_is_unbounded(loop_depth)) then
+            do
+               call run_loop_body(loop_body(loop_depth))
+               if (exit_loop) exit
+               if (cycle_loop) then
+                  if (cycle_target_depth < loop_depth) then
+                     exit
+                  else if (cycle_target_depth == loop_depth) then
+                     cycle_loop = .false.
+                     cycle_target_depth = 0
+                     cycle
+                  end if
+               end if
+            end do
+         else
+            do ivar = loop_start(loop_depth), loop_end(loop_depth), loop_step(loop_depth)
+               call set_variable(loop_var(loop_depth), [real(ivar, dp)])
+               call run_loop_body(loop_body(loop_depth))
+               if (exit_loop) then        ! ← exit from the DO
+                  exit
+               end if
+               if (cycle_loop) then
+                  if (cycle_target_depth < loop_depth) then
+                     exit
+                  else if (cycle_target_depth == loop_depth) then
+                     cycle_loop = .false.
+                     cycle_target_depth = 0
+                     cycle
+                  end if
+               end if
+            end do
+            call set_variable(loop_var(loop_depth), [real(ivar, dp)])
+         end if
+         if (exit_loop) then
+            if (exit_target_depth == loop_depth) then
+               exit_loop = .false.
+               exit_target_depth = 0
+            end if
+         end if
+         if (cycle_loop) then
+            if (cycle_target_depth == loop_depth) then
+               cycle_loop = .false.
+               cycle_target_depth = 0
+            end if
+         end if
+         loop_var(loop_depth) = ""
+         loop_is_unbounded(loop_depth) = .false.
+         loop_is_for(loop_depth) = .false.
+         loop_for_expr(loop_depth) = ""
          loop_depth = loop_depth - 1
+         if (loop_depth == 0) loop_if_collect_depth = 0
          goto 9000
       case default
-         ! nothing â€“ fall through
+         ! nothing – fall through
       end select
 
       adj_line = adjustl(line_eval)
-!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  oneâ€‘line IF  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+!──────────────────────────  one‑line IF  ──────────────────────────
 ! if (index(adj_line,'if') == 1 .and. len_trim(adj_line) > 4 .and.    &
 !     adj_line(3:3) == '(' ) then
 
       p_lpar = index(adj_line, "(")                ! first left parenthesis
       if (p_lpar > 0 .and. trim(adj_line(1:p_lpar - 1)) == "if") then
 
-         ! â€” locate the matching right parenthesis â€”
+         ! — locate the matching right parenthesis —
          p_rpar = p_lpar
          depth = 1
          do while (p_rpar < len_trim(adj_line) .and. depth > 0)
@@ -4648,7 +5357,7 @@ contains
            goto 9000
         end if
 
-         ! â€” split into  condition  and  consequent â€”
+         ! — split into  condition  and  consequent —
          cond_txt = adjustl(adj_line(p_lpar + 1:p_rpar - 1))
          then_txt = adjustl(adj_line(p_rpar + 1:))
 
@@ -4658,7 +5367,7 @@ contains
            goto 9000
         end if
 
-         ! â€” evaluate the condition (must be scalar) â€”
+         ! — evaluate the condition (must be scalar) —
          tmp = evaluate(cond_txt)
          if (eval_error) then
             had_error = .true.
@@ -4671,55 +5380,211 @@ contains
          end if
          run_then = (tmp(1) /= 0.0_dp)
 
-         ! â€” execute the single statement if TRUE â€”
+         ! — execute the single statement if TRUE —
          if (run_then) call eval_print(then_txt)
-         goto 9000                                    ! oneâ€‘line IF handled
+         goto 9000                                    ! one‑line IF handled
       end if
-!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+!───────────────────────────────────────────────────────────────────
 
-!------------  Is this the beginning of a DO block?  -----------------
-      if (index(adj_line, "do") == 1) then
-         if (len_trim(adj_line) > 2) then
-            if (adj_line(3:3) == " ") then
-               if (loop_depth >= max_loop_depth) then
-                  print *, "Error: loop nesting deeper than ", max_loop_depth
-                  had_error = .true.
-                  goto 9000
-               end if
-
-               ! Parse  â€œdo  i = 1 , 5 , 2â€   (step is optional)
-
-               p_eq = index(line_eval, "=")
-               p_com1 = index(line_eval, ",")
-               if (p_eq == 0 .or. p_com1 == 0) then
-                  print *, "Error: malformed DO header: ", trim(line_eval)
-                  had_error = .true.
-                  goto 9000
-               end if
-
-               lhs = adjustl(line_eval(3:p_eq - 1))              ! variable name
-               rhs = adjustl(line_eval(p_eq + 1:))
-
-               p_com1 = index(rhs, ",")
-               p_com2 = index(rhs(p_com1 + 1:), ",")
-               if (p_com2 > 0) p_com2 = p_com1 + p_com2
-
-               loop_depth = loop_depth + 1
-               loop_var(loop_depth) = lhs
-
-               loop_start(loop_depth) = parse_int_scalar(rhs(1:p_com1 - 1))          ! 1st field
-
-               if (p_com2 == 0) then                                               ! 2nd field form
-                  loop_end(loop_depth) = parse_int_scalar(rhs(p_com1 + 1:))
-                  loop_step(loop_depth) = 1
-               else                                                                ! 3nd field form
-                  loop_end(loop_depth) = parse_int_scalar(rhs(p_com1 + 1:p_com2 - 1))
-                  loop_step(loop_depth) = parse_int_scalar(rhs(p_com2 + 1:))
-               end if
-               call set_variable(loop_var(loop_depth), [real(loop_start(loop_depth), dp)])
-               loop_body(loop_depth) = ""   ! empty buffer, start collecting
-               goto 9000                       ! finished with the DO line
+!------------  Is this the beginning of a FOR/DO block?  -----------------
+      if (index(lower_str(adj_line), "for ") == 1) then
+         call parse_for_header(adj_line, lhs, rhs, rhs_tail, ok_for)
+         ! parsed by parse_for_header: lhs, rhs expression, optional one-line rhs tail
+         if (.not. ok_for) then
+            print *, "Error: malformed FOR header: ", trim(line_eval)
+            had_error = .true.
+            goto 9000
+         end if
+         if (loop_depth >= max_loop_depth) then
+            print *, "Error: loop nesting deeper than ", max_loop_depth
+            had_error = .true.
+            goto 9000
+         end if
+         do i = 1, loop_depth
+            if (trim(loop_var(i)) == trim(lhs)) then
+               print *, "Error: nested loop variable '", trim(lhs), "' already used by an outer loop"
+               had_error = .true.
+               goto 9000
             end if
+         end do
+         loop_depth = loop_depth + 1
+         loop_var(loop_depth) = lhs
+         loop_is_unbounded(loop_depth) = .false.
+         loop_is_for(loop_depth) = .true.
+         loop_for_expr(loop_depth) = rhs
+         if (len_trim(rhs_tail) > 0) then
+            if (is_block_if_start_line(rhs_tail) .or. index(lower_str(adjustl(rhs_tail)), "do ") == 1 .or. &
+                index(lower_str(adjustl(rhs_tail)), "for ") == 1) then
+               print *, "Error: one-line FOR body must be a single statement"
+               had_error = .true.
+               loop_var(loop_depth) = ""
+               loop_is_unbounded(loop_depth) = .false.
+               loop_is_for(loop_depth) = .false.
+               loop_for_expr(loop_depth) = ""
+               loop_depth = loop_depth - 1
+               goto 9000
+            end if
+            tmp = evaluate(loop_for_expr(loop_depth))
+            if (eval_error) then
+               had_error = .true.
+            else
+               do ivar = 1, size(tmp)
+                  call set_variable(loop_var(loop_depth), [tmp(ivar)])
+                  prev_exec = in_loop_execute
+                  prev_loop_exec_base = loop_exec_base_depth
+                  loop_exec_base_depth = loop_depth
+                  in_loop_execute = .true.
+                  call eval_print(rhs_tail)
+                  in_loop_execute = prev_exec
+                  loop_exec_base_depth = prev_loop_exec_base
+                  if (exit_loop) then
+                     if (exit_target_depth == loop_depth) then
+                        exit_loop = .false.
+                        exit_target_depth = 0
+                        exit
+                     else
+                        exit
+                     end if
+                  end if
+                  if (cycle_loop) then
+                     if (cycle_target_depth < loop_depth) then
+                        exit
+                     else if (cycle_target_depth == loop_depth) then
+                        cycle_loop = .false.
+                        cycle_target_depth = 0
+                        cycle
+                     end if
+                  end if
+               end do
+            end if
+            if (exit_loop) then
+               if (exit_target_depth == loop_depth) then
+                  exit_loop = .false.
+                  exit_target_depth = 0
+               end if
+            end if
+            if (cycle_loop) then
+               if (cycle_target_depth == loop_depth) then
+                  cycle_loop = .false.
+                  cycle_target_depth = 0
+               end if
+            end if
+            loop_var(loop_depth) = ""
+            loop_is_unbounded(loop_depth) = .false.
+            loop_is_for(loop_depth) = .false.
+            loop_for_expr(loop_depth) = ""
+            loop_depth = loop_depth - 1
+            goto 9000
+         end if
+         loop_body(loop_depth) = ""
+         goto 9000
+      end if
+
+      if (index(lower_str(adj_line), "do ") == 1 .or. trim(lower_str(adj_line)) == "do") then
+         if (trim(lower_str(adj_line)) == "do") then
+            if (loop_depth >= max_loop_depth) then
+               print *, "Error: loop nesting deeper than ", max_loop_depth
+               had_error = .true.
+               goto 9000
+            end if
+            loop_depth = loop_depth + 1
+            loop_var(loop_depth) = ""
+            loop_is_unbounded(loop_depth) = .true.
+            loop_is_for(loop_depth) = .false.
+            loop_for_expr(loop_depth) = ""
+            loop_body(loop_depth) = ""
+            goto 9000
+         else
+            call parse_do_header(adj_line, lhs, cond_txt, then_txt, rhs, rhs_tail, ok_for)
+            if (.not. ok_for) then
+               print *, "Error: malformed DO header: ", trim(line_eval)
+               had_error = .true.
+               goto 9000
+            end if
+            if (loop_depth >= max_loop_depth) then
+               print *, "Error: loop nesting deeper than ", max_loop_depth
+               had_error = .true.
+               goto 9000
+            end if
+            do i = 1, loop_depth
+               if (trim(loop_var(i)) == trim(lhs)) then
+                  print *, "Error: nested loop variable '", trim(lhs), "' already used by an outer loop"
+                  had_error = .true.
+                  goto 9000
+               end if
+            end do
+
+            loop_depth = loop_depth + 1
+            loop_var(loop_depth) = lhs
+            loop_is_unbounded(loop_depth) = .false.
+            loop_is_for(loop_depth) = .false.
+            loop_for_expr(loop_depth) = ""
+            loop_start(loop_depth) = parse_int_scalar(cond_txt)
+            loop_end(loop_depth) = parse_int_scalar(then_txt)
+            loop_step(loop_depth) = parse_int_scalar(rhs)
+            call set_variable(loop_var(loop_depth), [real(loop_start(loop_depth), dp)])
+
+            if (len_trim(rhs_tail) > 0) then
+               if (is_block_if_start_line(rhs_tail) .or. index(lower_str(adjustl(rhs_tail)), "do ") == 1 .or. &
+                   index(lower_str(adjustl(rhs_tail)), "for ") == 1) then
+                  print *, "Error: one-line DO body must be a single statement"
+                  had_error = .true.
+                  loop_var(loop_depth) = ""
+                  loop_is_unbounded(loop_depth) = .false.
+                  loop_is_for(loop_depth) = .false.
+                  loop_for_expr(loop_depth) = ""
+                  loop_depth = loop_depth - 1
+                  goto 9000
+               end if
+               do ivar = loop_start(loop_depth), loop_end(loop_depth), loop_step(loop_depth)
+                  call set_variable(loop_var(loop_depth), [real(ivar, dp)])
+                  prev_exec = in_loop_execute
+                  prev_loop_exec_base = loop_exec_base_depth
+                  loop_exec_base_depth = loop_depth
+                  in_loop_execute = .true.
+                  call eval_print(rhs_tail)
+                  in_loop_execute = prev_exec
+                  loop_exec_base_depth = prev_loop_exec_base
+                  if (exit_loop) then
+                     if (exit_target_depth == loop_depth) then
+                        exit_loop = .false.
+                        exit_target_depth = 0
+                        exit
+                     else
+                        exit
+                     end if
+                  end if
+                  if (cycle_loop) then
+                     if (cycle_target_depth < loop_depth) then
+                        exit
+                     else if (cycle_target_depth == loop_depth) then
+                        cycle_loop = .false.
+                        cycle_target_depth = 0
+                        cycle
+                     end if
+                  end if
+               end do
+               if (exit_loop) then
+                  if (exit_target_depth == loop_depth) then
+                     exit_loop = .false.
+                     exit_target_depth = 0
+                  end if
+               end if
+               if (cycle_loop) then
+                  if (cycle_target_depth == loop_depth) then
+                     cycle_loop = .false.
+                     cycle_target_depth = 0
+                  end if
+               end if
+               loop_var(loop_depth) = ""
+               loop_is_unbounded(loop_depth) = .false.
+               loop_is_for(loop_depth) = .false.
+               loop_for_expr(loop_depth) = ""
+               loop_depth = loop_depth - 1
+               goto 9000
+            end if
+            loop_body(loop_depth) = ""
+            goto 9000
          end if
       end if
 
@@ -4757,7 +5622,7 @@ contains
         goto 9000
       end if
 
-! â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€” end â€œdelâ€ â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
+! ————————————————————————— end “del” —————————————————————
 
       if (adjustl(line_eval) == "clear") then
          call clear()
@@ -5076,7 +5941,7 @@ contains
                         print_array_as_int = .false.
                      end if
                      if (print_array_as_int) then
-                        write (*, fmt_real_array, advance="no") rint   ! open â€˜[â€™ but no LF
+                        write (*, fmt_real_array, advance="no") rint   ! open ‘[’ but no LF
                      else
                         write (*, '("[",*(F0.6,:,", "))', advance="no") r    ! ditto
                      end if
@@ -5231,7 +6096,7 @@ contains
       end if
       allocate (mask(n))
 
-      ! -------- build elementâ€‘wise truth masks ---------------------
+      ! -------- build element‑wise truth masks ---------------------
       if (na == 1) then
          mask = (a(1) /= 0.0_dp)
       else
@@ -5257,10 +6122,10 @@ contains
 
    function merge_array(t_source, f_source, mask_val) result(res)
   !! Elemental-style MERGE for the interpreter.
-  !! â€“ Any of the three inputs may be size-1 (scalar) or an array.
+  !! – Any of the three inputs may be size-1 (scalar) or an array.
       real(dp), intent(in)          :: t_source(:)
       real(dp), intent(in)          :: f_source(:)
-      real(dp), intent(in)          :: mask_val(:)   ! zero â†’ .false., non-zero â†’ .true.
+      real(dp), intent(in)          :: mask_val(:)   ! zero → .false., non-zero → .true.
       real(dp), allocatable         :: res(:)
 
       integer :: nt, nf, nm, n
@@ -5419,7 +6284,7 @@ contains
    end subroutine split_by_spaces
 
    subroutine split_by_semicolon(line, n, parts, suppress)
-!  Break LINE into statements separated by *topâ€‘level* semicolons.
+!  Break LINE into statements separated by *top‑level* semicolons.
 !  parts(i)   = i-th statement (trimmed)
 !  suppress(i)= .true. if that statement ended with a ';'
       character(len=*), intent(in)  :: line
@@ -5431,8 +6296,8 @@ contains
       integer :: i, depth_par, depth_br, ntrim
 
       buf = ""
-      depth_par = 0      ! '(' â€¦ ')'
-      depth_br = 0      ! '[' â€¦ ']'
+      depth_par = 0      ! '(' … ')'
+      depth_br = 0      ! '[' … ']'
       n = 0
 
       do i = 1, len_trim(line)
@@ -5504,11 +6369,13 @@ contains
    end subroutine split_by_semicolon
 
    subroutine run_loop_body(body)
-      ! Execute the buffered DOâ€‘loop BODY one line at a time by calling
+      ! Execute the buffered DO‑loop BODY one line at a time by calling
       ! eval_print, handling CYCLE and EXIT via cycle_loop and exit_loop flags.
       character(len=*), intent(in) :: body
       character(len=:), allocatable :: line
-      integer :: p1, p2, nlen
+      integer :: p1, p2, nlen, prev_base_depth
+      prev_base_depth = loop_exec_base_depth
+      loop_exec_base_depth = loop_depth
       in_loop_execute = .true.          ! >>> tell eval_print to *execute*
       nlen = len_trim(body)
       p1 = 1
@@ -5520,21 +6387,26 @@ contains
             line = body(p1:p1 + p2 - 2)
          end if
          call eval_print(line)                            ! recursion
+         ! Nested run_loop_body calls may clear this flag; keep execution mode
+         ! active for the current (outer) loop body.
+         in_loop_execute = .true.
          if (cycle_loop) then
-            ! â€” weâ€™ve seen a â€œcycleâ€ in this iteration,
+            ! — we’ve seen a “cycle” in this iteration,
             !   so drop the rest of the body and go back to the DO
-            cycle_loop = .false.
             in_loop_execute = .false.
+            loop_exec_base_depth = prev_base_depth
             return
          end if
          if (exit_loop) then
             in_loop_execute = .false.
+            loop_exec_base_depth = prev_base_depth
             return
          end if
          if (p2 == 0) exit
          p1 = p1 + p2
       end do
       in_loop_execute = .false.         ! <<< back to normal typing mode
+      loop_exec_base_depth = prev_base_depth
    end subroutine run_loop_body
 
    integer function parse_int_scalar(txt) result(iv)
@@ -5546,7 +6418,7 @@ contains
       tmp = evaluate(txt)
       if (eval_error .or. size(tmp) /= 1) then
          print *, "Error: bad scalar expression in DO header: '", trim(txt), "'"
-         iv = 0        ! any value â€“ the loop will not run anyway
+         iv = 0        ! any value – the loop will not run anyway
          return
       end if
       iv = nint(tmp(1))
