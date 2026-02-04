@@ -236,6 +236,29 @@ yh = naturalspline(yg, xg, 4)                ! natural cubic with 4 interior kno
 yh = naturalspline(yg, xg, [2,4,8])          ! plots one fitted curve per k
 yh = naturalspline(yg, xg, 4, points=.true.) ! overlay sample points on the fit plot
 yh = naturalspline(yg, xg, 4, plot=.false.)  ! compute only (no plot)
+
+! Plot output mode for whole session
+set plotout png                              ! save plots to PNG files
+set plotout pdf                              ! save plots to PDF files
+set plotout svg                              ! save plots to SVG files
+set plotout eps                              ! save plots to EPS files
+set plotout screen                           ! back to interactive windows
+set plotout                                  ! show current mode
+
+! Saved plots use title-based names, e.g. acf_0001.png, cpfit_0002.pdf
+
+! Changepoint simulation/fitting
+xcp = cpsim(400, [150,300])                  ! defaults: mu=0, sd=1, plot=.false.
+xcp = cpsim(400, [150,300], mu=[0,2,-1], sd=0.7, plot=.true.) ! plot data and true means
+xcp = cpsim(400, [150,300], verbose=.true.)  ! print true segment table (default verbose=.false.)
+fitcp = cpfit(xcp)                           ! defaults: mode=mean, max_cp=1, plot=.true.
+fitcp2 = cpfit(xcp, max_cp=3, minseg=20, plot=.false.)
+fitcp3 = cpfit(xcp, verbose=.false.)         ! suppress estimated segment table
+fitcp_sd = cpfit(xcp, mode=sd, max_cp=2, plot=.false.)   ! variance changepoints
+fitcp_both = cpfit(xcp, mode=both, max_cp=2, plot=.false.) ! mean+variance changepoints
+fitcp_best = cpfitaic(xcp, max_cp=5, criterion=aic, plot=.true.) ! choose best by AIC (default)
+fitcp_best2 = cpfitaic(xcp, max_cp=5, criterion=bic, plot=.false., plot_ic=.true.) ! IC-vs-max_cp plot
+fitcp_best3 = cpfitaic(xcp, max_cp=5, verbose=.true., plot=.false.) ! print per-model segment tables
 ```
 
 ## Sample session

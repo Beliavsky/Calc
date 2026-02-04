@@ -58,6 +58,10 @@ ARRAY_FUNCS = {
     "masim",
     "armasim",
     "arfimasim",
+    "cpsim",
+    "cpfit",
+    "cpfitaic",
+    "cpfit_aic",
     "resample",
     "quantile",
     "trimmean",
@@ -251,6 +255,10 @@ MODULE_EXPORTS = {
         "masim",
         "armasim",
         "arfimasim",
+        "cpsim",
+        "cpfit",
+        "cpfitaic",
+        "cpfit_aic",
         "resample",
         "trimmean",
         "winsor_mean",
@@ -1184,6 +1192,242 @@ def rewrite_naturalspline_args(expr):
     return "".join(out)
 
 
+def rewrite_cpsim_args(expr):
+    def force_real_bracket(s):
+        t = s.strip()
+        if not (t.startswith("[") and t.endswith("]")):
+            return t
+        inner = t[1:-1].strip()
+        if not inner:
+            return t
+        parts = [p.strip() for p in split_top_level(inner, ",")]
+        out = []
+        for p in parts:
+            if re.fullmatch(r"[+-]?[0-9]+", p):
+                out.append(p + ".0")
+            else:
+                out.append(p)
+        return "[" + ", ".join(out) + "]"
+
+    def wrap_vec(a):
+        s = a.strip()
+        if s.startswith("["):
+            s2 = force_real_bracket(s)
+            return f"(1.0*({s2}))"
+        return f"[1.0*({s})]"
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bcpsim\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        if len(args) >= 2 and "=" not in args[1]:
+            args[1] = wrap_vec(args[1])
+        if len(args) >= 3 and "=" not in args[2]:
+            args[2] = wrap_vec(args[2])
+        if len(args) >= 4 and "=" not in args[3]:
+            args[3] = wrap_vec(args[3])
+        if len(args) >= 5 and "=" not in args[4]:
+            args[4] = to_int_arg(args[4])
+        if len(args) >= 6 and "=" not in args[5]:
+            args[5] = to_int_arg(args[5])
+        if len(args) >= 7 and "=" not in args[6]:
+            args[6] = to_int_arg(args[6])
+        for idx in range(2, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"cp", "mu", "sd"}:
+                    args[idx] = f"{a[:eq].strip()}={wrap_vec(rhs)}"
+                elif key == "seed":
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key == "plot":
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key == "verbose":
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+        out.append("cpsim(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_cpfit_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bcpfit\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(1, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"max_cp", "minseg", "plot", "verbose"}:
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key == "mode":
+                    r = rhs.strip()
+                    if not (r.startswith('"') or r.startswith("'")):
+                        args[idx] = f'{a[:eq].strip()}="{r}"'
+            else:
+                if idx >= 2:
+                    args[idx] = to_int_arg(a)
+        out.append("cpfit(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_cpfit_aic_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    def maybe_quote_word(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("'", '"')):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f'"{t}"'
+        return t
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b(?:cpfitaic|cpfit_aic)\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(1, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"max_cp", "minseg", "plot", "plot_ic", "verbose"}:
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key in {"mode", "criterion"}:
+                    args[idx] = f"{a[:eq].strip()}={maybe_quote_word(rhs)}"
+            else:
+                if idx == 1:
+                    t = maybe_quote_word(a)
+                    if t != a:
+                        args[idx] = t
+                    else:
+                        args[idx] = to_int_arg(a)
+                elif idx == 4:
+                    t = maybe_quote_word(a)
+                    if t != a:
+                        args[idx] = t
+                    else:
+                        args[idx] = to_int_arg(a)
+                else:
+                    args[idx] = to_int_arg(a)
+        out.append("cpfitaic(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def transpile_expr(expr):
     expr = rewrite_arfimasim_calls(expr)
     expr = rewrite_acf_pacf_plot_args(expr)
@@ -1193,6 +1437,9 @@ def transpile_expr(expr):
     expr = rewrite_kernelreg_order_args(expr)
     expr = rewrite_splinereg_args(expr)
     expr = rewrite_naturalspline_args(expr)
+    expr = rewrite_cpsim_args(expr)
+    expr = rewrite_cpfit_args(expr)
+    expr = rewrite_cpfit_aic_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
     expr = replace_ops(expr)

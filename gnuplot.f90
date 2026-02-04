@@ -3,7 +3,7 @@ module plot_mod
   use util_mod, only: arange
   implicit none
   private
-  public :: plot, use_windows, plot_to_label
+  public :: plot, use_windows, plot_to_label, set_plotout, get_plotout
 
   !── Named executables for each platform
   character(len=*), parameter :: gnuplot_cmd_win  = "wgnuplot"
@@ -11,12 +11,98 @@ module plot_mod
 
   !── Toggle this in your program before calling plot()
   logical :: use_windows = .true.
+  integer, save :: plot_counter = 0
+  character(len=16), save :: plotout_mode = "screen"
 
   interface plot
     module procedure plot_1d, plot_2d, plot_y
   end interface
 
 contains
+
+  pure function sanitize_tag(s, fallback) result(tag)
+    character(len=*), intent(in) :: s, fallback
+    character(len=:), allocatable :: tag
+    character(len=:), allocatable :: t
+    integer :: i, c
+    logical :: prev_us
+    t = adjustl(trim(s))
+    if (len_trim(t) == 0) t = trim(fallback)
+    do i = 1, len(t)
+      c = iachar(t(i:i))
+      if (c >= iachar('A') .and. c <= iachar('Z')) then
+        t(i:i) = achar(c + 32)
+      else if (.not. ((c >= iachar('a') .and. c <= iachar('z')) .or. (c >= iachar('0') .and. c <= iachar('9')))) then
+        t(i:i) = "_"
+      end if
+    end do
+    tag = ""
+    prev_us = .false.
+    do i = 1, len_trim(t)
+      if (t(i:i) == "_") then
+        if (.not. prev_us) tag = tag//"_"
+        prev_us = .true.
+      else
+        tag = tag//t(i:i)
+        prev_us = .false.
+      end if
+    end do
+    if (len_trim(tag) == 0) tag = trim(fallback)
+    if (tag(1:1) == "_") tag = tag(2:)
+    if (len_trim(tag) > 0) then
+      if (tag(len_trim(tag):len_trim(tag)) == "_") tag = tag(:len_trim(tag)-1)
+    end if
+    if (len_trim(tag) == 0) tag = trim(fallback)
+  end function sanitize_tag
+
+  subroutine next_plot_files(tag, fn_data, fn_script, fn_out)
+    character(len=*), intent(in) :: tag
+    character(len=:), allocatable, intent(out) :: fn_data, fn_script
+    character(len=:), allocatable, intent(out) :: fn_out
+    character(len=16) :: num
+    character(len=:), allocatable :: stem
+    plot_counter = plot_counter + 1
+    write(num, "(I4.4)") plot_counter
+    stem = trim(tag)//"_"//trim(num)
+    fn_data = trim(stem)//".dat"
+    fn_script = trim(stem)//".gp"
+    select case (trim(plotout_mode))
+    case ("png")
+      fn_out = trim(stem)//".png"
+    case ("pdf")
+      fn_out = trim(stem)//".pdf"
+    case ("svg")
+      fn_out = trim(stem)//".svg"
+    case ("eps")
+      fn_out = trim(stem)//".eps"
+    case default
+      fn_out = ""
+    end select
+  end subroutine next_plot_files
+
+  subroutine set_plotout(mode, ok)
+    character(len=*), intent(in) :: mode
+    logical, intent(out) :: ok
+    character(len=:), allocatable :: m
+    integer :: i, c
+    m = adjustl(trim(mode))
+    do i = 1, len_trim(m)
+      c = iachar(m(i:i))
+      if (c >= iachar('A') .and. c <= iachar('Z')) m(i:i) = achar(c + 32)
+    end do
+    select case (trim(m))
+    case ("screen", "png", "pdf", "svg", "eps")
+      plotout_mode = trim(m)
+      ok = .true.
+    case default
+      ok = .false.
+    end select
+  end subroutine set_plotout
+
+  function get_plotout() result(mode)
+    character(len=16) :: mode
+    mode = plotout_mode
+  end function get_plotout
 
   subroutine plot_y(y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot a single series y(:) versus x(:)
@@ -34,7 +120,7 @@ contains
     character(len=*), intent(in), optional   :: data_file, script_file
     real(kind=dp), intent(in), optional      :: points_y(:)
 
-    character(len=:), allocatable :: fn_data, fn_script, st
+    character(len=:), allocatable :: fn_data, fn_script, st, fn_data_def, fn_script_def, fn_out, tag
     character(len=512)            :: cmd
     integer                       :: i, n, unit_data, unit_script
     logical                       :: with_points
@@ -44,16 +130,19 @@ contains
     n = size(x)
 
     !── defaults
-    if (present(data_file)) then
-      fn_data = trim(data_file)
+    if (present(title)) then
+      tag = sanitize_tag(title, "plot1d")
     else
-      fn_data = "plot1d.dat"
+      tag = "plot1d"
     end if
-
-    if (present(script_file)) then
-      fn_script = trim(script_file)
+    if (present(data_file)) fn_data = trim(data_file)
+    if (present(script_file)) fn_script = trim(script_file)
+    if (.not. present(data_file) .or. .not. present(script_file)) then
+      call next_plot_files(tag, fn_data_def, fn_script_def, fn_out)
+      if (.not. present(data_file)) fn_data = fn_data_def
+      if (.not. present(script_file)) fn_script = fn_script_def
     else
-      fn_script = "plot1d.gp"
+      call next_plot_files(tag, fn_data_def, fn_script_def, fn_out)
     end if
 
     if (present(style)) then
@@ -87,17 +176,33 @@ contains
         write(unit_script,"(A)") "set ylabel '"//trim(ylabel)//"'"
       end if
       write(unit_script,"(A)") "set grid"
+      select case (trim(plotout_mode))
+      case ("png")
+        write(unit_script,"(A)") "set terminal pngcairo size 1000,700"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("pdf")
+        write(unit_script,"(A)") "set terminal pdfcairo"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("svg")
+        write(unit_script,"(A)") "set terminal svg size 1000,700"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("eps")
+        write(unit_script,"(A)") "set terminal postscript eps enhanced color"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      end select
       if (with_points) then
         write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " title 'fit', " // &
                                   "'"//trim(fn_data)//"' using 1:3 with points pt 7 ps 0.6 title 'data'"
       else
         write(unit_script,"(A)") "plot '"//trim(fn_data)//"' using 1:2 with "//trim(st) // " notitle"
       end if
-      write(unit_script,"(A)") "pause -1"
+      if (trim(plotout_mode) == "screen") then
+        write(unit_script,"(A)") "pause -1"
+      end if
     close(unit_script)
 
     !── invoke gnuplot based on platform toggle
-    if (use_windows) then
+    if (use_windows .and. trim(plotout_mode) == "screen") then
       cmd = 'cmd /c start "" ' // gnuplot_cmd_win  // " " // trim(fn_script)
       call execute_command_line(cmd, wait = .false.)
     else
@@ -116,7 +221,7 @@ contains
     character(len=*), intent(in), optional   :: legend_labels(:)
     real(kind=dp), intent(in), optional      :: points_y(:)
 
-    character(len=:), allocatable :: fn_data, fn_script, st, plot_cmd
+    character(len=:), allocatable :: fn_data, fn_script, st, plot_cmd, fn_data_def, fn_script_def, fn_out, tag
     character(len=512)            :: cmd
     integer                       :: i, n, ns, unit_data, unit_script
     character(len=10)             :: col_max
@@ -129,16 +234,19 @@ contains
     ns = size(y,2)
 
     !── defaults
-    if (present(data_file)) then
-      fn_data = trim(data_file)
+    if (present(title)) then
+      tag = sanitize_tag(title, "plot2d")
     else
-      fn_data = "plot2d.dat"
+      tag = "plot2d"
     end if
-
-    if (present(script_file)) then
-      fn_script = trim(script_file)
+    if (present(data_file)) fn_data = trim(data_file)
+    if (present(script_file)) fn_script = trim(script_file)
+    if (.not. present(data_file) .or. .not. present(script_file)) then
+      call next_plot_files(tag, fn_data_def, fn_script_def, fn_out)
+      if (.not. present(data_file)) fn_data = fn_data_def
+      if (.not. present(script_file)) fn_script = fn_script_def
     else
-      fn_script = "plot2d.gp"
+      call next_plot_files(tag, fn_data_def, fn_script_def, fn_out)
     end if
 
     if (present(style)) then
@@ -173,6 +281,20 @@ contains
         write(unit_script,"(A)") "set ylabel '"//trim(ylabel)//"'"
       end if
       write(unit_script,"(A)") "set grid"
+      select case (trim(plotout_mode))
+      case ("png")
+        write(unit_script,"(A)") "set terminal pngcairo size 1000,700"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("pdf")
+        write(unit_script,"(A)") "set terminal pdfcairo"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("svg")
+        write(unit_script,"(A)") "set terminal svg size 1000,700"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      case ("eps")
+        write(unit_script,"(A)") "set terminal postscript eps enhanced color"
+        write(unit_script,"(A)") "set output '"//trim(fn_out)//"'"
+      end select
 
       if (present(legend_labels) .and. size(legend_labels) == ns) then
         plot_cmd = "plot "
@@ -198,11 +320,13 @@ contains
         end if
         write(unit_script,"(A)") trim(plot_cmd)
       end if
-      write(unit_script,"(A)") "pause -1"
+      if (trim(plotout_mode) == "screen") then
+        write(unit_script,"(A)") "pause -1"
+      end if
     close(unit_script)
 
     !── invoke gnuplot based on platform toggle
-    if (use_windows) then
+    if (use_windows .and. trim(plotout_mode) == "screen") then
       cmd = 'cmd /c start "" ' // gnuplot_cmd_win  // " " // trim(fn_script)
       call execute_command_line(cmd, wait = .false.)
     else

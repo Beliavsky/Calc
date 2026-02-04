@@ -2,14 +2,14 @@ module stats_mod
 use kind_mod, only: dp
 use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-use random_mod, only: random_normal
+use random_mod, only: random_normal, random_seed_init
 use qsort_mod, only: median, quantile, sorted
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
           geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, kde, &
-          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
+          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
@@ -4609,6 +4609,7 @@ real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: h, sx
 integer :: n, ord
 logical :: do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n < 2 .or. size(y) /= n) then
@@ -4626,7 +4627,9 @@ if (present(order)) ord = order
 yhat = kernelreg_core(y, x, h, ord)
 do_points = .false.
 if (present(points)) do_points = points
-if (do_points) call gplot(x, yhat, title="kernelreg", xlabel="x", points_y=y)
+write (ttl, "(a,i0)") "kernelreg (#obs=", n
+ttl = trim(ttl)//")"
+if (do_points) call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
 end function kernelreg_scalar
 
 function kernelreg_vec(y, x, bw, order, points) result(yhat)
@@ -4641,6 +4644,7 @@ real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
 integer :: n, j, ord
 logical :: do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(bw) < 1) then
@@ -4657,10 +4661,12 @@ end do
 yhat = y2(:, 1)
 do_points = .false.
 if (present(points)) do_points = points
+write (ttl, "(a,i0)") "kernelreg (#obs=", n
+ttl = trim(ttl)//")"
 if (do_points) then
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
 else
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
 end if
 deallocate (y2, legends)
 end function kernelreg_vec
@@ -4677,6 +4683,7 @@ real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
 integer :: n, j
 logical :: do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(order) < 1) then
@@ -4691,10 +4698,12 @@ end do
 yhat = y2(:, 1)
 do_points = .false.
 if (present(points)) do_points = points
+write (ttl, "(a,i0)") "kernelreg (#obs=", n
+ttl = trim(ttl)//")"
 if (do_points) then
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
 else
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
 end if
 deallocate (y2, legends)
 end function kernelreg_scalar_ordvec
@@ -4711,6 +4720,7 @@ real(kind=dp), allocatable :: y2(:,:)
 character(len=24), allocatable :: legends(:)
 integer :: n, j, k, idx, ncurves
 logical :: do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n < 2 .or. size(y) /= n .or. size(bw) < 1 .or. size(order) < 1) then
@@ -4730,10 +4740,12 @@ end do
 yhat = y2(:, 1)
 do_points = .false.
 if (present(points)) do_points = points
+write (ttl, "(a,i0)") "kernelreg (#obs=", n
+ttl = trim(ttl)//")"
 if (do_points) then
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends, points_y=y)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
 else
-   call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+   call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
 end if
 deallocate (y2, legends)
 end function kernelreg_vec_ordvec
@@ -5107,6 +5119,7 @@ logical, intent(in), optional :: points
 real(kind=dp), allocatable :: yhat(:)
 integer :: deg
 logical :: use_intcp, do_plot, do_points
+character(len=48) :: ttl
 
 deg = 3
 if (present(degree)) deg = degree
@@ -5117,11 +5130,13 @@ if (present(plot)) do_plot = (plot /= 0)
 do_points = .false.
 if (present(points)) do_points = points
 yhat = splinereg_core(y, x, k, deg, use_intcp)
+write (ttl, "(a,i0)") "splinereg (#obs=", size(x)
+ttl = trim(ttl)//")"
 if (do_plot .and. size(yhat) > 0) then
    if (do_points) then
-      call gplot(x, yhat, title="splinereg", xlabel="x", points_y=y)
+      call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
    else
-      call gplot(x, yhat, title="splinereg", xlabel="x")
+      call gplot(x, yhat, title=trim(ttl), xlabel="x")
    end if
 end if
 end function splinereg_scalar
@@ -5139,6 +5154,7 @@ real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
 integer :: n, j
 logical :: use_intcp, do_plot, do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n /= size(y) .or. n < 2 .or. size(degree) < 1) then
@@ -5157,11 +5173,13 @@ do j = 1, size(degree)
    write (legends(j), "(a,i0)") "deg=", degree(j)
 end do
 yhat = y2(:, 1)
+write (ttl, "(a,i0)") "splinereg (#obs=", n
+ttl = trim(ttl)//")"
 if (do_plot) then
    if (do_points) then
-      call gplot(x, y2, title="splinereg", xlabel="x", legend_labels=legends, points_y=y)
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
    else
-      call gplot(x, y2, title="splinereg", xlabel="x", legend_labels=legends)
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
    end if
 end if
 deallocate (y2, legends)
@@ -5375,7 +5393,7 @@ real(kind=dp), allocatable :: yhat(:), ytr(:), xtr(:), yva(:), xva(:), ypred(:)
 real(kind=dp) :: cv, best_cv
 integer :: n, i, f, folds, ntr, nva, ktry, best_k, kmax
 logical :: use_intcp, do_plot, do_points, ok
-character(len=48) :: ttl
+character(len=64) :: ttl
 
 n = size(x)
 if (n /= size(y) .or. n < 2) then
@@ -5450,10 +5468,9 @@ if (.not. ok) then
 end if
 if (do_plot .and. size(yhat) > 0) then
    if (present(k)) then
-      ttl = "naturalspline"
+      write (ttl, "(a,i0,a)") "naturalspline (#obs=", n, ")"
    else
-      write (ttl, "(a,i0)") "naturalspline (cv k=", best_k
-      ttl = trim(ttl)//")"
+      write (ttl, "(a,i0,a,i0,a)") "naturalspline (cv k=", best_k, ", #obs=", n, ")"
    end if
    if (do_points) then
       call gplot(x, yhat, title=trim(ttl), xlabel="x", points_y=y)
@@ -5474,6 +5491,7 @@ real(kind=dp), allocatable :: yhat(:), tmp(:), y2(:,:)
 character(len=12), allocatable :: legends(:)
 integer :: n, j, intcp_i
 logical :: do_plot, do_points
+character(len=48) :: ttl
 
 n = size(x)
 if (n /= size(y) .or. n < 2 .or. size(k) < 1) then
@@ -5503,15 +5521,611 @@ do j = 1, size(k)
    write (legends(j), "(a,i0)") "k=", k(j)
 end do
 yhat = y2(:, 1)
+write (ttl, "(a,i0)") "naturalspline (#obs=", n
+ttl = trim(ttl)//")"
 if (do_plot) then
    if (do_points) then
-      call gplot(x, y2, title="naturalspline", xlabel="x", legend_labels=legends, points_y=y)
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends, points_y=y)
    else
-      call gplot(x, y2, title="naturalspline", xlabel="x", legend_labels=legends)
+      call gplot(x, y2, title=trim(ttl), xlabel="x", legend_labels=legends)
    end if
 end if
 deallocate (y2, legends)
 end function naturalspline_kvec
+
+function cpsim(n, cp, mu, sd, seed, plot, verbose) result(x)
+! Simulate piecewise-normal data with changepoints.
+! cp has length m and defines m+1 segments.
+! mu/sd may be absent (defaults 0/1), scalar (broadcast), or length m+1.
+use plot_mod, only: gplot => plot
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: cp(:)
+real(kind=dp), intent(in), optional :: mu(:), sd(:)
+integer, intent(in), optional :: seed
+integer, intent(in), optional :: plot, verbose
+real(kind=dp), allocatable :: x(:), z(:), mu_seg(:), sd_seg(:), ytrue(:), tt(:)
+integer, allocatable :: cpi(:)
+integer :: m, i, j, lo, hi
+logical :: do_plot, do_verbose
+character(len=48) :: ttl
+
+if (n < 1) then
+   allocate (x(0))
+   return
+end if
+if (present(seed)) call random_seed_init(seed)
+do_plot = .false.
+if (present(plot)) do_plot = (plot /= 0)
+do_verbose = .false.
+if (present(verbose)) do_verbose = (verbose /= 0)
+allocate (x(n), z(n))
+z = random_normal(n)
+m = size(cp)
+allocate (cpi(m))
+if (m > 0) cpi = nint(cp)
+if (m > 1) then
+   do i = 2, m
+      if (cpi(i) <= cpi(i - 1)) then
+         print *, "Error: cpsim() cp must be strictly increasing"
+         allocate (x(0))
+         return
+      end if
+   end do
+end if
+if (m > 0) then
+   if (minval(cpi) < 1 .or. maxval(cpi) >= n) then
+      print *, "Error: cpsim() cp must be between 1 and n-1"
+      allocate (x(0))
+      return
+   end if
+end if
+
+allocate (mu_seg(m + 1), sd_seg(m + 1))
+mu_seg = 0.0_dp
+sd_seg = 1.0_dp
+if (present(mu)) then
+   if (size(mu) == 1) then
+      mu_seg = mu(1)
+   else if (size(mu) == m + 1) then
+      mu_seg = mu
+   else
+      print *, "Error: cpsim() mu must be scalar or length m+1"
+      allocate (x(0))
+      return
+   end if
+end if
+if (present(sd)) then
+   if (size(sd) == 1) then
+      sd_seg = sd(1)
+   else if (size(sd) == m + 1) then
+      sd_seg = sd
+   else
+      print *, "Error: cpsim() sd must be scalar or length m+1"
+      allocate (x(0))
+      return
+   end if
+end if
+if (any(sd_seg <= 0.0_dp)) then
+   print *, "Error: cpsim() sd must be > 0"
+   allocate (x(0))
+   return
+end if
+
+if (do_verbose) then
+   print *
+   print "(a)", "cpsim segment parameters"
+   if (m > 0) then
+      write (*, "(a)", advance="no") "changepoints: "
+      do i = 1, m
+         if (i > 1) write (*, "(a)", advance="no") ", "
+         write (*, "(i0)", advance="no") cpi(i)
+      end do
+      print *
+   else
+      print *, "changepoints: none"
+   end if
+   print "(a8,a8,a8,a14,a14)", "segment", "start", "end", "mean", "sd"
+   lo = 1
+   do j = 1, m + 1
+      if (j <= m) then
+         hi = cpi(j)
+      else
+         hi = n
+      end if
+      print "(i8,i8,i8,2f14.6)", j, lo, hi, mu_seg(j), sd_seg(j)
+      lo = hi + 1
+   end do
+end if
+
+lo = 1
+do j = 1, m + 1
+   if (j <= m) then
+      hi = cpi(j)
+   else
+      hi = n
+   end if
+   if (hi >= lo) x(lo:hi) = mu_seg(j) + sd_seg(j)*z(lo:hi)
+   lo = hi + 1
+end do
+if (do_plot) then
+   allocate (ytrue(n), tt(n))
+   lo = 1
+   do j = 1, m + 1
+      if (j <= m) then
+         hi = cpi(j)
+      else
+         hi = n
+      end if
+      if (hi >= lo) ytrue(lo:hi) = mu_seg(j)
+      lo = hi + 1
+   end do
+   do i = 1, n
+      tt(i) = real(i, dp)
+   end do
+   write (ttl, "(a,i0)") "cpsim (#obs=", n
+   ttl = trim(ttl)//")"
+   call gplot(tt, ytrue, title=trim(ttl), xlabel="t", points_y=x)
+end if
+end function cpsim
+
+function cpfit(x, mode, max_cp, minseg, plot, verbose) result(out)
+! Fit changepoints by greedy binary segmentation.
+! mode="mean": mean shifts, common sigma.
+! mode="sd":   variance shifts, common mean.
+! mode="both": mean and variance shifts.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+character(len=*), intent(in), optional :: mode
+integer, intent(in), optional :: max_cp, minseg, plot, verbose
+real(kind=dp), allocatable :: out(:)
+real(kind=dp), allocatable :: s1(:), s2(:), mu_seg(:), sd_seg(:), yhat(:), tt(:)
+integer, allocatable :: lseg(:), rseg(:), cps(:)
+integer :: n, mcp, mseg, nseg, s, best_s, best_t, t, c
+real(kind=dp) :: best_gain, gain, sse_total, sigma2, ll, aic, bic, mu0, rss, eps
+character(len=16) :: mode_
+logical :: do_plot, do_verbose
+character(len=64) :: ttl
+integer :: kpar
+
+n = size(x)
+if (n < 2) then
+   allocate (out(0))
+   return
+end if
+mode_ = "mean"
+if (present(mode)) mode_ = trim(mode)
+do t = 1, len_trim(mode_)
+   if (mode_(t:t) >= "A" .and. mode_(t:t) <= "Z") mode_(t:t) = achar(iachar(mode_(t:t)) + 32)
+end do
+if (trim(mode_) /= "mean" .and. trim(mode_) /= "sd" .and. trim(mode_) /= "both") then
+   print *, "Error: cpfit() mode must be 'mean', 'sd', or 'both'"
+   allocate (out(0))
+   return
+end if
+mcp = 1
+if (present(max_cp)) mcp = max(0, max_cp)
+mseg = 10
+if (present(minseg)) mseg = max(2, minseg)
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_verbose = .true.
+if (present(verbose)) do_verbose = (verbose /= 0)
+if (2*mseg > n) mseg = max(2, n/2)
+eps = 1.0e-12_dp
+
+allocate (s1(0:n), s2(0:n))
+s1(0) = 0.0_dp; s2(0) = 0.0_dp
+do t = 1, n
+   s1(t) = s1(t - 1) + x(t)
+   s2(t) = s2(t - 1) + x(t)*x(t)
+end do
+mu0 = s1(n)/real(n, dp)
+
+allocate (lseg(max(1, mcp + 1)), rseg(max(1, mcp + 1)))
+nseg = 1
+lseg(1) = 1; rseg(1) = n
+
+do c = 1, mcp
+   best_gain = 0.0_dp
+   best_s = 0
+   best_t = 0
+   do s = 1, nseg
+      do t = lseg(s) + mseg - 1, rseg(s) - mseg
+         gain = seg_cost(lseg(s), rseg(s)) - seg_cost(lseg(s), t) - seg_cost(t + 1, rseg(s))
+         if (gain > best_gain) then
+            best_gain = gain
+            best_s = s
+            best_t = t
+         end if
+      end do
+   end do
+   if (best_s == 0 .or. best_gain <= 0.0_dp) exit
+   do s = nseg, best_s + 1, -1
+      lseg(s + 1) = lseg(s)
+      rseg(s + 1) = rseg(s)
+   end do
+   lseg(best_s + 1) = best_t + 1
+   rseg(best_s + 1) = rseg(best_s)
+   rseg(best_s) = best_t
+   nseg = nseg + 1
+end do
+
+allocate (cps(max(0, nseg - 1)), mu_seg(nseg), sd_seg(nseg))
+do s = 1, nseg
+   if (trim(mode_) == "sd") then
+      mu_seg(s) = mu0
+      rss = rss_fixedmu(lseg(s), rseg(s), mu0)
+   else
+      mu_seg(s) = seg_mean(lseg(s), rseg(s))
+      rss = sse_int(lseg(s), rseg(s))
+   end if
+   sd_seg(s) = sqrt(max(eps, rss/real(rseg(s) - lseg(s) + 1, dp)))
+   if (s < nseg) cps(s) = rseg(s)
+end do
+
+select case (trim(mode_))
+case ("mean")
+   sse_total = 0.0_dp
+   do s = 1, nseg
+      sse_total = sse_total + sse_int(lseg(s), rseg(s))
+   end do
+   sigma2 = max(eps, sse_total/real(n, dp))
+   ll = -0.5_dp*real(n, dp)*(log(2.0_dp*pi*sigma2) + 1.0_dp)
+   kpar = nseg + 1
+   aic = -2.0_dp*ll + 2.0_dp*real(kpar, dp)
+   bic = -2.0_dp*ll + log(real(n, dp))*real(kpar, dp)
+   allocate (out(1 + (nseg - 1) + nseg + 3))
+   out(1) = real(nseg - 1, dp)
+   if (nseg > 1) out(2:nseg) = real(cps(1:nseg - 1), dp)
+   out(nseg + 1:2*nseg) = mu_seg
+   out(2*nseg + 1) = sqrt(sigma2)
+   out(2*nseg + 2) = aic
+   out(2*nseg + 3) = bic
+case ("sd")
+   ll = 0.0_dp
+   do s = 1, nseg
+      rss = rss_fixedmu(lseg(s), rseg(s), mu0)
+      sigma2 = max(eps, rss/real(rseg(s) - lseg(s) + 1, dp))
+      ll = ll - 0.5_dp*real(rseg(s) - lseg(s) + 1, dp)*(log(2.0_dp*pi*sigma2) + 1.0_dp)
+   end do
+   kpar = 1 + nseg
+   aic = -2.0_dp*ll + 2.0_dp*real(kpar, dp)
+   bic = -2.0_dp*ll + log(real(n, dp))*real(kpar, dp)
+   allocate (out(1 + (nseg - 1) + 1 + nseg + 2))
+   out(1) = real(nseg - 1, dp)
+   if (nseg > 1) out(2:nseg) = real(cps(1:nseg - 1), dp)
+   out(nseg + 1) = mu0
+   out(nseg + 2:2*nseg + 1) = sd_seg
+   out(2*nseg + 2) = aic
+   out(2*nseg + 3) = bic
+case ("both")
+   ll = 0.0_dp
+   do s = 1, nseg
+      rss = sse_int(lseg(s), rseg(s))
+      sigma2 = max(eps, rss/real(rseg(s) - lseg(s) + 1, dp))
+      ll = ll - 0.5_dp*real(rseg(s) - lseg(s) + 1, dp)*(log(2.0_dp*pi*sigma2) + 1.0_dp)
+   end do
+   kpar = 2*nseg
+   aic = -2.0_dp*ll + 2.0_dp*real(kpar, dp)
+   bic = -2.0_dp*ll + log(real(n, dp))*real(kpar, dp)
+   allocate (out(1 + (nseg - 1) + nseg + nseg + 2))
+   out(1) = real(nseg - 1, dp)
+   if (nseg > 1) out(2:nseg) = real(cps(1:nseg - 1), dp)
+   out(nseg + 1:2*nseg) = mu_seg
+   out(2*nseg + 1:3*nseg) = sd_seg
+   out(3*nseg + 1) = aic
+   out(3*nseg + 2) = bic
+end select
+
+if (do_verbose) then
+   print *
+   print "(a,a,a)", "cpfit mode=", trim(mode_), " : segment estimates"
+   if (nseg > 1) then
+      write (*, "(a)", advance="no") "changepoints: "
+      do s = 1, nseg - 1
+         if (s > 1) write (*, "(a)", advance="no") ", "
+         write (*, "(i0)", advance="no") cps(s)
+      end do
+      print *
+   else
+      print *, "changepoints: none"
+   end if
+   print "(a8,a8,a8,a14,a14)", "segment", "start", "end", "mean", "sd"
+   do s = 1, nseg
+      print "(i8,i8,i8,2f14.6)", s, lseg(s), rseg(s), mu_seg(s), sd_seg(s)
+   end do
+end if
+
+if (do_plot) then
+   allocate (yhat(n), tt(n))
+   do t = 1, n
+      tt(t) = real(t, dp)
+   end do
+   do s = 1, nseg
+      yhat(lseg(s):rseg(s)) = mu_seg(s)
+   end do
+   write (ttl, "(a,a,a,i0,a)") "cpfit (", trim(mode_), ", #obs=", n, ")"
+   call gplot(tt, yhat, title=trim(ttl), xlabel="t", points_y=x)
+end if
+
+contains
+
+   pure function sse_int(l, r) result(v)
+      integer, intent(in) :: l, r
+      real(kind=dp) :: v, sx, sx2
+      integer :: len
+      len = r - l + 1
+      if (len <= 0) then
+         v = 0.0_dp
+         return
+      end if
+      sx = s1(r) - s1(l - 1)
+      sx2 = s2(r) - s2(l - 1)
+      v = max(0.0_dp, sx2 - sx*sx/real(len, dp))
+   end function sse_int
+
+   pure function seg_mean(l, r) result(v)
+      integer, intent(in) :: l, r
+      real(kind=dp) :: v
+      v = (s1(r) - s1(l - 1))/real(r - l + 1, dp)
+   end function seg_mean
+
+   pure function rss_fixedmu(l, r, mu) result(v)
+      integer, intent(in) :: l, r
+      real(kind=dp), intent(in) :: mu
+      real(kind=dp) :: v, sx, sx2
+      integer :: len
+      len = r - l + 1
+      sx = s1(r) - s1(l - 1)
+      sx2 = s2(r) - s2(l - 1)
+      v = max(0.0_dp, sx2 - 2.0_dp*mu*sx + real(len, dp)*mu*mu)
+   end function rss_fixedmu
+
+   pure function seg_cost(l, r) result(v)
+      integer, intent(in) :: l, r
+      real(kind=dp) :: v, rss
+      integer :: len
+      len = r - l + 1
+      select case (trim(mode_))
+      case ("mean")
+         v = sse_int(l, r)
+      case ("sd")
+         rss = max(eps, rss_fixedmu(l, r, mu0))
+         v = real(len, dp)*log(rss/real(len, dp))
+      case ("both")
+         rss = max(eps, sse_int(l, r))
+         v = real(len, dp)*log(rss/real(len, dp))
+      end select
+   end function seg_cost
+
+end function cpfit
+
+function cpfitaic(x, mode, max_cp, minseg, criterion, plot, plot_ic, verbose) result(best_out)
+! Select changepoint model over max_cp=0..max_cp using AIC/BIC.
+! Returns cpfit() output for the selected model.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+character(len=*), intent(in), optional :: mode, criterion
+integer, intent(in), optional :: max_cp, minseg, plot, plot_ic, verbose
+real(kind=dp), allocatable :: best_out(:)
+type fit_holder
+   real(kind=dp), allocatable :: v(:)
+end type fit_holder
+type(fit_holder), allocatable :: fits(:)
+real(kind=dp), allocatable :: aicv(:), bicv(:), yfit(:,:), tt(:), icm(:), icy(:,:)
+integer, allocatable :: ncpv(:)
+character(len=16), allocatable :: legends(:), legends_ic(:)
+character(len=16) :: mode_, crit_
+character(len=64) :: ttl
+integer :: n, mmax, mseg, m, nm, best_i, ncp, s, lo, hi
+real(kind=dp) :: best_val
+logical :: do_plot, do_plot_ic, do_verbose
+
+allocate (best_out(0))
+n = size(x)
+if (n < 2) return
+
+mode_ = "mean"
+if (present(mode)) mode_ = trim(mode)
+do s = 1, len_trim(mode_)
+   if (mode_(s:s) >= "A" .and. mode_(s:s) <= "Z") mode_(s:s) = achar(iachar(mode_(s:s)) + 32)
+end do
+if (trim(mode_) /= "mean" .and. trim(mode_) /= "sd" .and. trim(mode_) /= "both") then
+   print *, "Error: cpfitaic() mode must be 'mean', 'sd', or 'both'"
+   return
+end if
+
+crit_ = "aic"
+if (present(criterion)) crit_ = trim(criterion)
+do s = 1, len_trim(crit_)
+   if (crit_(s:s) >= "A" .and. crit_(s:s) <= "Z") crit_(s:s) = achar(iachar(crit_(s:s)) + 32)
+end do
+if (trim(crit_) /= "aic" .and. trim(crit_) /= "bic") then
+   print *, "Error: cpfitaic() criterion must be 'aic' or 'bic'"
+   return
+end if
+
+mmax = 5
+if (present(max_cp)) mmax = max(0, max_cp)
+mseg = 10
+if (present(minseg)) mseg = max(2, minseg)
+do_plot = .true.
+if (present(plot)) do_plot = (plot /= 0)
+do_plot_ic = .false.
+if (present(plot_ic)) do_plot_ic = (plot_ic /= 0)
+do_verbose = .true.
+if (present(verbose)) do_verbose = (verbose /= 0)
+
+nm = mmax + 1
+allocate (fits(nm), aicv(nm), bicv(nm), ncpv(nm))
+allocate (yfit(n, nm), tt(n), legends(nm))
+do m = 1, n
+   tt(m) = real(m, dp)
+end do
+
+do m = 0, mmax
+   fits(m + 1)%v = cpfit(x, mode=trim(mode_), max_cp=m, minseg=mseg, plot=0, verbose=0)
+   if (size(fits(m + 1)%v) < 3) then
+      print *, "Error: cpfitaic() failed for max_cp=", m
+      return
+   end if
+   aicv(m + 1) = fits(m + 1)%v(size(fits(m + 1)%v) - 1)
+   bicv(m + 1) = fits(m + 1)%v(size(fits(m + 1)%v))
+   ncpv(m + 1) = nint(fits(m + 1)%v(1))
+   call fitted_means_from_cpfit(fits(m + 1)%v, mode_, yfit(:, m + 1))
+   write (legends(m + 1), "(a,i0)") "max_cp=", m
+   if (do_verbose) call print_model_table(m, fits(m + 1)%v, mode_)
+end do
+
+best_i = 1
+if (trim(crit_) == "aic") then
+   best_val = aicv(1)
+   do m = 2, nm
+      if (aicv(m) < best_val) then
+         best_val = aicv(m)
+         best_i = m
+      end if
+   end do
+else
+   best_val = bicv(1)
+   do m = 2, nm
+      if (bicv(m) < best_val) then
+         best_val = bicv(m)
+         best_i = m
+      end if
+   end do
+end if
+
+ncp = ncpv(best_i)
+best_out = fits(best_i)%v
+
+if (do_verbose) then
+   print *
+   print "(a)", "cpfitaic model scan"
+   print "(a8,a8,a18,a18)", "max_cp", "ncp", "AIC", "BIC"
+   do m = 0, mmax
+      print "(2i8,2f18.6)", m, ncpv(m + 1), aicv(m + 1), bicv(m + 1)
+   end do
+   print "(a,a,a,i0,a,i0,a)", "criterion=", trim(crit_), "  chooses max_cp=", best_i - 1, " (ncp=", ncp, ")"
+end if
+
+if (do_plot) then
+   write (ttl, "(a,a,a,i0,a)") "cpfitaic fits (", trim(mode_), ", #obs=", n, ")"
+   call gplot(tt, yfit, title=trim(ttl), xlabel="t", legend_labels=legends, points_y=x)
+end if
+
+if (do_plot_ic) then
+   allocate (icm(nm), icy(nm, 2), legends_ic(2))
+   do m = 1, nm
+      icm(m) = real(m - 1, dp)
+   end do
+   icy(:, 1) = aicv
+   icy(:, 2) = bicv
+   legends_ic(1) = "AIC"
+   legends_ic(2) = "BIC"
+   write (ttl, "(a,a,a)") "cpfitaic information criteria (", trim(mode_), ")"
+   call gplot(icm, icy, title=trim(ttl), xlabel="max_cp", legend_labels=legends_ic)
+   deallocate (icm, icy, legends_ic)
+end if
+
+contains
+
+   subroutine fitted_means_from_cpfit(v, mode_s, yhat)
+      real(kind=dp), intent(in) :: v(:)
+      character(len=*), intent(in) :: mode_s
+      real(kind=dp), intent(out) :: yhat(:)
+      integer :: nseg, ncp_l, j
+      integer, allocatable :: cps_l(:)
+      real(kind=dp), allocatable :: mu_l(:)
+
+      ncp_l = max(0, nint(v(1)))
+      nseg = ncp_l + 1
+      allocate (cps_l(ncp_l), mu_l(nseg))
+      if (ncp_l > 0) cps_l = nint(v(2:ncp_l + 1))
+      if (trim(mode_s) == "sd") then
+         mu_l = v(ncp_l + 2)
+      else
+         mu_l = v(ncp_l + 2:2*ncp_l + 2)
+      end if
+
+      lo = 1
+      do j = 1, nseg
+         if (j <= ncp_l) then
+            hi = min(size(yhat), max(lo, cps_l(j)))
+         else
+            hi = size(yhat)
+         end if
+         if (hi >= lo) yhat(lo:hi) = mu_l(j)
+         lo = hi + 1
+      end do
+      if (lo <= size(yhat)) yhat(lo:) = mu_l(nseg)
+      deallocate (cps_l, mu_l)
+   end subroutine fitted_means_from_cpfit
+
+   subroutine print_model_table(maxcp_s, v, mode_s)
+      integer, intent(in) :: maxcp_s
+      real(kind=dp), intent(in) :: v(:)
+      character(len=*), intent(in) :: mode_s
+      integer :: ncp_l, nseg, j, lo_l, hi_l
+      integer, allocatable :: cps_l(:)
+      real(kind=dp), allocatable :: mu_l(:), sd_l(:)
+      real(kind=dp) :: aic_l, bic_l
+
+      ncp_l = max(0, nint(v(1)))
+      nseg = ncp_l + 1
+      allocate (cps_l(ncp_l), mu_l(nseg), sd_l(nseg))
+      if (ncp_l > 0) cps_l = nint(v(2:ncp_l + 1))
+      select case (trim(mode_s))
+      case ("mean")
+         mu_l = v(ncp_l + 2:2*ncp_l + 2)
+         sd_l = v(2*ncp_l + 3)
+      case ("sd")
+         mu_l = v(ncp_l + 2)
+         sd_l = v(ncp_l + 3:2*ncp_l + 2)
+      case default
+         mu_l = v(ncp_l + 2:2*ncp_l + 2)
+         sd_l = v(2*ncp_l + 3:3*ncp_l + 3)
+      end select
+      aic_l = v(size(v) - 1)
+      bic_l = v(size(v))
+
+      print *
+      print "(a,i0,a,i0,a,f12.4,a,f12.4)", "model max_cp=", maxcp_s, "  ncp=", ncp_l, "  AIC=", aic_l, "  BIC=", bic_l
+      if (ncp_l > 0) then
+         write (*, "(a)", advance="no") "changepoints: "
+         do j = 1, ncp_l
+            if (j > 1) write (*, "(a)", advance="no") ", "
+            write (*, "(i0)", advance="no") cps_l(j)
+         end do
+         print *
+      else
+         print *, "changepoints: none"
+      end if
+      print "(a8,a8,a8,a14,a14)", "segment", "start", "end", "mean", "sd"
+      lo_l = 1
+      do j = 1, nseg
+         if (j <= ncp_l) then
+            hi_l = cps_l(j)
+         else
+            hi_l = n
+         end if
+         print "(i8,i8,i8,2f14.6)", j, lo_l, hi_l, mu_l(j), sd_l(j)
+         lo_l = hi_l + 1
+      end do
+
+      deallocate (cps_l, mu_l, sd_l)
+   end subroutine print_model_table
+
+end function cpfitaic
+
+function cpfit_aic(x, mode, max_cp, minseg, criterion, plot, plot_ic, verbose) result(best_out)
+! Backward-compatible alias.
+real(kind=dp), intent(in) :: x(:)
+character(len=*), intent(in), optional :: mode, criterion
+integer, intent(in), optional :: max_cp, minseg, plot, plot_ic, verbose
+real(kind=dp), allocatable :: best_out(:)
+best_out = cpfitaic(x, mode=mode, max_cp=max_cp, minseg=minseg, criterion=criterion, plot=plot, plot_ic=plot_ic, verbose=verbose)
+end function cpfit_aic
 
 subroutine distaicscan(x, verbose)
 ! Fit sensible distributions to x and print AIC ranking table.

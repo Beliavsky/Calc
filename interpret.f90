@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
@@ -10,7 +10,7 @@ module interpret_mod
    use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version
-   use plot_mod, only: plot, plot_to_label
+   use plot_mod, only: plot, plot_to_label, set_plotout, get_plotout
    implicit none
    private
    public :: eval_print, tunit, code_transcript_file, vars, write_code, &
@@ -1670,9 +1670,9 @@ contains
                            curr_char = expr(pos:pos); pos = pos + 1
                         end if
                         have_second = .false.
-                     else if (trim(id) == "armafitaic") then
+                     else if (trim(id) == "armafitaic" .or. trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic") then
                         !------------------------------------------------------------
-                        !  armafitaic: allow keyword-only argument after first arg
+                        !  armafitaic/cpfit: allow keyword-only argument after first arg
                         !------------------------------------------------------------
                         block
                            integer :: save_pos
@@ -1680,24 +1680,30 @@ contains
                            save_pos = pos
                            call next_char()
                            call skip_spaces()
-                           is_name_eq = .false.
-                           if (is_letter(curr_char)) then
-                              look_name = parse_identifier()
-                              call skip_spaces()
-                              if (curr_char == "=") is_name_eq = .true.
-                           end if
-                           if (is_name_eq) then
+                           if (trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic") then
                               pos = save_pos
                               curr_char = ","
                               have_second = .false.
                            else
-                              pos = save_pos
-                              call next_char()
-                              call skip_spaces()
-                              arg2 = parse_expression()
-                              have_second = .true.
-                              if (eval_error) then
-                                 f = [bad_value]; return
+                              is_name_eq = .false.
+                              if (is_letter(curr_char)) then
+                                 look_name = parse_identifier()
+                                 call skip_spaces()
+                                 if (curr_char == "=") is_name_eq = .true.
+                              end if
+                              if (is_name_eq) then
+                                 pos = save_pos
+                                 curr_char = ","
+                                 have_second = .false.
+                              else
+                                 pos = save_pos
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg2 = parse_expression()
+                                 have_second = .true.
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
                               end if
                            end if
                         end block
@@ -4815,6 +4821,386 @@ contains
                         end if
                      end block
 
+                  case ("cpsim")
+                     block
+                        integer :: nobs, seedi, eqpos, pos_idx, ploti, verbosei
+                        logical :: have_mu, have_sd, have_seed, have_plot, have_verbose
+                        real(kind=dp), allocatable :: cpv(:), muv(:), sdv(:), tmp(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 2) then
+                           print *, "Error: cpsim() needs at least n and cp"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        tmp = evaluate(adjustl(labels(1)))
+                        if (eval_error .or. size(tmp) /= 1) then
+                           print *, "Error: first argument n must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        nobs = nint(tmp(1))
+                        cpv = evaluate(adjustl(labels(2)))
+                        if (eval_error .or. size(cpv) < 1) then
+                           print *, "Error: second argument cp must be non-empty"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        have_mu = .false.; have_sd = .false.; have_seed = .false.; have_plot = .false.; have_verbose = .false.
+                        ploti = 0
+                        verbosei = 0
+                        pos_idx = 0
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid named argument in cpsim()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              if (trim(ltok) == "mu") then
+                                 muv = tmp; have_mu = .true.
+                              else if (trim(ltok) == "sd") then
+                                 sdv = tmp; have_sd = .true.
+                              else if (trim(ltok) == "seed") then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: seed must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 seedi = nint(tmp(1)); have_seed = .true.
+                              else if (trim(ltok) == "plot") then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 ploti = merge(1, 0, tmp(1) /= 0.0_dp); have_plot = .true.
+                              else if (trim(ltok) == "verbose") then
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: verbose must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 verbosei = merge(1, 0, tmp(1) /= 0.0_dp); have_verbose = .true.
+                              else
+                                 print *, "Error: unknown named argument in cpsim()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error .or. size(tmp) < 1) then
+                                 print *, "Error: invalid positional argument in cpsim()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                              pos_idx = pos_idx + 1
+                              select case (pos_idx)
+                              case (1)
+                                 muv = tmp; have_mu = .true.
+                              case (2)
+                                 sdv = tmp; have_sd = .true.
+                              case (3)
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: seed must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 seedi = nint(tmp(1)); have_seed = .true.
+                              case (4)
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: plot must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 ploti = merge(1, 0, tmp(1) /= 0.0_dp); have_plot = .true.
+                              case (5)
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: verbose must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 verbosei = merge(1, 0, tmp(1) /= 0.0_dp); have_verbose = .true.
+                              case default
+                                 print *, "Error: too many arguments for cpsim()"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end select
+                           end if
+                        end do
+                        if (.not. have_mu) muv = [0.0_dp]
+                        if (.not. have_sd) sdv = [1.0_dp]
+                        if (have_seed .and. have_plot .and. have_verbose) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti, verbose=verbosei)
+                        else if (have_seed .and. have_plot) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti)
+                        else if (have_seed .and. have_verbose) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, verbose=verbosei)
+                        else if (have_plot .and. have_verbose) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti, verbose=verbosei)
+                        else if (have_seed) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi)
+                        else if (have_plot) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti)
+                        else if (have_verbose) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, verbose=verbosei)
+                        else
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv)
+                        end if
+                     end block
+
+                  case ("cpfit")
+                     block
+                        integer :: mcp, mseg, ploti, verbosei, eqpos, pos_idx
+                        character(len=16) :: mode_s
+                        character(len=:), allocatable :: tok, ltok, rval, sval
+                        real(kind=dp), allocatable :: tmp(:)
+                        mode_s = "mean"
+                        mcp = 1
+                        mseg = 10
+                        ploti = 1
+                        verbosei = 1
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos_idx = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              if (index(ltok, "mode") == 1) then
+                                 sval = trim(rval)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 mode_s = lower_str(trim(sval))
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: optional arguments must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 if (index(ltok, "max_cp") == 1) then
+                                    mcp = nint(tmp(1))
+                                 else if (index(ltok, "minseg") == 1) then
+                                    mseg = nint(tmp(1))
+                                 else if (index(ltok, "plot") == 1) then
+                                    ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 else if (index(ltok, "verbose") == 1) then
+                                    verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 else
+                                    print *, "Error: unknown named argument in cpfit()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                              end if
+                           else
+                              pos_idx = pos_idx + 1
+                              if (pos_idx == 1) then
+                                 sval = trim(tok)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 if (len_trim(sval) > 0 .and. .not. is_numeral(sval(1:1))) then
+                                    mode_s = lower_str(trim(sval))
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: invalid optional argument in cpfit()"
+                                       eval_error = .true.; f = [bad_value]
+                                       return
+                                    end if
+                                    mcp = nint(tmp(1))
+                                    pos_idx = 2
+                                 end if
+                              else
+                                 tmp = evaluate(tok)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: optional arguments must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 select case (pos_idx)
+                                 case (2)
+                                    mcp = nint(tmp(1))
+                                 case (3)
+                                    mseg = nint(tmp(1))
+                                 case (4)
+                                    ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case (5)
+                                    verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case default
+                                    print *, "Error: too many arguments for cpfit()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end select
+                              end if
+                           end if
+                        end do
+                        f = cpfit(arg1, mode=trim(mode_s), max_cp=max(0, mcp), minseg=max(2, mseg), plot=ploti, verbose=verbosei)
+                     end block
+
+                  case ("cpfitaic", "cpfit_aic")
+                     block
+                        integer :: mcp, mseg, ploti, plotici, verbosei, eqpos, pos_idx
+                        logical :: have_crit_pos
+                        character(len=16) :: mode_s, crit_s
+                        character(len=:), allocatable :: tok, ltok, rval, sval
+                        real(kind=dp), allocatable :: tmp(:)
+                        mode_s = "mean"
+                        crit_s = "aic"
+                        mcp = 5
+                        mseg = 10
+                        ploti = 1
+                        plotici = 0
+                        verbosei = 1
+                        have_crit_pos = .false.
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos_idx = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              if (index(ltok, "mode") == 1) then
+                                 sval = trim(rval)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 mode_s = lower_str(trim(sval))
+                              else if (index(ltok, "criterion") == 1) then
+                                 sval = trim(rval)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 crit_s = lower_str(trim(sval))
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: optional arguments must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 if (index(ltok, "max_cp") == 1) then
+                                    mcp = nint(tmp(1))
+                                 else if (index(ltok, "minseg") == 1) then
+                                    mseg = nint(tmp(1))
+                                 else if (index(ltok, "plot_ic") == 1) then
+                                    plotici = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 else if (index(ltok, "plot") == 1) then
+                                    ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 else if (index(ltok, "verbose") == 1) then
+                                    verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 else
+                                    print *, "Error: unknown named argument in cpfitaic()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                              end if
+                           else
+                              pos_idx = pos_idx + 1
+                              if (pos_idx == 1) then
+                                 sval = trim(tok)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 if (len_trim(sval) > 0 .and. .not. is_numeral(sval(1:1))) then
+                                    mode_s = lower_str(trim(sval))
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: invalid optional argument in cpfitaic()"
+                                       eval_error = .true.; f = [bad_value]
+                                       return
+                                    end if
+                                    mcp = nint(tmp(1))
+                                    pos_idx = 2
+                                 end if
+                              else if (pos_idx == 4) then
+                                 sval = trim(tok)
+                                 if (len_trim(sval) >= 2) then
+                                    if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                    if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                       sval = sval(:len_trim(sval) - 1)
+                                    end if
+                                 end if
+                                 if (len_trim(sval) > 0 .and. .not. is_numeral(sval(1:1)) .and. &
+                                     lower_str(trim(sval)) /= ".true." .and. lower_str(trim(sval)) /= ".false." .and. &
+                                     lower_str(trim(sval)) /= "true" .and. lower_str(trim(sval)) /= "false") then
+                                    crit_s = lower_str(trim(sval))
+                                    have_crit_pos = .true.
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: optional arguments must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       return
+                                    end if
+                                    ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                    have_crit_pos = .false.
+                                 end if
+                              else
+                                 tmp = evaluate(tok)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: optional arguments must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 select case (pos_idx)
+                                 case (2)
+                                    mcp = nint(tmp(1))
+                                 case (3)
+                                    mseg = nint(tmp(1))
+                                 case (4)
+                                    ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case (5)
+                                    if (have_crit_pos) then
+                                       ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                                    else
+                                       plotici = merge(1, 0, tmp(1) /= 0.0_dp)
+                                    end if
+                                 case (6)
+                                    if (have_crit_pos) then
+                                       plotici = merge(1, 0, tmp(1) /= 0.0_dp)
+                                    else
+                                       verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                                    end if
+                                 case (7)
+                                    verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                                 case default
+                                    print *, "Error: too many arguments for cpfitaic()"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end select
+                              end if
+                           end if
+                        end do
+                        f = cpfitaic(arg1, mode=trim(mode_s), max_cp=max(0, mcp), minseg=max(2, mseg), criterion=trim(crit_s), &
+                                     plot=ploti, plot_ic=plotici, verbose=verbosei)
+                     end block
+
                   case ("distaicscan")
                      block
                         logical :: do_verbose
@@ -5897,7 +6283,7 @@ contains
       integer, allocatable   :: rint(:)
       integer                       :: p, repeat_count
       integer                       :: prev_loop_exec_base
-      logical :: print_array_as_int, run_then, had_error, in_quote, comment_only, consumed_loop_line, ok_for, prev_exec
+      logical :: print_array_as_int, run_then, had_error, in_quote, comment_only, consumed_loop_line, ok_for, prev_exec, ok_plotout
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
       character(len=:), allocatable :: lhs, rhs, rhs_tail
       integer :: p_lpar, p_rpar, depth, len_adj, comment_pos, i_c
@@ -6580,6 +6966,22 @@ contains
                write (*, "(a,': array(',i0,')')") trim(vars(i)%name), nsize
             end if
          end do
+         goto 9000
+      end if
+      if (len_trim(trimmed_line) >= 11 .and. lower_str(trimmed_line(1:11)) == "set plotout" &
+          .and. (len_trim(trimmed_line) == 11 .or. trimmed_line(12:12) == " ")) then
+         tail = adjustl(trimmed_line(12:))
+         if (len_trim(tail) == 0) then
+            print *, "plotout =", trim(get_plotout())
+         else
+            call set_plotout(trim(tail), ok_plotout)
+            if (ok_plotout) then
+               print *, "plotout =", trim(get_plotout())
+            else
+               print *, "Error: set plotout <screen|png|pdf|svg|eps>"
+               had_error = .true.
+            end if
+         end if
          goto 9000
       end if
       trimmed_line = adjustl(line_eval)
