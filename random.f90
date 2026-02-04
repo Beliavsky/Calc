@@ -4,7 +4,7 @@ module random_mod
   implicit none
   private
   public :: random_normal, random_gamma, random_student_t, &
-            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rnct, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
   interface runif
     module procedure runif_scalar, runif_vec, runif_mat
   end interface runif
@@ -229,6 +229,24 @@ do i=1,n
   r(i) = random_student_t(df)
 end do
 end function rt
+
+function rnct(n, df, ncp) result(r)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: df, ncp
+real(kind=dp), allocatable :: r(:)
+integer :: i
+real(kind=dp) :: z, v
+if (n < 1) then
+  allocate(r(0))
+  return
+end if
+allocate(r(n))
+do i=1,n
+  z = random_normal() + ncp
+  v = random_gamma(df/2.0_dp, 2.0_dp)
+  r(i) = z / sqrt(v / df)
+end do
+end function rnct
 
 function rchisq(n, df) result(r)
 integer, intent(in) :: n

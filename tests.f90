@@ -1,8 +1,12 @@
 program session
+  use kind_mod, only: dp
+  use stats_mod, only: mssk, mssk_nct
+  use random_mod, only: rnct
   implicit none
-  integer :: i
+  real(kind=dp), allocatable :: print(:), x(:)
 
-   loop_1: do i = 1, 5
-      print *, i,i**2
-   end do loop_1
+   x = rnct(1000, 8.0_dp, 1.5_dp)
+   print = mssk(x)
+   print = mssk_nct(8.0_dp, 1.5_dp)
+   print = mssk_nct(8.0_dp)
 end program session

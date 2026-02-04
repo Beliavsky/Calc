@@ -42,6 +42,7 @@ reverse(v)
 x = runif(10)                                ! 10 iid Uniform(0,1) draws
 x0 = runif()                                 ! one Uniform(0,1) draw
 rn = rnorm(5)                                ! 5 iid standard Normal draws
+tn = rnct(5, 8.0, 1.5)                       ! 5 iid noncentral t draws (df=8, ncp=1.5)
 arsim(1000, [0.5, -0.4])                     ! simulate AR(2) series
 acf(x, 10)                                   ! sample ACF for lags 1..10
 acf(x, 10, plot=.true.)                      ! sample ACF and plot
@@ -145,6 +146,7 @@ mafit(y, 1, 5)                    ! fit MA orders 1..5 and report fit metrics
 armafit(y, 1, 1)                  ! fit one ARMA(1,1) model
 armafitgrid(y, 0, 3, 0, 3)        ! grid search over ARMA(p,q), p=0..3 and q=0..3
 armafitaic(y, 0, 5, 0, 5)         ! choose ARMA order by information criterion over p,q ranges
+
 ```
 
 `arfimafit(x, p, q)` prints a fit table including `npar` (number of estimated parameters), RMSE/AIC/BIC, and parameter estimates.
@@ -161,6 +163,14 @@ resample(x, n=20, replace=0)      ! sample without replacement
 ## Distribution helpers
 
 - Most distributions expose `r*`/`d*`/`p*`/`q*` helpers plus `fit_*` and often `mssk_*`.
+- Noncentral Student t helpers are available as `rnct`, `dnct`, `pnct`, `qnct`, `fit_nct`, and `mssk_nct`.
+
+```text
+x = rnct(5000, 8.0, 1.5)
+mssk(x)                            ! empirical [mean, sd, skew, excess kurtosis]
+mssk_nct(8.0, 1.5)                 ! theoretical noncentral t moments
+fit_nct(x)                         ! MLE fit, returns [df, ncp]
+```
 
 See [distributions.md](distributions.md) for interpreter-name to statistical-name mapping.
 

@@ -1,13 +1,13 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dt, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pt, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qt, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
                        rep, read_vec, reverse
-   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version
    use plot_mod, only: plot, plot_to_label
@@ -587,6 +587,7 @@ contains
       case ("fit_gamma"); res = fit_gamma(arr)
       case ("fit_lnorm"); res = fit_lnorm(arr)
       case ("fit_t"); res = fit_t(arr)
+      case ("fit_nct"); res = fit_nct(arr)
       case ("fit_chisq"); res = fit_chisq(arr)
       case ("fit_f"); res = fit_f(arr)
       case ("fit_beta"); res = fit_beta(arr)
@@ -2465,7 +2466,7 @@ contains
                         end select
                      end if
 
-                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace")
+                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace", "mssk_nct")
                      if (.not. have_second) then
                         if (size(arg1) /= 1) then
                            print *, "Error: first argument must be scalar"
@@ -2476,6 +2477,7 @@ contains
                            case ("mssk_lnorm"); f = mssk_lnorm(arg1(1), 1.0_dp)
                            case ("mssk_logis"); f = mssk_logis(arg1(1), 1.0_dp)
                            case ("mssk_laplace"); f = mssk_laplace(arg1(1), 1.0_dp)
+                           case ("mssk_nct"); f = mssk_nct(arg1(1), 0.0_dp)
                            case default
                               print *, "Error: function needs two arguments"
                               eval_error = .true.; f = [bad_value]
@@ -2492,6 +2494,7 @@ contains
                         case ("mssk_beta"); f = mssk_beta(arg1(1), arg2(1))
                         case ("mssk_logis"); f = mssk_logis(arg1(1), arg2(1))
                         case ("mssk_laplace"); f = mssk_laplace(arg1(1), arg2(1))
+                        case ("mssk_nct"); f = mssk_nct(arg1(1), arg2(1))
                         end select
                      end if
 
@@ -2590,7 +2593,7 @@ contains
                         end if
                      end if
 
-                  case ("dgamma", "dlnorm", "dnorm", "df", "dbeta", "dlogis", "dlaplace", "dcauchy")
+                  case ("dgamma", "dlnorm", "dnorm", "dnct", "df", "dbeta", "dlogis", "dlaplace", "dcauchy")
                      if (.not. have_second) then
                         print *, "Error: function needs three arguments"
                         eval_error = .true.; f = [bad_value]
@@ -2616,6 +2619,7 @@ contains
                               case ("dgamma"); f = dgamma(arg1, arg2(1), arg3(1))
                               case ("dlnorm"); f = dlnorm(arg1, arg2(1), arg3(1))
                               case ("dnorm"); f = dnorm(arg1, arg2(1), arg3(1))
+                              case ("dnct"); f = dnct(arg1, arg2(1), arg3(1))
                               case ("df"); f = df(arg1, arg2(1), arg3(1))
                               case ("dbeta"); f = dbeta(arg1, arg2(1), arg3(1))
                               case ("dlogis"); f = dlogis(arg1, arg2(1), arg3(1))
@@ -2723,7 +2727,7 @@ contains
                         end if
                      end if
 
-                  case ("pgamma", "plnorm", "pf", "pbeta", "plogis", "pnorm", "plaplace", "pcauchy")
+                  case ("pgamma", "plnorm", "pnct", "pf", "pbeta", "plogis", "pnorm", "plaplace", "pcauchy")
                      if (.not. have_second) then
                         print *, "Error: function needs three arguments"
                         eval_error = .true.; f = [bad_value]
@@ -2748,6 +2752,7 @@ contains
                               select case (trim(id))
                               case ("pgamma"); f = pgamma(arg1, arg2(1), arg3(1))
                               case ("plnorm"); f = plnorm(arg1, arg2(1), arg3(1))
+                              case ("pnct"); f = pnct(arg1, arg2(1), arg3(1))
                               case ("pf"); f = pf(arg1, arg2(1), arg3(1))
                               case ("pbeta"); f = pbeta(arg1, arg2(1), arg3(1))
                               case ("plogis"); f = plogis(arg1, arg2(1), arg3(1))
@@ -2856,7 +2861,7 @@ contains
                         end if
                      end if
 
-                  case ("qgamma", "qlnorm", "qf", "qbeta", "qlogis", "qnorm", "qlaplace", "qcauchy")
+                  case ("qgamma", "qlnorm", "qnct", "qf", "qbeta", "qlogis", "qnorm", "qlaplace", "qcauchy")
                      if (.not. have_second) then
                         print *, "Error: function needs three arguments"
                         eval_error = .true.; f = [bad_value]
@@ -2881,6 +2886,7 @@ contains
                               select case (trim(id))
                               case ("qgamma"); f = qgamma(arg1, arg2(1), arg3(1))
                               case ("qlnorm"); f = qlnorm(arg1, arg2(1), arg3(1))
+                              case ("qnct"); f = qnct(arg1, arg2(1), arg3(1))
                               case ("qf"); f = qf(arg1, arg2(1), arg3(1))
                               case ("qbeta"); f = qbeta(arg1, arg2(1), arg3(1))
                               case ("qlogis"); f = qlogis(arg1, arg2(1), arg3(1))
@@ -3239,7 +3245,7 @@ contains
                         end if
                      end if
 
-                  case ("rgamma", "rlnorm", "rf", "rbeta", "rlogis", "rlaplace", "rcauchy")
+                  case ("rgamma", "rlnorm", "rf", "rbeta", "rlogis", "rlaplace", "rcauchy", "rnct")
                      if (.not. have_second) then
                         if (trim(id) == "rlnorm") then
                            if (size(arg1) /= 1) then
@@ -3369,6 +3375,13 @@ contains
                                        eval_error = .true.; f = [bad_value]
                                     else
                                        f = rcauchy(n1, arg2(1), arg3(1))
+                                    end if
+                                 case ("rnct")
+                                    if (arg2(1) <= 0.0_dp) then
+                                       print *, "Error: df must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rnct(n1, arg2(1), arg3(1))
                                     end if
                                  end select
                               end if
@@ -4570,7 +4583,7 @@ contains
                         "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_nct", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then

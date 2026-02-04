@@ -9,11 +9,11 @@ private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
           geomean, harmean, acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
-          armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
-          dunif, dexp, dgamma, dlnorm, dnorm, dt, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
-          punif, pexp, pgamma, plnorm, pnorm, pt, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
-          qunif, qexp, qgamma, qlnorm, qnorm, qt, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
-          rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
+          armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
+          dunif, dexp, dgamma, dlnorm, dnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
+          punif, pexp, pgamma, plnorm, pnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
+          qunif, qexp, qgamma, qlnorm, qnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
+          rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
 
 abstract interface
    function obj_fun(x) result(f)
@@ -789,6 +789,67 @@ else
 end if
 end function mssk_t
 
+pure function mssk_nct(df, ncp) result(v)
+! Mean, standard deviation, skew and excess kurtosis of noncentral t distribution.
+real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in), optional :: ncp
+real(kind=dp) :: v(4)
+real(kind=dp) :: delta
+real(kind=dp) :: mu1r, mu2r, mu3r, mu4r
+real(kind=dp) :: mu, var, sdv, cm3, cm4
+real(kind=dp) :: g1, g2, g3, g4
+real(kind=dp) :: log_half_df
+if (present(ncp)) then
+   delta = ncp
+else
+   delta = 0.0_dp
+end if
+
+if (df <= 0.0_dp) then
+   v = nanv()
+   return
+end if
+
+v = nanv()
+log_half_df = log(0.5_dp * df)
+
+if (df > 1.0_dp) then
+   g1 = exp(0.5_dp * log_half_df + log_gamma(0.5_dp * (df - 1.0_dp)) - log_gamma(0.5_dp * df))
+   mu1r = delta * g1
+   v(1) = mu1r
+else
+   return
+end if
+
+if (df > 2.0_dp) then
+   g2 = exp(log_half_df + log_gamma(0.5_dp * (df - 2.0_dp)) - log_gamma(0.5_dp * df))
+   mu2r = (1.0_dp + delta*delta) * g2
+   mu = v(1)
+   var = mu2r - mu*mu
+   if (var <= 0.0_dp) return
+   sdv = sqrt(var)
+   v(2) = sdv
+else
+   return
+end if
+
+if (df > 3.0_dp) then
+   g3 = exp(1.5_dp * log_half_df + log_gamma(0.5_dp * (df - 3.0_dp)) - log_gamma(0.5_dp * df))
+   mu3r = (3.0_dp*delta + delta**3) * g3
+   cm3 = mu3r - 3.0_dp*mu*mu2r + 2.0_dp*mu**3
+   v(3) = cm3 / (sdv**3)
+else
+   return
+end if
+
+if (df > 4.0_dp) then
+   g4 = exp(2.0_dp * log_half_df + log_gamma(0.5_dp * (df - 4.0_dp)) - log_gamma(0.5_dp * df))
+   mu4r = (3.0_dp + 6.0_dp*delta*delta + delta**4) * g4
+   cm4 = mu4r - 4.0_dp*mu*mu3r + 6.0_dp*mu*mu*mu2r - 3.0_dp*mu**4
+   v(4) = cm4/(var*var) - 3.0_dp
+end if
+end function mssk_nct
+
 pure function mssk_chisq(df) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of chi-square distribution.
 real(kind=dp), intent(in) :: df
@@ -1024,6 +1085,64 @@ do i = 1, size(x)
    y(i) = exp(logc - 0.5_dp * (df + 1.0_dp) * log(1.0_dp + (x(i) * x(i)) / df))
 end do
 end function dt
+
+pure function dnct(x, df, ncp) result(y)
+! Noncentral Student t density.
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: df, ncp
+real(kind=dp) :: y(size(x))
+integer :: i
+if (df <= 0.0_dp) then
+   y = nanv()
+   return
+end if
+do i = 1, size(x)
+   y(i) = nct_pdf_scalar(x(i), df, ncp)
+end do
+end function dnct
+
+pure elemental function nct_pdf_scalar(x, df, ncp) result(val)
+! Numerical integration over chi-square(df) mixing distribution.
+real(kind=dp), intent(in) :: x, df, ncp
+real(kind=dp) :: val
+integer, parameter :: nseg = 240
+integer :: j
+real(kind=dp) :: plo(1), phi(1), qlo(1), qhi(1), vlo, vhi, h, vj, w, z, chi, lnchi
+real(kind=dp), parameter :: eps = 1.0e-8_dp, invsqrt2pi = 0.39894228040143267794_dp
+
+if (df <= 0.0_dp) then
+   val = nanv()
+   return
+end if
+plo(1) = eps
+phi(1) = 1.0_dp - eps
+qlo = qchisq(plo, df)
+qhi = qchisq(phi, df)
+vlo = max(0.0_dp, qlo(1))
+vhi = qhi(1)
+if (vhi <= vlo .or. .not. (vhi > 0.0_dp)) then
+   val = 0.0_dp
+   return
+end if
+h = (vhi - vlo) / real(nseg, dp)
+val = 0.0_dp
+do j = 0, nseg
+   vj = vlo + h * real(j, dp)
+   if (vj <= 0.0_dp) cycle
+   lnchi = (0.5_dp * df - 1.0_dp) * log(vj) - 0.5_dp * vj - 0.5_dp * df * log(2.0_dp) - log_gamma(0.5_dp * df)
+   chi = exp(lnchi)
+   z = x * sqrt(vj / df) - ncp
+   if (j == 0 .or. j == nseg) then
+      w = 1.0_dp
+   else if (mod(j, 2) == 1) then
+      w = 4.0_dp
+   else
+      w = 2.0_dp
+   end if
+   val = val + w * (invsqrt2pi * exp(-0.5_dp * z * z) * sqrt(vj / df) * chi)
+end do
+val = max(0.0_dp, val * h / 3.0_dp)
+end function nct_pdf_scalar
 
 pure function dchisq(x, df) result(y)
 ! Chi-square density.
@@ -1297,6 +1416,65 @@ do i = 1, size(x)
    y(i) = tcdf(x(i), nint(df))
 end do
 end function pt
+
+pure function pnct(x, df, ncp) result(y)
+! Noncentral Student t CDF.
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: df, ncp
+real(kind=dp) :: y(size(x))
+integer :: i
+if (df <= 0.0_dp) then
+   y = nanv()
+   return
+end if
+do i = 1, size(x)
+   y(i) = nct_cdf_scalar(x(i), df, ncp)
+end do
+end function pnct
+
+pure elemental function nct_cdf_scalar(x, df, ncp) result(val)
+! Numerical integration over chi-square(df) mixing distribution.
+real(kind=dp), intent(in) :: x, df, ncp
+real(kind=dp) :: val
+integer, parameter :: nseg = 240
+integer :: j
+real(kind=dp) :: plo(1), phi(1), qlo(1), qhi(1), vlo, vhi, h, vj, w, z, chi, lnchi, cdfn
+real(kind=dp), parameter :: eps = 1.0e-8_dp, invsqrt2 = 0.70710678118654752440_dp
+
+if (df <= 0.0_dp) then
+   val = nanv()
+   return
+end if
+plo(1) = eps
+phi(1) = 1.0_dp - eps
+qlo = qchisq(plo, df)
+qhi = qchisq(phi, df)
+vlo = max(0.0_dp, qlo(1))
+vhi = qhi(1)
+if (vhi <= vlo .or. .not. (vhi > 0.0_dp)) then
+   val = 0.5_dp
+   return
+end if
+h = (vhi - vlo) / real(nseg, dp)
+val = 0.0_dp
+do j = 0, nseg
+   vj = vlo + h * real(j, dp)
+   if (vj <= 0.0_dp) cycle
+   lnchi = (0.5_dp * df - 1.0_dp) * log(vj) - 0.5_dp * vj - 0.5_dp * df * log(2.0_dp) - log_gamma(0.5_dp * df)
+   chi = exp(lnchi)
+   z = x * sqrt(vj / df) - ncp
+   cdfn = 0.5_dp * (1.0_dp + erf(z * invsqrt2))
+   if (j == 0 .or. j == nseg) then
+      w = 1.0_dp
+   else if (mod(j, 2) == 1) then
+      w = 4.0_dp
+   else
+      w = 2.0_dp
+   end if
+   val = val + w * cdfn * chi
+end do
+val = min(1.0_dp, max(0.0_dp, val * h / 3.0_dp))
+end function nct_cdf_scalar
 
 pure function pchisq(x, df) result(y)
 ! Chi-square CDF.
@@ -1837,6 +2015,49 @@ do i = 1, size(p)
    end if
 end do
 end function qt
+
+pure function qnct(p, df, ncp) result(x)
+! Noncentral Student t quantile.
+real(kind=dp), intent(in) :: p(:)
+real(kind=dp), intent(in) :: df, ncp
+real(kind=dp) :: x(size(p))
+integer :: i, it
+real(kind=dp) :: lo, hi, mid, pm
+if (df <= 0.0_dp) then
+   x = nanv()
+   return
+end if
+do i = 1, size(p)
+   if (p(i) <= 0.0_dp) then
+      x(i) = -huge(1.0_dp)
+   else if (p(i) >= 1.0_dp) then
+      x(i) = huge(1.0_dp)
+   else
+      lo = ncp - 10.0_dp
+      hi = ncp + 10.0_dp
+      do while (nct_cdf_scalar(hi, df, ncp) < p(i))
+         lo = hi
+         hi = hi + 10.0_dp
+         if (hi > huge(1.0_dp) / 8.0_dp) exit
+      end do
+      do while (nct_cdf_scalar(lo, df, ncp) > p(i))
+         hi = lo
+         lo = lo - 10.0_dp
+         if (lo < -huge(1.0_dp) / 8.0_dp) exit
+      end do
+      do it = 1, 70
+         mid = 0.5_dp * (lo + hi)
+         pm = nct_cdf_scalar(mid, df, ncp)
+         if (pm < p(i)) then
+            lo = mid
+         else
+            hi = mid
+         end if
+      end do
+      x(i) = 0.5_dp * (lo + hi)
+   end if
+end do
+end function qnct
 
 pure function qchisq(p, df) result(x)
 ! Chi-square quantile.
@@ -2441,6 +2662,58 @@ contains
       end if
    end function loglik
 end function fit_t
+
+function fit_nct(x) result(pars)
+! MLE for noncentral Student t distribution.
+! Returns [df, ncp].
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: pars(2)
+real(kind=dp) :: mu0, sd0, kex, df0, u0(2), ubest(2), tol
+real(kind=dp), allocatable :: z(:)
+
+if (size(x) < 2) then
+   pars = nanv(); return
+end if
+mu0 = mean(x)
+sd0 = sd(x)
+if (sd0 <= 0.0_dp) then
+   pars = nanv(); return
+end if
+allocate (z(size(x)))
+z = (x - mu0) / sd0
+kex = kurtosis(z)
+if (kex > 0.0_dp) then
+   df0 = 6.0_dp / kex + 4.0_dp
+else
+   df0 = 30.0_dp
+end if
+df0 = max(1.1_dp, df0)
+u0 = [mu0, log(df0)]
+tol = 1.0e-6_dp
+ubest = nelder_mead(loglik, u0, 0.2_dp, 500, tol)
+pars(1) = exp(ubest(2))
+pars(2) = ubest(1)
+deallocate (z)
+
+contains
+   pure function loglik(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, df, ncp
+      real(kind=dp), allocatable :: fx(:)
+      df = exp(u(2))
+      ncp = u(1)
+      if (df <= 0.0_dp) then
+         f = -huge(1.0_dp)
+         return
+      end if
+      fx = dnct(x, df, ncp)
+      if (any(fx <= 0.0_dp) .or. any(fx /= fx)) then
+         f = -huge(1.0_dp)
+      else
+         f = sum(log(fx))
+      end if
+   end function loglik
+end function fit_nct
 function fit_chisq(x) result(pars)
 ! Method-of-moments then MLE for chi-square distribution.
 real(kind=dp), intent(in) :: x(:)
