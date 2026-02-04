@@ -69,6 +69,8 @@ ARRAY_FUNCS = {
     "ttest2",
     "ks2_test",
     "kernelreg",
+    "splinereg",
+    "naturalspline",
     "mssk",
     "mssk_exp",
     "mssk_gamma",
@@ -190,6 +192,7 @@ CALL_ONLY = {
     "acfpacf",
     "acfpacfar",
     "poly1reg",
+    "splinereg",
     "distaicscan",
 }
 REWRITE_FUNCS = {
@@ -258,6 +261,8 @@ MODULE_EXPORTS = {
         "ttest2",
         "ks2_test",
         "kernelreg",
+        "splinereg",
+        "naturalspline",
         "regress",
         "regress_multi",
         "poly1reg",
@@ -1060,6 +1065,125 @@ def rewrite_kernelreg_order_args(expr):
     return "".join(out)
 
 
+def rewrite_splinereg_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bsplinereg\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = split_top_level(expr[lpar + 1 : j], ",")
+        args = [a.strip() for a in args]
+        for idx in range(3, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"degree", "intcp", "plot"}:
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+            else:
+                args[idx] = to_int_arg(a)
+        out.append("splinereg(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_naturalspline_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bnaturalspline\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = split_top_level(expr[lpar + 1 : j], ",")
+        args = [a.strip() for a in args]
+        for idx in range(2, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"k", "intcp", "plot"}:
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key in {"points"}:
+                    args[idx] = f"{a[:eq].strip()}={rhs}"
+            else:
+                if idx == 2:
+                    args[idx] = to_int_arg(a)
+                else:
+                    args[idx] = to_int_arg(a)
+        out.append("naturalspline(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def transpile_expr(expr):
     expr = rewrite_arfimasim_calls(expr)
     expr = rewrite_acf_pacf_plot_args(expr)
@@ -1067,6 +1191,8 @@ def transpile_expr(expr):
     expr = rewrite_default_optional_calls(expr)
     expr = rewrite_functions(expr)
     expr = rewrite_kernelreg_order_args(expr)
+    expr = rewrite_splinereg_args(expr)
+    expr = rewrite_naturalspline_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
     expr = replace_ops(expr)
