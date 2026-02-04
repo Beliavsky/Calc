@@ -1,13 +1,13 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
                        rep, read_vec, reverse
-   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version
    use plot_mod, only: plot, plot_to_label
@@ -520,6 +520,10 @@ contains
       case ("geomean"); r = geomean(arr)
       case ("harmean"); r = harmean(arr)
       case ("sd"); r = sd(arr)
+      case ("trimmean"); r = trimmean(arr)
+      case ("winsor_mean"); r = winsor_mean(arr)
+      case ("mad"); r = mad(arr)
+      case ("iqr_scale"); r = iqr_scale(arr)
       case ("skew"); r = skew(arr)
       case ("kurt"); r = kurtosis(arr)
       case ("print_stats"); call print_stats(arr); r = 0
@@ -582,6 +586,8 @@ contains
       case ("stdz"); res = standardize(arr)
       case ("reverse"); res = reverse(arr)
       case ("mssk"); res = mssk(arr)
+      case ("jb_test"); res = jb_test(arr)
+      case ("kde"); res = kde(arr)
       case ("fit_norm"); res = fit_norm(arr)
       case ("fit_exp"); res = fit_exp(arr)
       case ("fit_gamma"); res = fit_gamma(arr)
@@ -1370,9 +1376,9 @@ contains
          integer, allocatable :: idxv(:)
          character(len=len_name) :: id
          character(len=:), allocatable :: idxs
-         integer :: nsize, pstart, pend, depth, n1, n2, dim_val
+         integer :: nsize, pstart, pend, depth, n1, n2, dim_val, nstart_i
          integer :: n_args, i_arg
-         logical :: is_neg, have_second
+         logical :: is_neg, have_second, verbose_opt, plot_opt
          logical :: toplevel_colon, toplevel_comma, have_dim
          character(len=len_name) :: look_name    ! NEW
          type(arr_t), allocatable :: args(:)
@@ -1410,8 +1416,14 @@ contains
          case ("[")                                    ! array literal
             f = parse_array()
 
-         case default
-            if (is_numeral(curr_char) .or. curr_char == ".") then
+        case default
+            if (pos - 1 + 5 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 5)) == ".true.") then
+               f = [1.0_dp]
+               call advance_token(6)
+            else if (pos - 1 + 6 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 6)) == ".false.") then
+               f = [0.0_dp]
+               call advance_token(7)
+            else if (is_numeral(curr_char) .or. curr_char == ".") then
                f = parse_number()
 
             else if (is_letter(curr_char)) then
@@ -2451,6 +2463,231 @@ contains
                         f = quantile(arg1, arg2)
                      end if
 
+                  case ("trimmean", "winsor_mean", "mad")
+                     if (.not. have_second) then
+                        select case (trim(id))
+                        case ("trimmean"); f = [trimmean(arg1)]
+                        case ("winsor_mean"); f = [winsor_mean(arg1)]
+                        case ("mad"); f = [mad(arg1)]
+                        end select
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("trimmean"); f = [trimmean(arg1, arg2(1))]
+                        case ("winsor_mean"); f = [winsor_mean(arg1, arg2(1))]
+                        case ("mad"); f = [mad(arg1, arg2(1))]
+                        end select
+                     end if
+
+                  case ("ttest1")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        f = ttest1(arg1, arg2(1))
+                     end if
+
+                  case ("ttest2")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = ttest2(arg1, arg2, pooled=(arg3(1) /= 0.0_dp))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           f = ttest2(arg1, arg2)
+                        end if
+                     end if
+
+                  case ("ks2_test")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        f = ks2_test(arg1, arg2)
+                     end if
+
+                  case ("fit_mixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = nint(arg2(1))
+                        if (n1 < 1) then
+                           print *, "Error: second argument must be >= 1"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call skip_spaces()
+                           if (curr_char == ",") then
+                              call next_char()
+                              call skip_spaces()
+                              if (pos - 1 + 6 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 6)) == "verbose") then
+                                 call advance_token(7)
+                                 call skip_spaces()
+                                 if (curr_char /= "=") then
+                                    print *, "Error: expected '=' after verbose"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    call next_char()
+                                    call skip_spaces()
+                                    arg3 = parse_expression()
+                                    if (eval_error) then
+                                       f = [bad_value]
+                                    else if (size(arg3) /= 1) then
+                                       print *, "Error: verbose must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = fit_mixnorm(arg1, n1, arg3(1) /= 0.0_dp)
+                                       call skip_spaces()
+                                       if (curr_char == ")") call next_char()
+                                    end if
+                                 end if
+                              else
+                                 arg3 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg3) /= 1) then
+                                    print *, "Error: third argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = fit_mixnorm(arg1, n1, arg3(1) /= 0.0_dp)
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           else
+                              f = fit_mixnorm(arg1, n1)
+                           end if
+                        end if
+                     end if
+
+                  case ("fit_mixnorm_aic", "fix_mixnorm_aic")
+                     if (.not. have_second) then
+                        print *, "Error: function needs at least three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs at least three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              n1 = nint(arg2(1))
+                              n2 = nint(arg3(1))
+                              if (n1 < 1 .or. n2 < n1) then
+                                 print *, "Error: require 1 <= kmin <= kmax"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 nstart_i = 3
+                                 verbose_opt = .true.
+                                 plot_opt = .false.
+                                 call skip_spaces()
+                                 do while (curr_char == ",")
+                                    call next_char()
+                                    call skip_spaces()
+                                    if (pos - 1 + 5 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 5)) == "nstart") then
+                                       call advance_token(6)
+                                       call skip_spaces()
+                                       if (curr_char /= "=") then
+                                          print *, "Error: expected '=' after nstart"
+                                          eval_error = .true.; exit
+                                       end if
+                                       call next_char()
+                                       call skip_spaces()
+                                       arg4 = parse_expression()
+                                       if (eval_error .or. size(arg4) /= 1) then
+                                          print *, "Error: nstart must be scalar"
+                                          eval_error = .true.; exit
+                                       end if
+                                       nstart_i = max(1, nint(arg4(1)))
+                                    else if (pos - 1 + 6 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 6)) == "verbose") then
+                                       call advance_token(7)
+                                       call skip_spaces()
+                                       if (curr_char /= "=") then
+                                          print *, "Error: expected '=' after verbose"
+                                          eval_error = .true.; exit
+                                       end if
+                                       call next_char()
+                                       call skip_spaces()
+                                       arg4 = parse_expression()
+                                       if (eval_error .or. size(arg4) /= 1) then
+                                          print *, "Error: verbose must be scalar"
+                                          eval_error = .true.; exit
+                                       end if
+                                       verbose_opt = (arg4(1) /= 0.0_dp)
+                                    else if (pos - 1 + 3 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 3)) == "plot") then
+                                       call advance_token(4)
+                                       call skip_spaces()
+                                       if (curr_char /= "=") then
+                                          print *, "Error: expected '=' after plot"
+                                          eval_error = .true.; exit
+                                       end if
+                                       call next_char()
+                                       call skip_spaces()
+                                       arg4 = parse_expression()
+                                       if (eval_error .or. size(arg4) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; exit
+                                       end if
+                                       plot_opt = (arg4(1) /= 0.0_dp)
+                                    else
+                                       arg4 = parse_expression()
+                                       if (eval_error .or. size(arg4) /= 1) then
+                                          print *, "Error: optional argument must be scalar"
+                                          eval_error = .true.; exit
+                                       end if
+                                       nstart_i = max(1, nint(arg4(1)))
+                                    end if
+                                    call skip_spaces()
+                                 end do
+                                 if (.not. eval_error) then
+                                    if (trim(id) == "fix_mixnorm_aic") then
+                                       f = fix_mixnorm_aic(arg1, n1, n2, nstart=nstart_i, verbose=verbose_opt, plot=plot_opt)
+                                    else
+                                       f = fit_mixnorm_aic(arg1, n1, n2, nstart=nstart_i, verbose=verbose_opt, plot=plot_opt)
+                                    end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 else
+                                    f = [bad_value]
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
                   case ("mssk_exp", "mssk_t", "mssk_chisq")
                      if (have_second) then
                         print *, "Error: function takes one argument"
@@ -2496,6 +2733,29 @@ contains
                         case ("mssk_laplace"); f = mssk_laplace(arg1(1), arg2(1))
                         case ("mssk_nct"); f = mssk_nct(arg1(1), arg2(1))
                         end select
+                     end if
+
+                  case ("mssk_mixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              f = mssk_mixnorm(arg1, arg2, arg3)
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
                      end if
 
                   case ("dunif")
@@ -2585,6 +2845,42 @@ contains
                                        f = dhyperb(arg1, arg2(1), arg3(1), &
                                                    arg4(1))
                                     end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("dmixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else
+                                    f = dmixnorm(arg1, arg2, arg3, arg4)
                                     call skip_spaces()
                                     if (curr_char == ")") call next_char()
                                  end if
@@ -2727,6 +3023,42 @@ contains
                         end if
                      end if
 
+                  case ("pmixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else
+                                    f = pmixnorm(arg1, arg2, arg3, arg4)
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
                   case ("pgamma", "plnorm", "pnct", "pf", "pbeta", "plogis", "pnorm", "plaplace", "pcauchy")
                      if (.not. have_second) then
                         print *, "Error: function needs three arguments"
@@ -2853,6 +3185,42 @@ contains
                                        f = qhyperb(arg1, arg2(1), arg3(1), &
                                                    arg4(1))
                                     end if
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("qmixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else
+                                    f = qmixnorm(arg1, arg2, arg3, arg4)
                                     call skip_spaces()
                                     if (curr_char == ")") call next_char()
                                  end if
@@ -3159,6 +3527,51 @@ contains
                               eval_error = .true.; f = [bad_value]
                            else
                               f = rhyperb(n1, arg2(1), 1.0_dp, 1.0_dp)
+                           end if
+                        end if
+                     end if
+
+                  case ("rmixnorm")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1) then
+                        print *, "Error: first argument must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else
+                                    n1 = nint(arg1(1))
+                                    if (n1 < 1) then
+                                       print *, "Error: length must be > 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = rmixnorm(n1, arg2, arg3, arg4)
+                                       call skip_spaces()
+                                       if (curr_char == ")") call next_char()
+                                    end if
+                                 end if
+                              end if
                            end if
                         end if
                      end if
@@ -4054,6 +4467,106 @@ contains
                         f = [real(kind=dp) ::]
                      end block
 
+                  case ("poly1reg")
+                     block
+                        logical :: use_intcp
+                        integer :: intcp_i
+                        integer :: deg, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        if (.not. have_second) then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        call next_char()
+                        call skip_spaces()
+                        arg3 = parse_expression()
+                        if (eval_error .or. size(arg3) /= 1) then
+                           print *, "Error: third argument must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        deg = nint(arg3(1))
+                        use_intcp = .true.
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                           if (n_args >= 4) then
+                              tok = adjustl(labels(4))
+                              ltok = lower_str(tok)
+                              if (index(ltok, "intcp") == 1) then
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    tmp = evaluate(rval)
+                                 else
+                                    tmp = evaluate(tok)
+                                 end if
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 use_intcp = (tmp(1) /= 0.0_dp)
+                              else
+                                 tmp = evaluate(tok)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: fourth argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 use_intcp = (tmp(1) /= 0.0_dp)
+                              end if
+                           end if
+                        end if
+                        if (use_intcp) then
+                           intcp_i = 1
+                        else
+                           intcp_i = 0
+                        end if
+                        call poly1reg(arg1, arg2, deg, intcp=intcp_i)
+                        call skip_spaces()
+                        if (curr_char == ")") call next_char()
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("distaicscan")
+                     block
+                        logical :: do_verbose
+                        integer :: verbose_i
+                        do_verbose = .true.
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg2 = parse_expression()
+                           if (eval_error .or. size(arg2) /= 1) then
+                              print *, "Error: verbose must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                           do_verbose = (arg2(1) /= 0.0_dp)
+                        end if
+                        if (do_verbose) then
+                           verbose_i = 1
+                        else
+                           verbose_i = 0
+                        end if
+                        call distaicscan(arg1, verbose=verbose_i)
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
                   case ("regress")
                      block
                         logical :: use_intcp
@@ -4530,6 +5043,18 @@ contains
                         end if
                      end if
 
+                  case ("kde")
+                     if (.not. have_second) then
+                        f = kde(arg1)
+                     else if (size(arg2) /= 1) then
+                        print *, "Error: second argument of kde() must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        nsize = nint(arg2(1))
+                        if (nsize < 20) nsize = 20
+                        f = kde(arg1, nsize)
+                     end if
+
                   case ("runif", "rnorm", "rsech", "arange", "zeros", "ones") ! one-arg
                      if (have_second) then
                         print *, "Error: function takes one argument"
@@ -4580,10 +5105,10 @@ contains
 
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
-                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", &
+                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", "iqr_scale", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "unique", "stdz", "reverse", "median", "mssk", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_nct", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "mssk", "jb_test", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_nct", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then
@@ -4591,7 +5116,7 @@ contains
                         eval_error = .true.; f = [bad_value]
                      else
                         if (index("size sum product norm1 norm2 minval maxval minloc "// &
-                                  "maxloc count mean geomean harmean sd median print_stats skew kurt", &
+                                  "maxloc count mean geomean iqr_scale harmean sd median print_stats skew kurt", &
                                trim(id)) > 0) then
                            f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
                         else

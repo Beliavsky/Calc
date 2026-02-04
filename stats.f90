@@ -3,17 +3,19 @@ use kind_mod, only: dp
 use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 use random_mod, only: random_normal
-use qsort_mod, only: median
+use qsort_mod, only: median, quantile, sorted
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean, harmean, acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
-          armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
-          dunif, dexp, dgamma, dlnorm, dnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
-          punif, pexp, pgamma, plnorm, pnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
-          qunif, qexp, qgamma, qlnorm, qnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
-          rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
+          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kde, &
+          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
+          armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
+          dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
+          punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
+          qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
+          rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, &
+          fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
 
 abstract interface
    function obj_fun(x) result(f)
@@ -30,6 +32,17 @@ pure function nanv() result(x)
 real(kind=dp) :: x
 x = ieee_value(0.0_dp, ieee_quiet_nan)
 end function nanv
+
+pure logical function mixnorm_params_ok(wgt, mu, sig) result(ok)
+! Validate finite normal-mixture parameters.
+real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+ok = .false.
+if (size(wgt) < 1) return
+if (size(mu) /= size(wgt) .or. size(sig) /= size(wgt)) return
+if (any(wgt < 0.0_dp) .or. any(sig <= 0.0_dp)) return
+if (sum(wgt) <= 0.0_dp) return
+ok = .true.
+end function mixnorm_params_ok
 
 pure function standardize(x) result(y)
 ! shift and scale x so it has mean 0 and variance 1
@@ -71,6 +84,99 @@ else
    harmean_val = 0.0_dp
 end if
 end function harmean
+
+pure function trimmean(x, alpha) result(tm)
+! Trimmed mean with symmetric trim fraction alpha in [0,0.5).
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in), optional :: alpha
+real(kind=dp) :: tm
+real(kind=dp), allocatable :: xs(:)
+real(kind=dp) :: a
+integer :: n, k, i1, i2
+n = size(x)
+if (n < 1) then
+   tm = nanv(); return
+end if
+if (present(alpha)) then
+   a = alpha
+else
+   a = 0.1_dp
+end if
+if (a < 0.0_dp .or. a >= 0.5_dp) then
+   tm = nanv(); return
+end if
+xs = sorted(x)
+k = int(floor(a * real(n, dp)))
+i1 = 1 + k
+i2 = n - k
+if (i2 < i1) then
+   tm = nanv(); return
+end if
+tm = sum(xs(i1:i2)) / real(i2 - i1 + 1, dp)
+end function trimmean
+
+pure function winsor_mean(x, alpha) result(wm)
+! Winsorized mean with symmetric winsor fraction alpha in [0,0.5).
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in), optional :: alpha
+real(kind=dp) :: wm
+real(kind=dp), allocatable :: xs(:), y(:)
+real(kind=dp) :: a
+integer :: n, k
+n = size(x)
+if (n < 1) then
+   wm = nanv(); return
+end if
+if (present(alpha)) then
+   a = alpha
+else
+   a = 0.1_dp
+end if
+if (a < 0.0_dp .or. a >= 0.5_dp) then
+   wm = nanv(); return
+end if
+xs = sorted(x)
+y = xs
+k = int(floor(a * real(n, dp)))
+if (k > 0) then
+   y(1:k) = xs(k + 1)
+   y(n - k + 1:n) = xs(n - k)
+end if
+wm = mean(y)
+end function winsor_mean
+
+pure function mad(x, center) result(v)
+! Median absolute deviation from median (or provided center).
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in), optional :: center
+real(kind=dp) :: v
+real(kind=dp), allocatable :: ad(:)
+real(kind=dp) :: c
+if (size(x) < 1) then
+   v = nanv(); return
+end if
+if (present(center)) then
+   c = center
+else
+   c = median(x)
+end if
+allocate (ad(size(x)))
+ad = abs(x - c)
+v = median(ad)
+deallocate (ad)
+end function mad
+
+pure function iqr_scale(x) result(v)
+! IQR-based robust scale estimate (IQR/1.349).
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: v
+real(kind=dp), allocatable :: q(:)
+if (size(x) < 1) then
+   v = nanv(); return
+end if
+q = quantile(x, [0.25_dp, 0.75_dp])
+v = (q(2) - q(1)) / 1.349_dp
+end function iqr_scale
 
 pure function sd(x) result(sd_val)
 ! return the standard deviation of x
@@ -850,6 +956,44 @@ if (df > 4.0_dp) then
 end if
 end function mssk_nct
 
+pure function mssk_mixnorm(wgt, mu, sig) result(v)
+! Mean, standard deviation, skew and excess kurtosis of a finite normal mixture.
+real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp) :: v(4)
+real(kind=dp), allocatable :: wn(:)
+real(kind=dp) :: sw, m1, m2, m3, m4, var, sdv, cm3, cm4
+integer :: k
+k = size(wgt)
+if (.not. mixnorm_params_ok(wgt, mu, sig)) then
+   v = nanv()
+   return
+end if
+allocate (wn(k))
+sw = sum(wgt)
+wn = wgt / sw
+m1 = sum(wn * mu)
+m2 = sum(wn * (sig*sig + mu*mu))
+m3 = sum(wn * (mu**3 + 3.0_dp*mu*(sig*sig)))
+m4 = sum(wn * (mu**4 + 6.0_dp*(mu*mu)*(sig*sig) + 3.0_dp*sig**4))
+var = m2 - m1*m1
+if (var <= 0.0_dp) then
+   v(1) = m1
+   v(2) = 0.0_dp
+   v(3) = nanv()
+   v(4) = nanv()
+   deallocate (wn)
+   return
+end if
+sdv = sqrt(var)
+cm3 = m3 - 3.0_dp*m1*m2 + 2.0_dp*m1**3
+cm4 = m4 - 4.0_dp*m1*m3 + 6.0_dp*(m1*m1)*m2 - 3.0_dp*m1**4
+v(1) = m1
+v(2) = sdv
+v(3) = cm3 / (sdv**3)
+v(4) = cm4 / (var*var) - 3.0_dp
+deallocate (wn)
+end function mssk_mixnorm
+
 pure function mssk_chisq(df) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of chi-square distribution.
 real(kind=dp), intent(in) :: df
@@ -964,6 +1108,51 @@ v(3) = skew(x)
 v(4) = kurtosis(x)
 end function mssk
 
+function kde(x, ngrid) result(y)
+! Gaussian-kernel density estimate; always plots estimate versus grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: ngrid
+real(kind=dp), allocatable :: y(:)
+real(kind=dp), allocatable :: gx(:)
+real(kind=dp) :: h, sx, xmin, xmax, z
+integer :: n, m, i, j
+
+n = size(x)
+if (n < 2) then
+   allocate (y(0))
+   print *, "Error: kde() requires size(x) > 1"
+   return
+end if
+if (present(ngrid)) then
+   m = max(20, ngrid)
+else
+   m = 200
+end if
+sx = sd(x)
+if (sx <= 0.0_dp) then
+   allocate (y(0))
+   print *, "Error: kde() requires non-constant x"
+   return
+end if
+h = 1.06_dp * sx * real(n, dp)**(-0.2_dp)
+h = max(h, 1.0e-8_dp)
+xmin = minval(x) - 3.0_dp * h
+xmax = maxval(x) + 3.0_dp * h
+allocate (y(m), gx(m))
+do i = 1, m
+   gx(i) = xmin + (xmax - xmin) * real(i - 1, dp) / real(max(1, m - 1), dp)
+   y(i) = 0.0_dp
+   do j = 1, n
+      z = (gx(i) - x(j)) / h
+      y(i) = y(i) + exp(-0.5_dp * z * z)
+   end do
+   y(i) = y(i) / (real(n, dp) * h * sqrt(2.0_dp * pi))
+end do
+call gplot(gx, y, title="kde", xlabel="x")
+deallocate (gx)
+end function kde
+
 pure function dunif(x, a, b) result(y)
 ! Uniform density on [a,b], defaults a=0 and b=1.
 real(kind=dp), intent(in) :: x(:)
@@ -1068,6 +1257,31 @@ do i = 1, size(x)
    y(i) = exp(logc - 0.5_dp * z * z)
 end do
 end function dnorm
+
+pure function dmixnorm(x, wgt, mu, sig) result(y)
+! Finite normal mixture density.
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp) :: y(size(x))
+real(kind=dp), allocatable :: wn(:)
+real(kind=dp) :: sw
+integer :: i, j, k
+k = size(wgt)
+if (.not. mixnorm_params_ok(wgt, mu, sig)) then
+   y = nanv()
+   return
+end if
+allocate (wn(k))
+sw = sum(wgt)
+wn = wgt / sw
+do i = 1, size(x)
+   y(i) = 0.0_dp
+   do j = 1, k
+      y(i) = y(i) + wn(j) * exp(-0.5_dp * ((x(i) - mu(j))/sig(j))**2) / (sig(j) * sqrt(2.0_dp*pi))
+   end do
+end do
+deallocate (wn)
+end function dmixnorm
 
 pure function dt(x, df) result(y)
 ! Student t density.
@@ -1669,6 +1883,33 @@ do i = 1, size(x)
    y(i) = 0.5_dp * (1.0_dp + erf(z))
 end do
 end function pnorm
+
+pure function pmixnorm(x, wgt, mu, sig) result(y)
+! Finite normal mixture CDF.
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp) :: y(size(x))
+real(kind=dp), allocatable :: wn(:)
+real(kind=dp) :: sw
+integer :: i, j, k
+k = size(wgt)
+if (.not. mixnorm_params_ok(wgt, mu, sig)) then
+   y = nanv()
+   return
+end if
+allocate (wn(k))
+sw = sum(wgt)
+wn = wgt / sw
+do i = 1, size(x)
+   y(i) = 0.0_dp
+   do j = 1, k
+      y(i) = y(i) + wn(j) * 0.5_dp * (1.0_dp + erf((x(i) - mu(j)) / (sig(j) * sqrt(2.0_dp))))
+   end do
+   if (y(i) < 0.0_dp) y(i) = 0.0_dp
+   if (y(i) > 1.0_dp) y(i) = 1.0_dp
+end do
+deallocate (wn)
+end function pmixnorm
 
 elemental function hyperb_pdf_scalar(x, loc, scale, alpha) result(y)
 ! Symmetric hyperbolic density (scalar).
@@ -2360,6 +2601,62 @@ do i = 1, size(p)
 end do
 end function qnorm
 
+pure function qmixnorm(p, wgt, mu, sig) result(x)
+! Finite normal mixture quantile by bisection on pmixnorm.
+real(kind=dp), intent(in) :: p(:)
+real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp) :: x(size(p))
+real(kind=dp), allocatable :: wn(:), cdfv(:)
+real(kind=dp) :: sw, lo, hi, mid, mu_mix, sd_mix, mom4(4)
+integer :: i, it, k
+k = size(wgt)
+if (.not. mixnorm_params_ok(wgt, mu, sig)) then
+   x = nanv()
+   return
+end if
+allocate (wn(k), cdfv(1))
+sw = sum(wgt)
+wn = wgt / sw
+mu_mix = sum(wn * mu)
+mom4 = mssk_mixnorm(wn, mu, sig)
+sd_mix = max(1.0e-10_dp, mom4(2))
+do i = 1, size(p)
+   if (p(i) <= 0.0_dp) then
+      x(i) = -huge(1.0_dp)
+   else if (p(i) >= 1.0_dp) then
+      x(i) = huge(1.0_dp)
+   else
+      lo = mu_mix - 10.0_dp * sd_mix
+      hi = mu_mix + 10.0_dp * sd_mix
+      cdfv = pmixnorm([lo], wn, mu, sig)
+      do while (cdfv(1) > p(i))
+         hi = lo
+         lo = lo - 5.0_dp * sd_mix
+         cdfv = pmixnorm([lo], wn, mu, sig)
+         if (lo < -huge(1.0_dp) / 8.0_dp) exit
+      end do
+      cdfv = pmixnorm([hi], wn, mu, sig)
+      do while (cdfv(1) < p(i))
+         lo = hi
+         hi = hi + 5.0_dp * sd_mix
+         cdfv = pmixnorm([hi], wn, mu, sig)
+         if (hi > huge(1.0_dp) / 8.0_dp) exit
+      end do
+      do it = 1, 80
+         mid = 0.5_dp * (lo + hi)
+         cdfv = pmixnorm([mid], wn, mu, sig)
+         if (cdfv(1) < p(i)) then
+            lo = mid
+         else
+            hi = mid
+         end if
+      end do
+      x(i) = 0.5_dp * (lo + hi)
+   end if
+end do
+deallocate (wn, cdfv)
+end function qmixnorm
+
 function rhyperb(n, loc, scale, alpha) result(r)
 ! Symmetric hyperbolic random variates via rejection sampling.
 integer, intent(in) :: n
@@ -2714,6 +3011,264 @@ contains
       end if
    end function loglik
 end function fit_nct
+
+function fit_mixnorm(x, k, verbose) result(pars)
+! EM fit for k-component finite normal mixture.
+! Returns concatenated [wgt(1:k), mean(1:k), sd(1:k)].
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k
+logical, intent(in), optional :: verbose
+real(kind=dp), allocatable :: pars(:)
+real(kind=dp), allocatable :: w(:), mu(:), sig(:), nk(:), sumwx(:), varj(:)
+real(kind=dp), allocatable :: resp(:,:), log_r(:), x_sorted(:)
+real(kind=dp) :: xsd, xmin, xmax, ll, ll_old, denom, maxlog, sw, sig_floor
+integer :: n, i, j, iter, m
+logical :: swapped
+logical :: do_verbose
+
+n = size(x)
+allocate (pars(0))
+do_verbose = .false.
+if (present(verbose)) do_verbose = verbose
+if (k < 1 .or. n < max(2, k)) then
+   return
+end if
+
+xsd = sd(x)
+if (xsd <= 0.0_dp) then
+   deallocate (pars)
+   allocate (pars(3*k))
+   pars = nanv()
+   return
+end if
+
+allocate (w(k), mu(k), sig(k), nk(k), sumwx(k), varj(k), resp(n, k), log_r(k), x_sorted(n))
+x_sorted = x
+call sort_in_place(x_sorted)
+xmin = x_sorted(1)
+xmax = x_sorted(n)
+if (xmax <= xmin) then
+   deallocate (w, mu, sig, nk, sumwx, varj, resp, log_r, x_sorted)
+   deallocate (pars)
+   allocate (pars(3*k))
+   pars = nanv()
+   return
+end if
+
+w = 1.0_dp / real(k, dp)
+do j = 1, k
+   m = max(1, min(n, int((real(j, dp) - 0.5_dp) * real(n, dp) / real(k, dp))))
+   mu(j) = x_sorted(m)
+end do
+sig = max(xsd / sqrt(real(k, dp)), 0.2_dp * xsd)
+sig_floor = max(1.0e-6_dp * xsd, 1.0e-8_dp)
+ll_old = -huge(1.0_dp)
+
+do iter = 1, 300
+   ll = 0.0_dp
+   do i = 1, n
+      do j = 1, k
+         log_r(j) = log(max(w(j), 1.0e-300_dp)) - log(sig(j)) - 0.5_dp*log(2.0_dp*pi) - &
+                    0.5_dp * ((x(i) - mu(j))/sig(j))**2
+      end do
+      maxlog = maxval(log_r)
+      denom = sum(exp(log_r - maxlog))
+      if (denom <= 0.0_dp) cycle
+      resp(i, :) = exp(log_r - maxlog) / denom
+      ll = ll + maxlog + log(denom)
+   end do
+
+   nk = sum(resp, dim=1)
+   nk = max(nk, 1.0e-8_dp)
+   w = nk / real(n, dp)
+   sw = sum(w)
+   if (sw > 0.0_dp) w = w / sw
+
+   do j = 1, k
+      sumwx(j) = sum(resp(:, j) * x)
+      mu(j) = sumwx(j) / nk(j)
+   end do
+   do j = 1, k
+      varj(j) = sum(resp(:, j) * (x - mu(j))**2) / nk(j)
+      sig(j) = sqrt(max(varj(j), sig_floor*sig_floor))
+   end do
+
+   if (abs(ll - ll_old) < 1.0e-7_dp * (1.0_dp + abs(ll))) exit
+   ll_old = ll
+end do
+
+! Sort components by descending weight for deterministic output.
+do i = 1, k - 1
+   swapped = .false.
+   do j = 1, k - i
+      if (w(j) < w(j + 1)) then
+         call swap_vals(mu(j), mu(j + 1))
+         call swap_vals(sig(j), sig(j + 1))
+         call swap_vals(w(j), w(j + 1))
+         swapped = .true.
+      end if
+   end do
+   if (.not. swapped) exit
+end do
+w = w / sum(w)
+
+deallocate (pars)
+allocate (pars(3*k))
+pars(1:k) = w
+pars(k + 1:2*k) = mu
+pars(2*k + 1:3*k) = sig
+
+if (do_verbose) then
+   print *
+   print "(a8,2a14)", "weight", "mean", "sd"
+   do j = 1, k
+      print "(f8.4,2f14.6)", w(j), mu(j), sig(j)
+   end do
+end if
+
+deallocate (w, mu, sig, nk, sumwx, varj, resp, log_r, x_sorted)
+
+contains
+   subroutine sort_in_place(a)
+      real(kind=dp), intent(inout) :: a(:)
+      integer :: ii, jj
+      real(kind=dp) :: tmp
+      do ii = 2, size(a)
+         tmp = a(ii)
+         jj = ii - 1
+         do while (jj >= 1)
+            if (a(jj) <= tmp) exit
+            a(jj + 1) = a(jj)
+            jj = jj - 1
+         end do
+         a(jj + 1) = tmp
+      end do
+   end subroutine sort_in_place
+
+   subroutine swap_vals(a, b)
+      real(kind=dp), intent(inout) :: a, b
+      real(kind=dp) :: t
+      t = a
+      a = b
+      b = t
+   end subroutine swap_vals
+end function fit_mixnorm
+
+function fit_mixnorm_aic(x, kmin, kmax, nstart, verbose, plot) result(best_pars)
+! AIC-based selection over k for finite normal mixture.
+! Returns best concatenated [wgt(1:k), mean(1:k), sd(1:k)].
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: kmin, kmax
+integer, intent(in), optional :: nstart
+logical, intent(in), optional :: verbose, plot
+real(kind=dp), allocatable :: best_pars(:)
+real(kind=dp), allocatable :: pars(:), pars_k(:), fx(:), w(:), mu(:), sig(:), gx(:), gy(:)
+real(kind=dp) :: ll, aic, best_aic, sdx, xmin, xmax
+character(len=64) :: ttl
+logical :: do_verbose, do_plot
+integer :: k, ks, s, pcount, best_k, n, m
+
+n = size(x)
+allocate (best_pars(0))
+if (n < 2 .or. kmin < 1 .or. kmax < kmin) return
+if (present(nstart)) then
+   ks = max(1, nstart)
+else
+   ks = 3
+end if
+do_verbose = .true.
+if (present(verbose)) do_verbose = verbose
+do_plot = .false.
+if (present(plot)) do_plot = plot
+
+best_aic = huge(1.0_dp)
+best_k = -1
+if (do_verbose) then
+   print *
+   print "(a6,a18,a18)", "k", "logLik", "AIC"
+end if
+
+do k = kmin, kmax
+   ll = -huge(1.0_dp)
+   if (allocated(pars_k)) deallocate (pars_k)
+   allocate (pars_k(0))
+   do s = 1, ks
+      pars = fit_mixnorm(x, k)
+      if (size(pars) /= 3*k) cycle
+      w = pars(1:k)
+      mu = pars(k + 1:2*k)
+      sig = pars(2*k + 1:3*k)
+      fx = dmixnorm(x, w, mu, sig)
+      if (any(fx <= 0.0_dp) .or. any(fx /= fx)) cycle
+      if (sum(log(fx)) > ll) then
+         ll = sum(log(fx))
+         if (allocated(pars_k)) deallocate (pars_k)
+         allocate (pars_k(3*k))
+         pars_k = pars
+      end if
+   end do
+   if (ll <= -huge(1.0_dp) / 2.0_dp) cycle
+   pcount = 3*k - 1
+   aic = -2.0_dp * ll + 2.0_dp * real(pcount, dp)
+   if (do_verbose) print "(i6,2f18.6)", k, ll, aic
+   if (aic < best_aic) then
+      best_aic = aic
+      best_k = k
+      if (allocated(best_pars)) deallocate (best_pars)
+      allocate (best_pars(3*k))
+      best_pars = pars_k
+   end if
+end do
+
+if (best_k < 1 .or. size(best_pars) /= 3*best_k) then
+   if (allocated(best_pars)) deallocate (best_pars)
+   allocate (best_pars(0))
+   return
+end if
+
+if (do_verbose) then
+   print "(a,i0,a,f14.6)", "AIC chooses k=", best_k, "  AIC=", best_aic
+   print "(a8,2a14)", "weight", "mean", "sd"
+   do k = 1, best_k
+      print "(f8.4,2f14.6)", best_pars(k), best_pars(best_k + k), best_pars(2*best_k + k)
+   end do
+end if
+
+if (do_plot) then
+   m = 200
+   sdx = max(1.0e-8_dp, sd(x))
+   xmin = minval(x) - 3.0_dp * sdx
+   xmax = maxval(x) + 3.0_dp * sdx
+   if (allocated(gx)) deallocate (gx)
+   if (allocated(gy)) deallocate (gy)
+   if (allocated(w)) deallocate (w)
+   if (allocated(mu)) deallocate (mu)
+   if (allocated(sig)) deallocate (sig)
+   allocate (gx(m), gy(m), w(best_k), mu(best_k), sig(best_k))
+   w = best_pars(1:best_k)
+   mu = best_pars(best_k + 1:2*best_k)
+   sig = best_pars(2*best_k + 1:3*best_k)
+   do k = 1, m
+      gx(k) = xmin + (xmax - xmin) * real(k - 1, dp) / real(max(1, m - 1), dp)
+   end do
+   gy = dmixnorm(gx, w, mu, sig)
+   write (ttl, "(a,i0,a)") "mixnorm AIC fit (", best_k, " components)"
+   call gplot(gx, gy, title=trim(ttl), xlabel="x")
+   deallocate (gx, gy, w, mu, sig)
+end if
+end function fit_mixnorm_aic
+
+function fix_mixnorm_aic(x, kmin, kmax, nstart, verbose, plot) result(best_pars)
+! Backward-compatible alias.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: kmin, kmax
+integer, intent(in), optional :: nstart
+logical, intent(in), optional :: verbose, plot
+real(kind=dp), allocatable :: best_pars(:)
+best_pars = fit_mixnorm_aic(x, kmin, kmax, nstart=nstart, verbose=verbose, plot=plot)
+end function fix_mixnorm_aic
+
 function fit_chisq(x) result(pars)
 ! Method-of-moments then MLE for chi-square distribution.
 real(kind=dp), intent(in) :: x(:)
@@ -3897,6 +4452,135 @@ else
 end if
 end function resample
 
+pure function jb_test(x) result(v)
+! Jarque-Bera normality test, returns [JB, p].
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp) :: v(2)
+real(kind=dp) :: n, s, k, jb
+if (size(x) < 3) then
+   v = nanv(); return
+end if
+n = real(size(x), dp)
+s = skew(x)
+k = kurtosis(x)
+jb = (n / 6.0_dp) * (s*s + 0.25_dp * k*k)
+v(1) = jb
+v(2) = 1.0_dp - chisq_cdf(jb, 2)
+end function jb_test
+
+pure function ttest1(x, mu0) result(v)
+! One-sample t-test for mean(x)=mu0, returns [t, df, p].
+real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: mu0
+real(kind=dp) :: v(3)
+real(kind=dp) :: sx, t
+integer :: n, df
+n = size(x)
+if (n < 2) then
+   v = nanv(); return
+end if
+sx = sd(x)
+if (sx <= 0.0_dp) then
+   v = nanv(); return
+end if
+df = n - 1
+t = (mean(x) - mu0) / (sx / sqrt(real(n, dp)))
+v(1) = t
+v(2) = real(df, dp)
+v(3) = 2.0_dp * (1.0_dp - tcdf(abs(t), df))
+end function ttest1
+
+pure function ttest2(x, y, pooled) result(v)
+! Two-sample t-test for mean(x)=mean(y), returns [t, df, p].
+! pooled=.true. gives equal-variance test; default is Welch.
+real(kind=dp), intent(in) :: x(:), y(:)
+logical, intent(in), optional :: pooled
+real(kind=dp) :: v(3)
+real(kind=dp) :: mx, my, sx2, sy2, se, t, dfw
+integer :: nx, ny, df
+logical :: pool
+nx = size(x); ny = size(y)
+if (nx < 2 .or. ny < 2) then
+   v = nanv(); return
+end if
+mx = mean(x); my = mean(y)
+sx2 = sd(x)**2; sy2 = sd(y)**2
+pool = .false.
+if (present(pooled)) pool = pooled
+if (pool) then
+   df = nx + ny - 2
+   if (df < 1) then
+      v = nanv(); return
+   end if
+   se = sqrt((((real(nx - 1, dp)*sx2) + (real(ny - 1, dp)*sy2)) / real(df, dp)) * (1.0_dp/real(nx, dp) + 1.0_dp/real(ny, dp)))
+   if (se <= 0.0_dp) then
+      v = nanv(); return
+   end if
+   t = (mx - my) / se
+   v(1) = t
+   v(2) = real(df, dp)
+   v(3) = 2.0_dp * (1.0_dp - tcdf(abs(t), df))
+else
+   se = sqrt(sx2/real(nx, dp) + sy2/real(ny, dp))
+   if (se <= 0.0_dp) then
+      v = nanv(); return
+   end if
+   t = (mx - my) / se
+   dfw = (sx2/real(nx, dp) + sy2/real(ny, dp))**2 / &
+         ((sx2/real(nx, dp))**2/real(max(1, nx - 1), dp) + (sy2/real(ny, dp))**2/real(max(1, ny - 1), dp))
+   df = max(1, nint(dfw))
+   v(1) = t
+   v(2) = real(dfw, dp)
+   v(3) = 2.0_dp * (1.0_dp - tcdf(abs(t), df))
+end if
+end function ttest2
+
+pure function ks2_test(x, y) result(v)
+! Two-sample Kolmogorov-Smirnov test, returns [D, p_approx].
+real(kind=dp), intent(in) :: x(:), y(:)
+real(kind=dp) :: v(2)
+real(kind=dp), allocatable :: xs(:), ys(:)
+real(kind=dp) :: d, fx, fy, ne, lam, p
+integer :: nx, ny, i, j
+nx = size(x); ny = size(y)
+if (nx < 1 .or. ny < 1) then
+   v = nanv(); return
+end if
+xs = sorted(x)
+ys = sorted(y)
+i = 1; j = 1
+d = 0.0_dp
+do while (i <= nx .and. j <= ny)
+   if (xs(i) <= ys(j)) then
+      i = i + 1
+   else
+      j = j + 1
+   end if
+   fx = real(i - 1, dp) / real(nx, dp)
+   fy = real(j - 1, dp) / real(ny, dp)
+   d = max(d, abs(fx - fy))
+end do
+do while (i <= nx)
+   i = i + 1
+   fx = real(i - 1, dp) / real(nx, dp)
+   fy = real(j - 1, dp) / real(ny, dp)
+   d = max(d, abs(fx - fy))
+end do
+do while (j <= ny)
+   j = j + 1
+   fx = real(i - 1, dp) / real(nx, dp)
+   fy = real(j - 1, dp) / real(ny, dp)
+   d = max(d, abs(fx - fy))
+end do
+ne = real(nx * ny, dp) / real(nx + ny, dp)
+lam = (sqrt(ne) + 0.12_dp + 0.11_dp/sqrt(ne)) * d
+p = 2.0_dp * exp(-2.0_dp * lam * lam)
+if (p > 1.0_dp) p = 1.0_dp
+if (p < 0.0_dp) p = 0.0_dp
+v(1) = d
+v(2) = p
+end function ks2_test
+
 subroutine regress(y, x, intcp)
 ! simple linear regression y = a*x + b with diagnostics
 real(kind=dp), intent(in) :: y(:), x(:)
@@ -4154,6 +4838,135 @@ else
    end do
 end if
 end subroutine regress_multi
+
+subroutine poly1reg(y, x, deg, intcp)
+! Polynomial regression in one predictor: y ~ 1 + x + x^2 + ... + x^deg.
+real(kind=dp), intent(in) :: y(:), x(:)
+integer, intent(in) :: deg
+integer, intent(in), optional :: intcp
+real(kind=dp), allocatable :: xmat(:,:)
+character(len=16), allocatable :: labels(:)
+character(len=16) :: nm
+integer :: n, j
+logical :: use_intcp
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   print *, "Error: poly1reg() requires equal-size arrays with size > 1"
+   return
+end if
+if (deg < 1) then
+   print *, "Error: poly1reg() degree must be >= 1"
+   return
+end if
+use_intcp = .true.
+if (present(intcp)) use_intcp = (intcp /= 0)
+allocate (xmat(n, deg), labels(deg))
+do j = 1, deg
+   xmat(:, j) = x**j
+   write (nm, "(a,i0)") "x^", j
+   labels(j) = trim(nm)
+end do
+call regress_multi(y, xmat, labels, intcp=use_intcp)
+deallocate (xmat, labels)
+end subroutine poly1reg
+
+subroutine distaicscan(x, verbose)
+! Fit sensible distributions to x and print AIC ranking table.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: verbose
+integer, parameter :: mmax = 20
+character(len=16) :: names(mmax), tmpn
+real(kind=dp) :: aicv(mmax), llv(mmax)
+real(kind=dp), allocatable :: p(:), fx(:)
+logical :: do_verbose
+integer :: m, i, j
+real(kind=dp) :: ta, tl
+
+if (size(x) < 2) then
+   print *, "Error: distaicscan() requires size(x) > 1"
+   return
+end if
+do_verbose = .true.
+if (present(verbose)) do_verbose = (verbose /= 0)
+m = 0
+
+! normal
+p = fit_norm(x); fx = dnorm(x, p(1), p(2)); call add_fit("norm", p, fx)
+! t
+p = fit_t(x); fx = dt((x - p(1)) / p(2), p(3)) / p(2); call add_fit("t", p, fx)
+! nct
+p = fit_nct(x); fx = dnct(x, p(1), p(2)); call add_fit("nct", p, fx)
+! logistic
+p = fit_logis(x); fx = dlogis(x, p(1), p(2)); call add_fit("logis", p, fx)
+! sech
+p = fit_sech(x); fx = dsech((x - p(1)) / p(2)) / p(2); call add_fit("sech", p, fx)
+! laplace
+p = fit_laplace(x); fx = dlaplace(x, p(1), p(2)); call add_fit("laplace", p, fx)
+! cauchy
+p = fit_cauchy(x); fx = dcauchy(x, p(1), p(2)); call add_fit("cauchy", p, fx)
+! ged
+p = fit_ged(x); fx = dged(x, p(1), p(2), p(3)); call add_fit("ged", p, fx)
+! hyperbolic
+p = fit_hyperb(x); fx = dhyperb(x, p(1), p(2), p(3)); call add_fit("hyperb", p, fx)
+
+if (all(x >= 0.0_dp)) then
+   p = fit_exp(x); fx = dexp(x, p(1)); call add_fit("exp", p, fx)
+   p = fit_gamma(x); fx = dgamma(x, p(1), p(2)); call add_fit("gamma", p, fx)
+   p = fit_chisq(x); fx = dchisq(x, p(1)); call add_fit("chisq", p, fx)
+end if
+if (all(x > 0.0_dp)) then
+   p = fit_lnorm(x); fx = dlnorm(x, p(1), p(2)); call add_fit("lnorm", p, fx)
+end if
+if (all(x > 0.0_dp .and. x < 1.0_dp)) then
+   p = fit_beta(x); fx = dbeta(x, p(1), p(2)); call add_fit("beta", p, fx)
+end if
+if (all(x > 0.0_dp)) then
+   p = fit_f(x); fx = df(x, p(1), p(2)); call add_fit("f", p, fx)
+end if
+
+if (m < 1) then
+   print *, "No compatible fitted distributions"
+   return
+end if
+
+! sort by ascending AIC
+do i = 1, m - 1
+   do j = i + 1, m
+      if (aicv(j) < aicv(i)) then
+         ta = aicv(i); aicv(i) = aicv(j); aicv(j) = ta
+         tl = llv(i); llv(i) = llv(j); llv(j) = tl
+         tmpn = names(i); names(i) = names(j); names(j) = tmpn
+      end if
+   end do
+end do
+
+if (do_verbose) then
+   print "(a16,a18,a18)", "distribution", "logLik", "AIC"
+   do i = 1, m
+      print "(a16,2f18.6)", trim(names(i)), llv(i), aicv(i)
+   end do
+else
+   print "(a,a)", "AIC best: ", trim(names(1))
+end if
+
+contains
+   subroutine add_fit(nm, pars, dens)
+      character(len=*), intent(in) :: nm
+      real(kind=dp), intent(in) :: pars(:)
+      real(kind=dp), intent(in) :: dens(:)
+      real(kind=dp) :: ll, aic
+      if (size(dens) /= size(x)) return
+      if (any(dens <= 0.0_dp) .or. any(dens /= dens)) return
+      ll = sum(log(dens))
+      aic = -2.0_dp * ll + 2.0_dp * real(size(pars), dp)
+      if (m < mmax) then
+         m = m + 1
+         names(m) = nm
+         aicv(m) = aic
+         llv(m) = ll
+      end if
+   end subroutine add_fit
+end subroutine distaicscan
 
 subroutine arfit(x, k1, k2, nacf, nlb)
 ! fit AR models and report RMSE/AIC/BIC and coefficients
