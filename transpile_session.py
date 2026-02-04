@@ -13,6 +13,8 @@ ARRAY_FUNCS = {
     "rgamma",
     "rlnorm",
     "rt",
+    "rnct",
+    "rmixnorm",
     "rchisq",
     "rf",
     "rbeta",
@@ -22,6 +24,7 @@ ARRAY_FUNCS = {
     "rcauchy",
     "rged",
     "rhyperb",
+    "kde",
     "zeros",
     "ones",
     "cumsum",
@@ -57,11 +60,21 @@ ARRAY_FUNCS = {
     "arfimasim",
     "resample",
     "quantile",
+    "trimmean",
+    "winsor_mean",
+    "mad",
+    "iqr_scale",
+    "jb_test",
+    "ttest1",
+    "ttest2",
+    "ks2_test",
     "mssk",
     "mssk_exp",
     "mssk_gamma",
     "mssk_lnorm",
     "mssk_t",
+    "mssk_nct",
+    "mssk_mixnorm",
     "mssk_chisq",
     "mssk_f",
     "mssk_beta",
@@ -73,6 +86,10 @@ ARRAY_FUNCS = {
     "fit_gamma",
     "fit_lnorm",
     "fit_t",
+    "fit_nct",
+    "fit_mixnorm",
+    "fit_mixnorm_aic",
+    "fix_mixnorm_aic",
     "fit_chisq",
     "fit_f",
     "fit_beta",
@@ -87,7 +104,9 @@ ARRAY_FUNCS = {
     "dgamma",
     "dlnorm",
     "dnorm",
+    "dmixnorm",
     "dt",
+    "dnct",
     "dchisq",
     "df",
     "dbeta",
@@ -102,7 +121,9 @@ ARRAY_FUNCS = {
     "pgamma",
     "plnorm",
     "pnorm",
+    "pmixnorm",
     "pt",
+    "pnct",
     "pchisq",
     "pf",
     "pbeta",
@@ -117,7 +138,9 @@ ARRAY_FUNCS = {
     "qgamma",
     "qlnorm",
     "qnorm",
+    "qmixnorm",
     "qt",
+    "qnct",
     "qchisq",
     "qf",
     "qbeta",
@@ -165,6 +188,8 @@ CALL_ONLY = {
     "arfimafit",
     "acfpacf",
     "acfpacfar",
+    "poly1reg",
+    "distaicscan",
 }
 REWRITE_FUNCS = {
     "rnorm": "random_normal",
@@ -223,8 +248,18 @@ MODULE_EXPORTS = {
         "armasim",
         "arfimasim",
         "resample",
+        "trimmean",
+        "winsor_mean",
+        "mad",
+        "iqr_scale",
+        "jb_test",
+        "ttest1",
+        "ttest2",
+        "ks2_test",
         "regress",
         "regress_multi",
+        "poly1reg",
+        "distaicscan",
         "arfit",
         "mafit",
         "armafit",
@@ -236,6 +271,8 @@ MODULE_EXPORTS = {
         "mssk_gamma",
         "mssk_lnorm",
         "mssk_t",
+        "mssk_nct",
+        "mssk_mixnorm",
         "mssk_chisq",
         "mssk_f",
         "mssk_beta",
@@ -247,6 +284,10 @@ MODULE_EXPORTS = {
         "fit_gamma",
         "fit_lnorm",
         "fit_t",
+        "fit_nct",
+        "fit_mixnorm",
+        "fit_mixnorm_aic",
+        "fix_mixnorm_aic",
         "fit_chisq",
         "fit_f",
         "fit_beta",
@@ -261,7 +302,9 @@ MODULE_EXPORTS = {
         "dgamma",
         "dlnorm",
         "dnorm",
+        "dmixnorm",
         "dt",
+        "dnct",
         "dchisq",
         "df",
         "dbeta",
@@ -276,7 +319,9 @@ MODULE_EXPORTS = {
         "pgamma",
         "plnorm",
         "pnorm",
+        "pmixnorm",
         "pt",
+        "pnct",
         "pchisq",
         "pf",
         "pbeta",
@@ -291,7 +336,9 @@ MODULE_EXPORTS = {
         "qgamma",
         "qlnorm",
         "qnorm",
+        "qmixnorm",
         "qt",
+        "qnct",
         "qchisq",
         "qf",
         "qbeta",
@@ -302,6 +349,7 @@ MODULE_EXPORTS = {
         "qged",
         "qhyperb",
         "rhyperb",
+        "kde",
     },
     "random_mod": {
         "random_normal",
@@ -310,6 +358,8 @@ MODULE_EXPORTS = {
         "rgamma",
         "rlnorm",
         "rt",
+        "rnct",
+        "rmixnorm",
         "rchisq",
         "rf",
         "rbeta",
@@ -1044,6 +1094,10 @@ def infer_from_lines(lines):
             m = re.match(r"do\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", line, re.IGNORECASE)
             if m:
                 loop_vars.add(m.group(1))
+        if line.lower().startswith("for "):
+            m = re.match(r"for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+.+$", line, re.IGNORECASE)
+            if m:
+                ranks[m.group(1)] = "scalar"
         if line.startswith("*"):
             m = re.match(r"\*\s*(\d+)\s+(.+)$", line)
             if m:
@@ -1074,7 +1128,16 @@ def infer_from_lines(lines):
                 continue
             if stmt.strip().lower().startswith("del "):
                 continue
-            if stmt.lower().startswith("do ") or stmt.lower().startswith("end do") or stmt.lower().startswith("if "):
+            if (
+                stmt.lower().startswith("do ")
+                or stmt.lower().startswith("end do")
+                or stmt.lower().startswith("if ")
+                or stmt.lower().startswith("end if")
+                or stmt.lower().startswith("endif")
+                or stmt.lower().startswith("for ")
+                or stmt.lower().startswith("end for")
+                or stmt.lower().startswith("endfor")
+            ):
                 continue
             eqpos = find_top_level_assign(stmt)
             if eqpos != -1:
@@ -1098,10 +1161,47 @@ def infer_from_lines(lines):
     return ranks, loop_vars, int_vars, const_params
 
 
+def split_for_expr_tail(rem):
+    s = rem.strip()
+    if not s:
+        return "", ""
+    dpar = 0
+    dbr = 0
+    in_str = False
+    for i, ch in enumerate(s):
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "(":
+            dpar += 1
+            continue
+        if ch == ")":
+            dpar = max(0, dpar - 1)
+            continue
+        if ch == "[":
+            dbr += 1
+            continue
+        if ch == "]":
+            dbr = max(0, dbr - 1)
+            continue
+        if ch == " " and dpar == 0 and dbr == 0:
+            left = s[:i].strip()
+            right = s[i + 1 :].strip()
+            if not left or not right:
+                continue
+            if left[-1] in "+-*/^<>=:&|" or right[0] in "+-*/^<>=:&|":
+                continue
+            return left, right
+    return s, ""
+
+
 def transpile_lines(lines):
     out = []
     rep_idx = 0
     rep_vars = []
+    for_array_vars = []
     for raw in lines:
         line = strip_prompt(raw.rstrip("\n"))
         if not line.strip():
@@ -1117,6 +1217,38 @@ def transpile_lines(lines):
                 out.append("! " + comment)
             else:
                 out.append("")
+            continue
+        m_for = re.match(r"for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+)$", stripped, re.IGNORECASE)
+        if m_for:
+            rep_idx += 1
+            loop_var = m_for.group(1)
+            src_expr, inline_body = split_for_expr_tail(m_for.group(2))
+            if not src_expr:
+                out.append("! " + stripped + (" ! " + comment if comment else ""))
+                continue
+            idx_var = f"for_idx{rep_idx}"
+            arr_var = f"for_vals{rep_idx}"
+            rep_vars.append(idx_var)
+            for_array_vars.append(arr_var)
+            out.append(f"!$forloop {loop_var}")
+            out.append(f"{arr_var} = {transpile_expr(src_expr)}")
+            out.append(f"do {idx_var} = 1, size({arr_var})")
+            out.append(f"{loop_var} = {arr_var}({idx_var})")
+            if inline_body:
+                for stmt in split_top_level(inline_body, ";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        out.extend(transpile_statement(stmt))
+                out.append("end do")
+                if comment:
+                    out[-1] = out[-1] + " ! " + comment
+            elif comment:
+                out[-1] = out[-1] + " ! " + comment
+            continue
+        if re.match(r"end\s*for\s*;?$", stripped, re.IGNORECASE):
+            out.append("end do")
+            if comment:
+                out[-1] = out[-1] + " ! " + comment
             continue
         if stripped.startswith("*"):
             m = re.match(r"\*\s*(\d+)\s+(.+)$", stripped)
@@ -1146,7 +1278,7 @@ def transpile_lines(lines):
             else:
                 stmt_lines.append("! " + comment)
         out.extend(stmt_lines)
-    return out, rep_vars
+    return out, rep_vars, for_array_vars
 
 
 def transpile_statement(stmt):
@@ -1223,7 +1355,33 @@ def transpile_statement(stmt):
         return [f"! {s}"]
     if low.startswith("read "):
         return [f"! {s}"]
-    if low.startswith("do ") or low.startswith("end do") or low.startswith("if "):
+    m_do = re.match(r"do\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$", s, re.IGNORECASE)
+    if m_do:
+        loop_var = m_do.group(1)
+        bounds_part, inline_body = split_for_expr_tail(m_do.group(2))
+        if inline_body:
+            bounds = [b.strip() for b in split_top_level(bounds_part, ",") if b.strip()]
+            if len(bounds) in {2, 3}:
+                hdr = f"do {loop_var} = {transpile_expr(bounds[0])}, {transpile_expr(bounds[1])}"
+                if len(bounds) == 3:
+                    hdr += f", {transpile_expr(bounds[2])}"
+                out = [hdr]
+                for stmt_i in split_top_level(inline_body, ";"):
+                    stmt_i = stmt_i.strip()
+                    if stmt_i:
+                        out.extend(transpile_statement(stmt_i))
+                out.append("end do")
+                return out
+    if (
+        low.startswith("do ")
+        or low.startswith("end do")
+        or low.startswith("if ")
+        or low.startswith("end if")
+        or low.startswith("endif")
+        or low.startswith("for ")
+        or low.startswith("end for")
+        or low.startswith("endfor")
+    ):
         return [transpile_expr(s)]
     if low.startswith("else") or low.startswith("cycle") or low.startswith("exit"):
         return [s]
@@ -1261,7 +1419,7 @@ def transpile_statement(stmt):
     return [f"print *, {transpile_expr(s)}"]
 
 
-def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars):
+def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars):
     arrays = sorted([k for k, v in ranks.items() if v == "array"])
     scalars = sorted([k for k, v in ranks.items() if v == "scalar" and k not in loop_vars])
     loop_vars_all = sorted(set(loop_vars) | set(rep_vars))
@@ -1316,19 +1474,69 @@ def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars):
         out.append("  integer :: " + ", ".join(int_vars))
     if scalars:
         out.append("  real(kind=dp) :: " + ", ".join(scalars))
+    for_array_vars = sorted(set(for_array_vars))
+    arrays = sorted(set(arrays) | set(for_array_vars))
     if arrays:
         out.append("  real(kind=dp), allocatable :: " + ", ".join(f"{a}(:)" for a in arrays))
     out.append("")
     base_indent = 3
     indent = 0
+    named_do_counter = 0
+    loop_label_stack = []
+    pending_for_alias = ""
     for line in lines:
         if line == "":
             out.append("")
             continue
         low = line.strip().lower()
+        if low.startswith("!$forloop "):
+            pending_for_alias = line.strip().split(maxsplit=1)[1].strip().lower()
+            continue
         if low.startswith("end do") or low.startswith("enddo") or low.startswith("end if") or low.startswith("endif"):
             indent = max(0, indent - 1)
-        out.append((" " * (base_indent + 3 * indent)) + line)
+        emit_line = line
+        if low.startswith("do "):
+            m = re.match(r"\s*do\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", line, re.IGNORECASE)
+            loop_var = pending_for_alias if pending_for_alias else (m.group(1).lower() if m else "")
+            pending_for_alias = ""
+            named_do_counter += 1
+            label = f"loop_{named_do_counter}"
+            loop_label_stack.append((loop_var.lower(), label))
+            emit_line = f"{label}: {line.strip()}"
+        elif low.startswith("end do") or low.startswith("enddo"):
+            if loop_label_stack:
+                _, end_label = loop_label_stack.pop()
+                emit_line = f"end do {end_label}"
+        elif low.startswith("cycle") or low.startswith("exit"):
+            m = re.match(r"\s*(cycle|exit)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", line, re.IGNORECASE)
+            if m:
+                stmt = m.group(1).lower()
+                target_var = m.group(2).lower()
+                target_label = ""
+                for loop_var_name, loop_label in reversed(loop_label_stack):
+                    if loop_var_name == target_var:
+                        target_label = loop_label
+                        break
+                if target_label:
+                    emit_line = f"{stmt} {target_label}"
+        elif low.startswith("if"):
+            m = re.match(
+                r"(\s*if\s*\(.+\)\s*)(cycle|exit)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$",
+                line,
+                re.IGNORECASE,
+            )
+            if m:
+                head = m.group(1)
+                stmt = m.group(2).lower()
+                target_var = m.group(3).lower()
+                target_label = ""
+                for loop_var_name, loop_label in reversed(loop_label_stack):
+                    if loop_var_name == target_var:
+                        target_label = loop_label
+                        break
+                if target_label:
+                    emit_line = f"{head}{stmt} {target_label}"
+        out.append((" " * (base_indent + 3 * indent)) + emit_line)
         if low.startswith("do ") or low.startswith("if "):
             indent += 1
     out.append("end program session")
@@ -1349,10 +1557,10 @@ def main():
     INT_VARS = set(int_vars)
     global CONST_PARAMS
     CONST_PARAMS = const_params
-    transpiled, rep_vars = transpile_lines(lines)
+    transpiled, rep_vars, for_array_vars = transpile_lines(lines)
     if not CONST_PARAMS and const_params:
         CONST_PARAMS = const_params
-    rendered = render_fortran(transpiled, ranks, loop_vars, rep_vars, int_vars)
+    rendered = render_fortran(transpiled, ranks, loop_vars, rep_vars, int_vars, for_array_vars)
 
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
