@@ -211,6 +211,16 @@ ttest1(x, 0.0)                     ! one-sample t test -> [t, df, p]
 ttest2(x, y)                       ! Welch two-sample t test -> [t, df, p]
 ttest2(x, y, 1)                    ! pooled-variance two-sample t test
 ks2_test(x, y)                     ! two-sample KS test -> [D, p]
+
+! Kernel regression (1 predictor)
+xg = arange(300)/300
+yg = sin(6*xg) + 0.2*rnorm(300)
+yh = kernelreg(yg, xg)             ! NW estimate with default bandwidth
+yh = kernelreg(yg, xg, 0.06)       ! scalar bandwidth
+yh = kernelreg(yg, xg, [0.03,0.06,0.12]) ! vector bandwidth: plots one curve per bandwidth
+yh = kernelreg(yg, xg, 0.06, 1)    ! local linear fit (order=1)
+yh = kernelreg(yg, xg, 0.06, order=[0,1,2]) ! one bandwidth, multiple orders (plotted together)
+yh = kernelreg(yg, xg, [0.03,0.06], order=[0,1,2]) ! tensor product of bw and order curves
 ```
 
 ## Sample session

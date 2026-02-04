@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
    use util_mod, only: matched_brackets, matched_parentheses, arange, &
@@ -4939,6 +4939,87 @@ contains
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
                      end block
+
+                  case ("kernelreg")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= size(arg2)) then
+                        print "(a,i0,1x,i0,a)", "Error: kernelreg() argument sizes ", &
+                           size(arg1), size(arg2), " must be equal"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 2) then
+                        print *, "Error: kernelreg() needs size >= 2"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        n1 = 0
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) < 1) then
+                              print *, "Error: third argument must be non-empty"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char == ",") then
+                                 call next_char()
+                                 call skip_spaces()
+                                 if (pos - 1 + 4 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 4)) == "order") then
+                                    call advance_token(5)
+                                    call skip_spaces()
+                                    if (curr_char /= "=") then
+                                       print *, "Error: expected '=' after order"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       call next_char()
+                                       call skip_spaces()
+                                    end if
+                                 end if
+                                 if (.not. eval_error) then
+                                    arg4 = parse_expression()
+                                    if (eval_error .or. size(arg4) < 1) then
+                                       print *, "Error: fourth argument (order) must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       if (any(nint(arg4) < 0)) then
+                                          print *, "Error: order values must be >= 0"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          if (size(arg4) == 1) then
+                                             n1 = nint(arg4(1))
+                                             if (size(arg3) == 1) then
+                                                f = kernelreg(arg1, arg2, arg3(1), n1)
+                                             else
+                                                f = kernelreg(arg1, arg2, arg3, n1)
+                                             end if
+                                          else
+                                             if (size(arg3) == 1) then
+                                                f = kernelreg(arg1, arg2, arg3(1), nint(arg4))
+                                             else
+                                                f = kernelreg(arg1, arg2, arg3, nint(arg4))
+                                             end if
+                                          end if
+                                       end if
+                                    end if
+                                 end if
+                              else
+                                 if (size(arg3) == 1) then
+                                    f = kernelreg(arg1, arg2, arg3(1))
+                                 else
+                                    f = kernelreg(arg1, arg2, arg3)
+                                 end if
+                              end if
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        else
+                           f = kernelreg(arg1, arg2)
+                        end if
+                     end if
 
                   case ("cor", "cov", "dot") ! correlation, covariance, dot product
                      if (.not. have_second) then

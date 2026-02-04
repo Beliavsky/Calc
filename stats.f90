@@ -8,7 +8,7 @@ implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kde, &
+          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, kde, &
           acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, resample, regress, regress_multi, poly1reg, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
@@ -16,6 +16,13 @@ public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
           rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, &
           fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
+
+interface kernelreg
+   module procedure kernelreg_scalar
+   module procedure kernelreg_vec
+   module procedure kernelreg_scalar_ordvec
+   module procedure kernelreg_vec_ordvec
+end interface kernelreg
 
 abstract interface
    function obj_fun(x) result(f)
@@ -4580,6 +4587,185 @@ if (p < 0.0_dp) p = 0.0_dp
 v(1) = d
 v(2) = p
 end function ks2_test
+
+pure function kernelreg_scalar(y, x, bw, order) result(yhat)
+! Nadaraya-Watson Gaussian-kernel regression evaluated at x.
+real(kind=dp), intent(in) :: y(:), x(:)
+real(kind=dp), intent(in), optional :: bw
+integer, intent(in), optional :: order
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: h, sx
+integer :: n, ord
+
+n = size(x)
+if (n < 2 .or. size(y) /= n) then
+   allocate (yhat(0))
+   return
+end if
+if (present(bw)) then
+   h = bw
+else
+   sx = sd(x)
+   h = 1.06_dp * sx * real(n, dp)**(-0.2_dp)
+end if
+ord = 0
+if (present(order)) ord = order
+yhat = kernelreg_core(y, x, h, ord)
+end function kernelreg_scalar
+
+function kernelreg_vec(y, x, bw, order) result(yhat)
+! Kernel regression with multiple bandwidths; plots all estimates.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+real(kind=dp), intent(in) :: bw(:)
+integer, intent(in), optional :: order
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=16), allocatable :: legends(:)
+integer :: n, j, ord
+
+n = size(x)
+if (n < 2 .or. size(y) /= n .or. size(bw) < 1) then
+   allocate (yhat(0))
+   return
+end if
+ord = 0
+if (present(order)) ord = order
+allocate (y2(n, size(bw)), legends(size(bw)))
+do j = 1, size(bw)
+   y2(:, j) = kernelreg_core(y, x, bw(j), ord)
+   write (legends(j), "(a,f7.4)") "bw=", bw(j)
+end do
+yhat = y2(:, 1)
+call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+deallocate (y2, legends)
+end function kernelreg_vec
+
+function kernelreg_scalar_ordvec(y, x, bw, order) result(yhat)
+! Kernel regression with one bandwidth and multiple orders; plots all estimates.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+real(kind=dp), intent(in) :: bw
+integer, intent(in) :: order(:)
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=16), allocatable :: legends(:)
+integer :: n, j
+
+n = size(x)
+if (n < 2 .or. size(y) /= n .or. size(order) < 1) then
+   allocate (yhat(0))
+   return
+end if
+allocate (y2(n, size(order)), legends(size(order)))
+do j = 1, size(order)
+   y2(:, j) = kernelreg_core(y, x, bw, order(j))
+   write (legends(j), "(a,i0)") "ord=", order(j)
+end do
+yhat = y2(:, 1)
+call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+deallocate (y2, legends)
+end function kernelreg_scalar_ordvec
+
+function kernelreg_vec_ordvec(y, x, bw, order) result(yhat)
+! Kernel regression with multiple bandwidths and orders; plots tensor-product curves.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: y(:), x(:)
+real(kind=dp), intent(in) :: bw(:)
+integer, intent(in) :: order(:)
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp), allocatable :: y2(:,:)
+character(len=24), allocatable :: legends(:)
+integer :: n, j, k, idx, ncurves
+
+n = size(x)
+if (n < 2 .or. size(y) /= n .or. size(bw) < 1 .or. size(order) < 1) then
+   allocate (yhat(0))
+   return
+end if
+ncurves = size(bw)*size(order)
+allocate (y2(n, ncurves), legends(ncurves))
+idx = 0
+do k = 1, size(order)
+   do j = 1, size(bw)
+      idx = idx + 1
+      y2(:, idx) = kernelreg_core(y, x, bw(j), order(k))
+      write (legends(idx), "(a,f7.4,a,i0)") "bw=", bw(j), ",o=", order(k)
+   end do
+end do
+yhat = y2(:, 1)
+call gplot(x, y2, title="kernelreg", xlabel="x", legend_labels=legends)
+deallocate (y2, legends)
+end function kernelreg_vec_ordvec
+
+pure function kernelreg_core(y, x, h, order) result(yhat)
+! Local polynomial kernel regression at design points x for scalar h and order>=0.
+real(kind=dp), intent(in) :: y(:), x(:), h
+integer, intent(in) :: order
+real(kind=dp), allocatable :: yhat(:)
+real(kind=dp) :: z, w, num, den, d
+real(kind=dp), allocatable :: xtwx(:,:), xtwy(:), beta(:), powd(:)
+integer :: n, i, j, a, b, ord, p, ord_try
+logical :: ok
+n = size(x)
+allocate (yhat(n))
+if (h <= 0.0_dp .or. order < 0) then
+   yhat = nanv()
+   return
+end if
+ord = min(order, n - 1)
+if (ord <= 0) then
+   ! order 0: Nadaraya-Watson
+   do i = 1, n
+      num = 0.0_dp
+      den = 0.0_dp
+      do j = 1, n
+         z = (x(i) - x(j)) / h
+         w = exp(-0.5_dp * z * z)
+         num = num + w * y(j)
+         den = den + w
+      end do
+      if (den > 0.0_dp) then
+         yhat(i) = num / den
+      else
+         yhat(i) = nanv()
+      end if
+   end do
+   return
+end if
+
+do i = 1, n
+   yhat(i) = nanv()
+   do ord_try = ord, 0, -1
+      p = ord_try + 1
+      allocate (xtwx(p, p), xtwy(p), beta(p), powd(0:ord_try))
+      xtwx = 0.0_dp
+      xtwy = 0.0_dp
+      do j = 1, n
+         d = x(j) - x(i)
+         z = d / h
+         w = exp(-0.5_dp * z * z)
+         powd(0) = 1.0_dp
+         do a = 1, ord_try
+            powd(a) = powd(a - 1) * d
+         end do
+         do a = 0, ord_try
+            xtwy(a + 1) = xtwy(a + 1) + w * powd(a) * y(j)
+            do b = 0, ord_try
+               xtwx(a + 1, b + 1) = xtwx(a + 1, b + 1) + w * powd(a) * powd(b)
+            end do
+         end do
+      end do
+      call solve_linear(xtwx, xtwy, beta, ok)
+      if (ok) then
+         yhat(i) = beta(1)
+         deallocate (xtwx, xtwy, beta, powd)
+         exit
+      end if
+      deallocate (xtwx, xtwy, beta, powd)
+   end do
+end do
+end function kernelreg_core
 
 subroutine regress(y, x, intcp)
 ! simple linear regression y = a*x + b with diagnostics
