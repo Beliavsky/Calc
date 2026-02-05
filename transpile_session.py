@@ -212,6 +212,8 @@ REWRITE_FUNCS = {
 }
 INT_VARS = set()
 CONST_PARAMS = {}
+USER_PROCS = {}
+NO_PLOT = False
 
 MODULE_EXPORTS = {
     "util_mod": {
@@ -482,6 +484,13 @@ def find_top_level_assign(s):
                 continue
             return i
     return -1
+
+
+def is_assignment_lhs(lhs):
+    t = lhs.strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+        return True
+    return re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*\([^()]*\)", t) is not None
 
 
 def has_top_level_relational(expr):
@@ -1040,6 +1049,123 @@ def rewrite_int_args(expr):
     return expr
 
 
+def rewrite_rt_rnct_args(expr):
+    def to_real_arg(a):
+        t = a.strip()
+        if re.search(r"_dp\b", t, re.IGNORECASE):
+            return t
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return f"{t}.0"
+        if is_real_literal(t):
+            return t
+        if t.startswith(("real(",)):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f"real({t}, kind=dp)"
+        if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
+            return f"real({t}, kind=dp)"
+        return t
+
+    def rewrite_name(s, fname, idx_real):
+        out = []
+        i = 0
+        pat = re.compile(rf"\b{fname}\s*\(", re.IGNORECASE)
+        while i < len(s):
+            m = pat.search(s, i)
+            if not m:
+                out.append(s[i:])
+                break
+            out.append(s[i : m.start()])
+            lpar = m.end() - 1
+            depth = 1
+            j = lpar + 1
+            in_str = False
+            while j < len(s) and depth > 0:
+                ch = s[j]
+                if ch == '"':
+                    in_str = not in_str
+                elif not in_str:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(s):
+                out.append(s[m.start():])
+                break
+            args = [a.strip() for a in split_top_level(s[lpar + 1 : j], ",")]
+            if len(args) > idx_real:
+                eq = find_top_level_assign(args[idx_real])
+                if eq != -1:
+                    k = args[idx_real][:eq].strip()
+                    v = args[idx_real][eq + 1 :].strip()
+                    args[idx_real] = f"{k}={to_real_arg(v)}"
+                else:
+                    args[idx_real] = to_real_arg(args[idx_real])
+            out.append(f"{fname}(" + ", ".join(args) + ")")
+            i = j + 1
+        return "".join(out)
+
+    expr = rewrite_name(expr, "rt", 1)
+    expr = rewrite_name(expr, "rnct", 1)
+    return expr
+
+
+def rewrite_ttest_args(expr):
+    def to_logical_arg(a):
+        t = a.strip()
+        tl = t.lower()
+        if tl in {".true.", "true", "t"}:
+            return ".true."
+        if tl in {".false.", "false", "f"}:
+            return ".false."
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return ".false." if int(t) == 0 else ".true."
+        return f"({t} /= 0)"
+
+    out = []
+    i = 0
+    pat = re.compile(r"\bttest2\s*\(", re.IGNORECASE)
+    while i < len(expr):
+        m = pat.search(expr, i)
+        if not m:
+            out.append(expr[i:])
+            break
+        out.append(expr[i : m.start()])
+        lpar = m.end() - 1
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[m.start() :])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",") if a.strip()]
+        if len(args) >= 3:
+            eq = find_top_level_assign(args[2])
+            if eq != -1 and args[2][:eq].strip().lower() == "pooled":
+                rhs = args[2][eq + 1 :].strip()
+                args[2] = f"pooled={to_logical_arg(rhs)}"
+            elif eq == -1:
+                args[2] = f"pooled={to_logical_arg(args[2])}"
+        out.append("ttest2(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def rewrite_kernelreg_order_args(expr):
     out = []
     i = 0
@@ -1443,6 +1569,27 @@ def rewrite_cpfit_args(expr):
             out.append(expr[start:])
             break
         args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        has_named = any(find_top_level_assign(a) != -1 for a in args)
+        # Support shorthand positional form:
+        #   cpfitaic(x, max_cp, minseg, plot, plot_ic, verbose)
+        # by inserting defaults for mode/criterion.
+        if (not has_named) and len(args) >= 2:
+            t1 = args[1].strip()
+            t1_is_word = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t1) is not None
+            if not t1_is_word:
+                short = args[1:]
+                args = [args[0], '"mean"']
+                if len(short) >= 1:
+                    args.append(short[0])  # max_cp
+                if len(short) >= 2:
+                    args.append(short[1])  # minseg
+                args.append('"aic"')
+                if len(short) >= 3:
+                    args.append(short[2])  # plot
+                if len(short) >= 4:
+                    args.append(short[3])  # plot_ic
+                if len(short) >= 5:
+                    args.append(short[4])  # verbose
         for idx in range(1, len(args)):
             a = args[idx]
             eq = find_top_level_assign(a)
@@ -1514,6 +1661,25 @@ def rewrite_cpfit_aic_args(expr):
             out.append(expr[start:])
             break
         args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        has_named = any(find_top_level_assign(a) != -1 for a in args)
+        # Short positional form:
+        # cpfitaic(x, max_cp, minseg, plot, plot_ic, verbose)
+        if (not has_named) and len(args) >= 2:
+            t1 = args[1].strip()
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t1) is None:
+                short = args[1:]
+                args = [args[0], "mean"]
+                if len(short) >= 1:
+                    args.append(short[0])  # max_cp
+                if len(short) >= 2:
+                    args.append(short[1])  # minseg
+                args.append("aic")
+                if len(short) >= 3:
+                    args.append(short[2])  # plot
+                if len(short) >= 4:
+                    args.append(short[3])  # plot_ic
+                if len(short) >= 5:
+                    args.append(short[4])  # verbose
         for idx in range(1, len(args)):
             a = args[idx]
             eq = find_top_level_assign(a)
@@ -1527,13 +1693,13 @@ def rewrite_cpfit_aic_args(expr):
             else:
                 if idx == 1:
                     t = maybe_quote_word(a)
-                    if t != a:
+                    if t != a or a.strip().startswith(("'", '"')):
                         args[idx] = t
                     else:
                         args[idx] = to_int_arg(a)
                 elif idx == 4:
                     t = maybe_quote_word(a)
-                    if t != a:
+                    if t != a or a.strip().startswith(("'", '"')):
                         args[idx] = t
                     else:
                         args[idx] = to_int_arg(a)
@@ -1545,6 +1711,7 @@ def rewrite_cpfit_aic_args(expr):
 
 
 def transpile_expr(expr):
+    expr = normalize_proc_calls_in_expr(expr)
     expr = rewrite_arfimasim_calls(expr)
     expr = rewrite_acf_pacf_plot_args(expr)
     expr = rewrite_reduction_calls(expr)
@@ -1558,6 +1725,8 @@ def transpile_expr(expr):
     expr = rewrite_cpsim_args(expr)
     expr = rewrite_cpfit_args(expr)
     expr = rewrite_cpfit_aic_args(expr)
+    expr = rewrite_rt_rnct_args(expr)
+    expr = rewrite_ttest_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
     expr = replace_ops(expr)
@@ -1579,6 +1748,11 @@ def infer_rank(rhs, known_arrays):
         return "array"
     if re.search(r"\b\w+\s*\([^)]*:\s*[^)]*\)", rhs):
         return "array"
+    # Common scalar reducers/tests should stay scalar even when their arguments
+    # contain array variables.
+    for fn in SCALAR_FUNCS:
+        if re.search(rf"^\s*{fn}\s*\(", rhs):
+            return "scalar"
     for fn in ARRAY_FUNCS:
         if re.search(rf"\b{fn}\s*\(", rhs):
             if fn in {"runif", "rnorm", "random_normal"}:
@@ -1603,6 +1777,28 @@ def is_real_literal(expr):
     )
 
 
+def to_dp_if_int_literal(expr):
+    s = expr.strip()
+    if re.fullmatch(r"[+-]?[0-9]+", s):
+        return f"{s}.0"
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return expr
+        parts = [p.strip() for p in split_top_level(inner, ",")]
+        conv = []
+        all_simple = True
+        for p in parts:
+            if re.fullmatch(r"[+-]?[0-9]+", p):
+                conv.append(f"{p}.0")
+            else:
+                all_simple = False
+                break
+        if all_simple:
+            return "[" + ", ".join(conv) + "]"
+    return expr
+
+
 def is_int_expr(expr):
     s = re.sub(r"\s+", "", expr)
     if not s:
@@ -1610,11 +1806,12 @@ def is_int_expr(expr):
     return re.fullmatch(r"[0-9()+\-*^]+", s) is not None
 
 
-def infer_from_lines(lines):
+def infer_from_lines(lines, seed_arrays=None):
     ranks = {}
     loop_vars = set()
     int_vars = set()
     const_params = {}
+    seed_arrays = set(seed_arrays or [])
     for raw in lines:
         raw_line = strip_prompt(raw.rstrip("\n"))
         if not raw_line.strip():
@@ -1674,8 +1871,16 @@ def infer_from_lines(lines):
                 or stmt.lower().startswith("endfor")
             ):
                 continue
+            m_call = re.match(r"call\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*$", stmt, re.IGNORECASE)
+            if m_call:
+                for a in split_top_level(m_call.group(2), ","):
+                    nm, rhs = parse_call_actual(a.strip())
+                    expr = rhs if nm is not None else a.strip()
+                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+                        ranks.setdefault(expr, "scalar")
+                continue
             eqpos = find_top_level_assign(stmt)
-            if eqpos != -1:
+            if eqpos != -1 and is_assignment_lhs(stmt[:eqpos]):
                 lhs = stmt[:eqpos].strip()
                 rhs = stmt[eqpos + 1 :].strip()
                 if "(" in lhs and ")" in lhs:
@@ -1683,7 +1888,7 @@ def infer_from_lines(lines):
                 name = lhs
                 if is_int_expr(rhs):
                     int_vars.add(name)
-                rank = infer_rank(rhs, {k for k, v in ranks.items() if v == "array"})
+                rank = infer_rank(rhs, set(seed_arrays) | {k for k, v in ranks.items() if v == "array"})
                 prev = ranks.get(name)
                 if prev == "array" or rank == "array":
                     ranks[name] = "array"
@@ -1816,6 +2021,146 @@ def transpile_lines(lines):
     return out, rep_vars, for_array_vars
 
 
+def transpile_procedure(proc, main_ranks):
+    hdr = proc["header"]
+    kind = hdr["kind"]
+    name = hdr["name"]
+    args = hdr["args"]
+    # collect intents from body declarations
+    intents = {a.lower(): ("in" if kind == "function" else "inout") for a in args}
+    body_src = []
+    for raw in proc["body_lines"]:
+        line = strip_prompt(raw.rstrip("\n"))
+        code, comment = split_comment(line)
+        s = code.strip()
+        if not s:
+            continue
+        m_int = re.match(r"intent\s*\(([^)]*)\)\s*::\s*(.+)$", s, re.IGNORECASE)
+        if m_int:
+            mode = re.sub(r"\s+", "", m_int.group(1).strip().lower())
+            if mode == "inout":
+                mode = "inout"
+            elif mode == "in":
+                mode = "in"
+            elif mode == "out":
+                mode = "out"
+            else:
+                continue
+            for a in split_top_level(m_int.group(2), ","):
+                an = a.strip().lower()
+                if an in intents:
+                    intents[an] = mode
+            continue
+        line_out = []
+        for stmt in split_top_level(s, ";"):
+            stmt = stmt.strip()
+            if stmt:
+                line_out.extend(transpile_statement(stmt))
+        if comment and line_out:
+            line_out[-1] = line_out[-1] + " ! " + comment
+        body_src.extend(line_out)
+
+    def infer_arg_num_type(actual_expr, int_names):
+        s = actual_expr.strip()
+        if re.fullmatch(r"[+-]?[0-9]+", s):
+            return "integer"
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s):
+            return "integer" if s in int_names else "real"
+        return "real"
+
+    # infer arg ranks/types from call sites in transpiled main lines
+    arg_ranks = {a.lower(): "scalar" for a in args}
+    arg_types = {a.lower(): "integer" for a in args}
+    int_names = set(main_ranks.get("_int_vars", set()))
+    call_pat = re.compile(rf"\b{name}\s*\((.*)\)", re.IGNORECASE)
+    for ml in main_ranks.get("_transpiled_main_lines", []):
+        m = call_pat.search(ml)
+        if not m:
+            continue
+        raw_args = m.group(1)
+        actuals = [a.strip() for a in split_top_level(raw_args, ",") if a.strip()]
+        amap = {}
+        pos = 0
+        saw_named = False
+        for t in actuals:
+            nm, rhs = parse_call_actual(t)
+            if nm is not None:
+                saw_named = True
+                amap[nm.lower()] = rhs
+            else:
+                if saw_named:
+                    continue
+                if pos < len(args):
+                    amap[args[pos].lower()] = t
+                    pos += 1
+        for a in args:
+            if a.lower() not in amap:
+                continue
+            rk = infer_rank(amap[a.lower()], {k for k, v in main_ranks.items() if v == "array"})
+            if rk == "array":
+                arg_ranks[a.lower()] = "array"
+                arg_types[a.lower()] = "real"
+            else:
+                if infer_arg_num_type(amap[a.lower()], int_names) != "integer":
+                    arg_types[a.lower()] = "real"
+
+    # infer local vars in body
+    seed_arrays = {a.lower() for a in args if arg_ranks[a.lower()] == "array"}
+    body_ranks, body_loop_vars, body_int_vars, _ = infer_from_lines(body_src, seed_arrays=seed_arrays)
+    locals_all = sorted(
+        [
+            v
+            for v in body_ranks.keys()
+            if v.lower() not in {a.lower() for a in args}
+            and not (kind == "function" and v.lower() == name.lower())
+        ]
+    )
+    local_arrays = [v for v in locals_all if body_ranks.get(v) == "array"]
+    local_scalars = [v for v in locals_all if body_ranks.get(v) == "scalar" and v not in body_int_vars]
+    local_ints = sorted([v for v in body_int_vars if v.lower() not in {a.lower() for a in args} and v not in body_loop_vars])
+
+    out = []
+    out.append(f"{kind} {name}(" + ", ".join(args) + ")")
+    for a in args:
+        rk = arg_ranks[a.lower()]
+        mode = intents.get(a.lower(), "inout")
+        attr = f"intent({mode})"
+        if rk == "array":
+            out.append(f"real(kind=dp), {attr} :: {a}(:)")
+        else:
+            if arg_types[a.lower()] == "integer":
+                out.append(f"integer, {attr} :: {a}")
+            else:
+                out.append(f"real(kind=dp), {attr} :: {a}")
+    if kind == "function" and name.lower() not in {a.lower() for a in args}:
+        if body_ranks.get(name, "scalar") == "array":
+            out.append(f"real(kind=dp), allocatable :: {name}(:)")
+        else:
+            out.append(f"real(kind=dp) :: {name}")
+    if body_loop_vars:
+        out.append("integer :: " + ", ".join(sorted(body_loop_vars)))
+    if local_ints:
+        out.append("integer :: " + ", ".join(local_ints))
+    if local_scalars:
+        out.append("real(kind=dp) :: " + ", ".join(local_scalars))
+    if local_arrays:
+        out.append("real(kind=dp), allocatable :: " + ", ".join(f"{a}(:)" for a in local_arrays))
+    out.append("")
+    out.extend(body_src)
+    out.append(f"end {kind} {name}")
+    return out
+
+
+def comment_out_plot_calls(lines):
+    out = []
+    for line in lines:
+        if re.match(r"^\s*call\s+plot\s*\(", line, re.IGNORECASE):
+            out.append("! " + line.strip())
+        else:
+            out.append(line)
+    return out
+
+
 def transpile_statement(stmt):
     s = stmt.strip()
     low = s.lower()
@@ -1855,7 +2200,8 @@ def transpile_statement(stmt):
                 "print *, plot_tmp",
                 "end block",
             ]
-    if '"' in s and find_top_level_assign(s) == -1:
+    looks_like_single_call = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*\(.*\)\s*", s) is not None
+    if '"' in s and find_top_level_assign(s) == -1 and not looks_like_single_call:
         items = []
         buf = ""
         in_str = False
@@ -1890,6 +2236,45 @@ def transpile_statement(stmt):
         return [f"! {s}"]
     if low.startswith("read "):
         return [f"! {s}"]
+    if low.startswith("set plotout"):
+        return [f"! {s}"]
+    if low.startswith("call "):
+        return [transpile_expr(s)]
+    m_reg = re.match(r"regress\s*\((.*)\)\s*$", s, re.IGNORECASE)
+    if m_reg:
+        args = [a.strip() for a in split_top_level(m_reg.group(1), ",") if a.strip()]
+        if len(args) < 2:
+            return [f"! {s}"]
+        y_expr = transpile_expr(args[0])
+        x_exprs = []
+        intcp_expr = None
+        for a in args[1:]:
+            eq = find_top_level_assign(a)
+            if eq != -1 and a[:eq].strip().lower() == "intcp":
+                intcp_expr = transpile_expr(a[eq + 1 :].strip())
+            else:
+                x_exprs.append(transpile_expr(a))
+        if len(x_exprs) == 1:
+            if intcp_expr is None:
+                return [f"call regress({y_expr}, {x_exprs[0]})"]
+            return [f"call regress({y_expr}, {x_exprs[0]}, intcp=({intcp_expr} /= 0.0_dp))"]
+        ncol = len(x_exprs)
+        out = [
+            "block",
+            f"real(kind=dp), allocatable :: xreg_tmp(:,:)",
+            f"character(len=16) :: xreg_lbl({ncol})",
+            f"allocate(xreg_tmp(size({y_expr}), {ncol}))",
+        ]
+        for j, xj in enumerate(x_exprs, start=1):
+            out.append(f"xreg_tmp(:, {j}) = {xj}")
+        lbls = ", ".join([f'\"x{j}\"' for j in range(1, ncol + 1)])
+        out.append(f"xreg_lbl = [character(len=16) :: {lbls}]")
+        if intcp_expr is None:
+            out.append(f"call regress_multi({y_expr}, xreg_tmp, xreg_lbl)")
+        else:
+            out.append(f"call regress_multi({y_expr}, xreg_tmp, xreg_lbl, intcp=({intcp_expr} /= 0.0_dp))")
+        out.append("end block")
+        return out
     m_do = re.match(r"do\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$", s, re.IGNORECASE)
     if m_do:
         loop_var = m_do.group(1)
@@ -1908,7 +2293,8 @@ def transpile_statement(stmt):
                 out.append("end do")
                 return out
     if (
-        low.startswith("do ")
+        low == "do"
+        or low.startswith("do ")
         or low.startswith("end do")
         or low.startswith("if ")
         or low.startswith("end if")
@@ -1926,7 +2312,7 @@ def transpile_statement(stmt):
     if any(low.startswith(fn + "(") for fn in CALL_ONLY):
         return ["call " + transpile_expr(s)]
     eqpos = find_top_level_assign(s)
-    if eqpos != -1:
+    if eqpos != -1 and is_assignment_lhs(s[:eqpos]):
         lhs = s[:eqpos].strip()
         rhs = s[eqpos + 1 :].strip()
         read_calls = find_named_call_spans(rhs, "read")
@@ -1954,7 +2340,172 @@ def transpile_statement(stmt):
     return [f"print *, {transpile_expr(s)}"]
 
 
-def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars):
+def parse_proc_header(line):
+    s = line.strip()
+    m = re.match(r"(function|subroutine)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*$", s, re.IGNORECASE)
+    if not m:
+        return None
+    kind = m.group(1).lower()
+    name = m.group(2)
+    args_raw = m.group(3).strip()
+    args = []
+    defaults = {}
+    if args_raw:
+        for tok in split_top_level(args_raw, ","):
+            t = tok.strip()
+            if not t:
+                continue
+            eq = find_top_level_assign(t)
+            if eq != -1:
+                a = t[:eq].strip()
+                d = t[eq + 1 :].strip()
+                args.append(a)
+                defaults[a.lower()] = d
+            else:
+                args.append(t)
+    return {"kind": kind, "name": name, "args": args, "defaults": defaults}
+
+
+def collect_user_procedures(lines):
+    main_lines = []
+    procs = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        raw = strip_prompt(lines[i].rstrip("\n"))
+        code, _comment = split_comment(raw)
+        s = code.strip()
+        hdr = parse_proc_header(s)
+        if hdr is None:
+            main_lines.append(lines[i])
+            i += 1
+            continue
+        body = []
+        i += 1
+        while i < n:
+            raw_i = strip_prompt(lines[i].rstrip("\n"))
+            code_i, _ = split_comment(raw_i)
+            si = code_i.strip().lower()
+            is_end = False
+            if hdr["kind"] == "function":
+                is_end = si == "end function" or si == "endfunction" or si.startswith("end function ")
+            else:
+                is_end = si == "end subroutine" or si == "endsubroutine" or si.startswith("end subroutine ")
+            if is_end:
+                break
+            body.append(lines[i])
+            i += 1
+        # skip matching END line if present
+        if i < n:
+            i += 1
+        procs.append({"header": hdr, "body_lines": body})
+    return main_lines, procs
+
+
+def parse_call_actual(tok):
+    t = tok.strip()
+    eq = find_top_level_assign(t)
+    if eq == -1:
+        return None, t
+    lhs = t[:eq].strip()
+    rhs = t[eq + 1 :].strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", lhs):
+        return lhs, rhs
+    return None, t
+
+
+def normalize_proc_calls_in_expr(expr):
+    if not USER_PROCS:
+        return expr
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", expr[i:])
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        name = m.group(1)
+        key = name.lower()
+        lpar = i + m.end() - 1
+        out.append(expr[i:start])
+        if key not in USER_PROCS:
+            out.append(expr[start : lpar + 1])
+            i = lpar + 1
+            continue
+        # match right paren
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        raw_args = expr[lpar + 1 : j]
+        meta = USER_PROCS[key]
+        formal = meta["args"]
+        defaults = meta["defaults"]
+        provided = {}
+        next_pos = 0
+        saw_named = False
+        bad = False
+        for tok in [a.strip() for a in split_top_level(raw_args, ",") if a.strip()]:
+            nm, rhs = parse_call_actual(tok)
+            if nm is not None:
+                saw_named = True
+                k = nm.lower()
+                if k not in [a.lower() for a in formal] or k in provided:
+                    bad = True
+                    break
+                provided[k] = rhs
+            else:
+                if saw_named:
+                    bad = True
+                    break
+                while next_pos < len(formal) and formal[next_pos].lower() in provided:
+                    next_pos += 1
+                if next_pos >= len(formal):
+                    bad = True
+                    break
+                provided[formal[next_pos].lower()] = tok
+                next_pos += 1
+        if bad:
+            out.append(expr[start : j + 1])
+            i = j + 1
+            continue
+        full = []
+        missing = False
+        for a in formal:
+            k = a.lower()
+            if k in provided:
+                full.append(to_dp_if_int_literal(provided[k]))
+            elif k in defaults:
+                full.append(to_dp_if_int_literal(defaults[k]))
+            else:
+                missing = True
+                break
+        if missing:
+            out.append(expr[start : j + 1])
+            i = j + 1
+            continue
+        out.append(f"{name}(" + ", ".join(full) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars, proc_lines=None):
+    proc_lines = proc_lines or []
     arrays = sorted([k for k, v in ranks.items() if v == "array"])
     scalars = sorted([k for k, v in ranks.items() if v == "scalar" and k not in loop_vars])
     loop_vars_all = sorted(set(loop_vars) | set(rep_vars))
@@ -1966,7 +2517,7 @@ def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars):
     scalars = [v for v in scalars if v not in int_vars]
 
     used_names = set()
-    for line in lines:
+    for line in lines + proc_lines:
         for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", line):
             used_names.add(name)
         m = re.match(r"\s*call\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", line)
@@ -1985,6 +2536,8 @@ def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars):
     if any("_dp" in line for line in lines):
         needs_dp = True
     if any("kind=dp" in line.lower() for line in lines):
+        needs_dp = True
+    if any("kind=dp" in line.lower() for line in proc_lines):
         needs_dp = True
     for _name, (typ, _rhs) in CONST_PARAMS.items():
         if typ == "real":
@@ -2072,8 +2625,15 @@ def render_fortran(lines, ranks, loop_vars, rep_vars, int_vars, for_array_vars):
                 if target_label:
                     emit_line = f"{head}{stmt} {target_label}"
         out.append((" " * (base_indent + 3 * indent)) + emit_line)
-        if low.startswith("do ") or low.startswith("if "):
+        if low == "do" or low.startswith("do ") or low.startswith("if "):
             indent += 1
+    if proc_lines:
+        out.append("contains")
+        for pl in proc_lines:
+            if pl == "":
+                out.append("")
+            else:
+                out.append("  " + pl)
     out.append("end program session")
     return "\n".join(out)
 
@@ -2082,20 +2642,46 @@ def main():
     ap = argparse.ArgumentParser(description="Transpile interpreter .fi commands to Fortran")
     ap.add_argument("input", help="Input .fi file")
     ap.add_argument("-o", "--output", help="Output .f90 file (default: stdout)")
+    ap.add_argument("--noplot", action="store_true", help="Comment out plot calls in generated Fortran")
     args = ap.parse_args()
 
     path = Path(args.input)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
-    ranks, loop_vars, int_vars, const_params = infer_from_lines(lines)
+    main_lines, proc_defs = collect_user_procedures(lines)
+    global USER_PROCS
+    USER_PROCS = {}
+    for p in proc_defs:
+        h = p["header"]
+        USER_PROCS[h["name"].lower()] = {
+            "kind": h["kind"],
+            "name": h["name"],
+            "args": h["args"],
+            "defaults": {k.lower(): v for k, v in h["defaults"].items()},
+        }
+
+    ranks, loop_vars, int_vars, const_params = infer_from_lines(main_lines)
     global INT_VARS
     INT_VARS = set(int_vars)
     global CONST_PARAMS
     CONST_PARAMS = const_params
-    transpiled, rep_vars, for_array_vars = transpile_lines(lines)
+    global NO_PLOT
+    NO_PLOT = bool(args.noplot)
+    transpiled, rep_vars, for_array_vars = transpile_lines(main_lines)
     if not CONST_PARAMS and const_params:
         CONST_PARAMS = const_params
-    rendered = render_fortran(transpiled, ranks, loop_vars, rep_vars, int_vars, for_array_vars)
+    ranks_for_proc = dict(ranks)
+    ranks_for_proc["_transpiled_main_lines"] = transpiled
+    ranks_for_proc["_int_vars"] = set(int_vars)
+    proc_lines = []
+    for p in proc_defs:
+        if proc_lines:
+            proc_lines.append("")
+        proc_lines.extend(transpile_procedure(p, ranks_for_proc))
+    if NO_PLOT:
+        transpiled = comment_out_plot_calls(transpiled)
+        proc_lines = comment_out_plot_calls(proc_lines)
+    rendered = render_fortran(transpiled, ranks, loop_vars, rep_vars, int_vars, for_array_vars, proc_lines=proc_lines)
 
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")

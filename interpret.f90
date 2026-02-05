@@ -17,6 +17,9 @@ module interpret_mod
              echo_code, get_loop_depth, get_prompt_depth
 
    integer, parameter :: max_vars = 100, len_name = 32
+   integer, parameter :: max_funcs = 64, max_func_args = 16
+   integer, parameter :: max_subs = 64, max_sub_args = 16
+   integer, parameter :: len_default_expr = 256
    integer, parameter :: max_print = 15 ! for arrays larger than this, summary stats printed instead of elements
 
    type :: var_t
@@ -27,9 +30,30 @@ module interpret_mod
    type :: arr_t
       real(kind=dp), allocatable :: v(:)
    end type arr_t
+   type :: user_func_t
+      character(len=len_name) :: name = ""
+      integer :: nargs = 0
+      character(len=len_name) :: args(max_func_args) = ""
+      logical :: has_default(max_func_args) = .false.
+      character(len=len_default_expr) :: defaults(max_func_args) = ""
+      character(len=32768) :: body = ""
+   end type user_func_t
+   type :: user_sub_t
+      character(len=len_name) :: name = ""
+      integer :: nargs = 0
+      character(len=len_name) :: args(max_sub_args) = ""
+      integer :: intents(max_sub_args) = 0 ! 1=in, 2=inout, 3=out
+      logical :: has_default(max_sub_args) = .false.
+      character(len=len_default_expr) :: defaults(max_sub_args) = ""
+      character(len=32768) :: body = ""
+   end type user_sub_t
 
    type(var_t) :: vars(max_vars)
+   type(user_func_t) :: user_funcs(max_funcs)
+    type(user_sub_t) :: user_subs(max_subs)
    integer :: n_vars = 0, tunit
+   integer :: n_user_funcs = 0
+   integer :: n_user_subs = 0
    logical, save :: write_code = .true., eval_error = .false., &
                     echo_code = .true.
    logical, save :: const_assign = .false.
@@ -47,10 +71,32 @@ module interpret_mod
    integer, save :: exit_target_depth = 0       ! loop depth targeted by EXIT
    integer, save :: cycle_target_depth = 0      ! loop depth targeted by CYCLE
    integer, save :: loop_exec_base_depth = 0    ! depth being executed by run_loop_body
-   logical, save :: if_collecting = .false.
+    logical, save :: if_collecting = .false.
    integer, save :: if_collect_depth = 0
    character(len=32768), save :: if_collect_body = ""
-   integer, save :: loop_if_collect_depth = 0
+    integer, save :: loop_if_collect_depth = 0
+    logical, save :: func_collecting = .false.
+    character(len=len_name), save :: func_collect_name = ""
+    integer, save :: func_collect_nargs = 0
+    character(len=len_name), save :: func_collect_args(max_func_args) = ""
+    logical, save :: func_collect_has_default(max_func_args) = .false.
+    character(len=len_default_expr), save :: func_collect_defaults(max_func_args) = ""
+    character(len=32768), save :: func_collect_body = ""
+    logical, save :: in_user_function = .false.
+    logical, save :: in_user_subroutine = .false.
+    character(len=len_name), save :: active_sub_name = ""
+    integer, save :: active_sub_nargs = 0
+    character(len=len_name), save :: active_sub_args(max_sub_args) = ""
+    integer, save :: active_sub_intents(max_sub_args) = 0
+    logical, save :: active_sub_set(max_sub_args) = .false.
+    logical, save :: sub_collecting = .false.
+    character(len=len_name), save :: sub_collect_name = ""
+    integer, save :: sub_collect_nargs = 0
+    character(len=len_name), save :: sub_collect_args(max_sub_args) = ""
+    integer, save :: sub_collect_intents(max_sub_args) = 0
+    logical, save :: sub_collect_has_default(max_sub_args) = .false.
+    character(len=len_default_expr), save :: sub_collect_defaults(max_sub_args) = ""
+    character(len=32768), save :: sub_collect_body = ""
    logical, parameter :: debug_read = .false.
 
 !––– support for DO … END DO loops –––––––––––––––––––––––––––––––––
@@ -167,6 +213,35 @@ contains
          if (allocated(vars(i)%val)) deallocate (vars(i)%val)
       end do
       n_vars = 0
+      n_user_funcs = 0
+      do i = 1, max_funcs
+         user_funcs(i)%name = ""
+         user_funcs(i)%nargs = 0
+         user_funcs(i)%args = ""
+         user_funcs(i)%has_default = .false.
+         user_funcs(i)%defaults = ""
+         user_funcs(i)%body = ""
+      end do
+      n_user_subs = 0
+      do i = 1, max_subs
+         user_subs(i)%name = ""
+         user_subs(i)%nargs = 0
+         user_subs(i)%args = ""
+         user_subs(i)%intents = 0
+         user_subs(i)%has_default = .false.
+         user_subs(i)%defaults = ""
+         user_subs(i)%body = ""
+      end do
+      in_user_subroutine = .false.
+      active_sub_name = ""
+      active_sub_nargs = 0
+      active_sub_args = ""
+      active_sub_intents = 0
+      active_sub_set = .false.
+      func_collect_has_default = .false.
+      func_collect_defaults = ""
+      sub_collect_has_default = .false.
+      sub_collect_defaults = ""
    end subroutine clear
 
    subroutine print_cor_matrix_args(args, labels)
@@ -449,6 +524,18 @@ contains
       end subroutine split_by_spaces
    end subroutine read_vars_from_file
 
+   subroutine mark_sub_arg_assigned(name)
+      character(len=*), intent(in) :: name
+      integer :: i
+      if (.not. in_user_subroutine) return
+      do i = 1, active_sub_nargs
+         if (trim(active_sub_args(i)) == trim(name)) then
+            if (active_sub_intents(i) == 3) active_sub_set(i) = .true.
+            return
+         end if
+      end do
+   end subroutine mark_sub_arg_assigned
+
    subroutine set_variable(name, val, is_const)
       ! Store or replace a variable
       character(len=*), intent(in) :: name
@@ -483,6 +570,7 @@ contains
                return
             end if
             vars(i)%val = val
+            call mark_sub_arg_assigned(nm)
             return
          end if
       end do
@@ -492,6 +580,7 @@ contains
          vars(n_vars)%name = nm
          vars(n_vars)%val = val
          vars(n_vars)%is_const = make_const
+         call mark_sub_arg_assigned(nm)
       else
          print *, "Error: too many variables."
          eval_error = .true.
@@ -627,6 +716,890 @@ contains
       end do
    end function lower_str
 
+   integer pure function top_level_keyword_eq_pos(tok) result(pos)
+      character(len=*), intent(in) :: tok
+      integer :: i, n, dpar, dbr
+      character(len=1) :: ch, prev, nxt
+      logical :: in_str
+      pos = 0
+      n = len_trim(tok)
+      dpar = 0
+      dbr = 0
+      in_str = .false.
+      do i = 1, n
+         ch = tok(i:i)
+         if (ch == '"') then
+            in_str = .not. in_str
+            cycle
+         end if
+         if (in_str) cycle
+         select case (ch)
+         case ("(")
+            dpar = dpar + 1
+         case (")")
+            if (dpar > 0) dpar = dpar - 1
+         case ("[")
+            dbr = dbr + 1
+         case ("]")
+            if (dbr > 0) dbr = dbr - 1
+         case ("=")
+            if (dpar == 0 .and. dbr == 0) then
+               prev = " "
+               nxt = " "
+               if (i > 1) prev = tok(i - 1:i - 1)
+               if (i < n) nxt = tok(i + 1:i + 1)
+               if (prev == "=" .or. prev == "<" .or. prev == ">" .or. prev == "/" .or. nxt == "=") cycle
+               pos = i
+               return
+            end if
+         end select
+      end do
+   end function top_level_keyword_eq_pos
+
+   subroutine parse_call_actual(tok_in, is_named, argname, argexpr, ok)
+      character(len=*), intent(in) :: tok_in
+      logical, intent(out) :: is_named, ok
+      character(len=len_name), intent(out) :: argname
+      character(len=:), allocatable, intent(out) :: argexpr
+      character(len=:), allocatable :: tok
+      integer :: peq
+      tok = adjustl(trim(tok_in))
+      is_named = .false.
+      ok = .true.
+      argname = ""
+      argexpr = tok
+      peq = top_level_keyword_eq_pos(tok)
+      if (peq == 0) return
+      argname = adjustl(trim(tok(1:peq - 1)))
+      argexpr = adjustl(trim(tok(peq + 1:)))
+      if (.not. is_alnum_string(argname) .or. len_trim(argexpr) == 0) then
+         ok = .false.
+         return
+      end if
+      is_named = .true.
+   end subroutine parse_call_actual
+
+   pure logical function is_end_function_line(tl) result(ok)
+      character(len=*), intent(in) :: tl
+      ok = (trim(tl) == "end function" .or. trim(tl) == "endfunction")
+   end function is_end_function_line
+
+   subroutine parse_function_header(line, fname, nargs, fargs, fhas_default, fdefaults, ok)
+      character(len=*), intent(in) :: line
+      character(len=len_name), intent(out) :: fname
+      integer, intent(out) :: nargs
+      character(len=len_name), intent(out) :: fargs(max_func_args)
+      logical, intent(out) :: fhas_default(max_func_args)
+      character(len=len_default_expr), intent(out) :: fdefaults(max_func_args)
+      logical, intent(out) :: ok
+      character(len=:), allocatable :: tl, low, inside, part, argname, defexpr
+      character(len=:), allocatable :: parts(:)
+      integer :: p1, p2, i, n, peq
+      logical :: seen_default
+
+      ok = .false.
+      fname = ""
+      nargs = 0
+      fargs = ""
+      fhas_default = .false.
+      fdefaults = ""
+      tl = adjustl(trim(line))
+      low = lower_str(tl)
+      if (index(low, "function ") /= 1) return
+      p1 = index(tl, "(")
+      p2 = scan(tl, ")", back=.true.)
+      if (p1 <= 9 .or. p2 <= p1) return
+      fname = adjustl(trim(tl(10:p1 - 1)))
+      if (.not. is_alnum_string(fname)) return
+      if (len_trim(tl(p2 + 1:)) > 0) return
+      inside = trim(tl(p1 + 1:p2 - 1))
+      if (len_trim(inside) == 0) then
+         ok = .true.
+         return
+      end if
+      call split_by_comma(inside, n, parts)
+      if (n < 1 .or. n > max_func_args) return
+      seen_default = .false.
+      do i = 1, n
+         part = trim(parts(i))
+         peq = index(part, "=")
+         if (peq == 0) then
+            if (seen_default) return
+            if (.not. is_alnum_string(part)) return
+            fargs(i) = part
+         else
+            argname = adjustl(trim(part(1:peq - 1)))
+            defexpr = adjustl(trim(part(peq + 1:)))
+            if (.not. is_alnum_string(argname)) return
+            if (len_trim(defexpr) == 0) return
+            if (len_trim(defexpr) > len_default_expr) then
+               print *, "Error: default expression too long in function header"
+               eval_error = .true.
+               return
+            end if
+            fargs(i) = argname
+            fhas_default(i) = .true.
+            fdefaults(i) = defexpr
+            seen_default = .true.
+         end if
+      end do
+      nargs = n
+      ok = .true.
+   end subroutine parse_function_header
+
+   integer function user_func_index(fname) result(idx)
+      character(len=*), intent(in) :: fname
+      integer :: i
+      idx = 0
+      do i = 1, n_user_funcs
+         if (trim(user_funcs(i)%name) == trim(fname)) then
+            idx = i
+            return
+         end if
+      end do
+   end function user_func_index
+
+   subroutine set_user_function(fname, nargs, fargs, fhas_default, fdefaults, body)
+      character(len=*), intent(in) :: fname
+      integer, intent(in) :: nargs
+      character(len=*), intent(in) :: fargs(:)
+      logical, intent(in) :: fhas_default(:)
+      character(len=*), intent(in) :: fdefaults(:)
+      character(len=*), intent(in) :: body
+      integer :: i, idx
+
+      idx = user_func_index(fname)
+      if (idx == 0) then
+         if (n_user_funcs >= max_funcs) then
+            print *, "Error: maximum number of user functions reached"
+            eval_error = .true.
+            return
+         end if
+         n_user_funcs = n_user_funcs + 1
+         idx = n_user_funcs
+      end if
+      user_funcs(idx)%name = trim(fname)
+      user_funcs(idx)%nargs = nargs
+      user_funcs(idx)%args = ""
+      user_funcs(idx)%has_default = .false.
+      user_funcs(idx)%defaults = ""
+      do i = 1, nargs
+         user_funcs(idx)%args(i) = trim(fargs(i))
+         user_funcs(idx)%has_default(i) = fhas_default(i)
+         user_funcs(idx)%defaults(i) = trim(fdefaults(i))
+      end do
+      user_funcs(idx)%body = body
+   end subroutine set_user_function
+
+   function call_user_function(fname, args_text) result(res)
+      character(len=*), intent(in) :: fname, args_text
+      real(kind=dp), allocatable :: res(:)
+      real(kind=dp), allocatable :: tmp(:), ret(:)
+      type(arr_t) :: arg_vals(max_func_args)
+      type(var_t) :: saved_vars(max_vars)
+      integer :: saved_n_vars, idx, i, k, n_args, n_required, pos
+      integer :: saved_exit_target, saved_cycle_target
+      logical :: saved_exit_loop, saved_cycle_loop, saved_in_user, saw_named
+      logical :: provided(max_func_args), is_named, ok_named
+      character(len=:), allocatable :: labels(:), aexpr
+      character(len=len_name) :: aname
+      character(len=len_name) :: argn
+
+      allocate (res(0))
+      idx = user_func_index(fname)
+      if (idx == 0) then
+         print *, "Error: function '"//trim(fname)//"' not defined"
+         eval_error = .true.
+         return
+      end if
+
+      if (len_trim(args_text) == 0) then
+         n_args = 0
+      else
+         call split_by_comma(args_text, n_args, labels)
+      end if
+      n_required = 0
+      do i = 1, user_funcs(idx)%nargs
+         if (.not. user_funcs(idx)%has_default(i)) n_required = i
+      end do
+      if (n_args < n_required .or. n_args > user_funcs(idx)%nargs) then
+         print *, "Error: function '"//trim(fname)//"' expects between", n_required, "and", user_funcs(idx)%nargs, "arguments"
+         eval_error = .true.
+         return
+      end if
+
+      saved_n_vars = n_vars
+      saved_vars = vars
+      saved_exit_loop = exit_loop
+      saved_cycle_loop = cycle_loop
+      saved_exit_target = exit_target_depth
+      saved_cycle_target = cycle_target_depth
+      saved_in_user = in_user_function
+      in_user_function = .true.
+      exit_loop = .false.
+      cycle_loop = .false.
+      provided = .false.
+      saw_named = .false.
+
+      do i = 1, n_args
+         call parse_call_actual(labels(i), is_named, aname, aexpr, ok_named)
+         if (.not. ok_named) then
+            print *, "Error: bad argument syntax in function call to '", trim(fname), "'"
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            eval_error = .true.
+            res = [bad_value]
+            return
+         end if
+         if (is_named) then
+            saw_named = .true.
+            pos = 0
+            do k = 1, user_funcs(idx)%nargs
+               if (trim(user_funcs(idx)%args(k)) == trim(aname)) then
+                  pos = k
+                  exit
+               end if
+            end do
+            if (pos == 0) then
+               print *, "Error: unknown named argument '", trim(aname), "' in function call to '", trim(fname), "'"
+               vars = saved_vars
+               n_vars = saved_n_vars
+               exit_loop = saved_exit_loop
+               cycle_loop = saved_cycle_loop
+               exit_target_depth = saved_exit_target
+               cycle_target_depth = saved_cycle_target
+               in_user_function = saved_in_user
+               eval_error = .true.
+               res = [bad_value]
+               return
+            end if
+         else
+            if (saw_named) then
+               print *, "Error: positional arguments cannot follow named arguments in function call to '", trim(fname), "'"
+               vars = saved_vars
+               n_vars = saved_n_vars
+               exit_loop = saved_exit_loop
+               cycle_loop = saved_cycle_loop
+               exit_target_depth = saved_exit_target
+               cycle_target_depth = saved_cycle_target
+               in_user_function = saved_in_user
+               eval_error = .true.
+               res = [bad_value]
+               return
+            end if
+            pos = 0
+            do k = 1, user_funcs(idx)%nargs
+               if (.not. provided(k)) then
+                  pos = k
+                  exit
+               end if
+            end do
+            aexpr = adjustl(trim(labels(i)))
+         end if
+         if (pos == 0 .or. provided(pos)) then
+            print *, "Error: duplicate or invalid argument in function call to '", trim(fname), "'"
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            eval_error = .true.
+            res = [bad_value]
+            return
+         end if
+         tmp = evaluate(aexpr)
+         if (eval_error) then
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            res = [bad_value]
+            return
+         end if
+         arg_vals(pos)%v = tmp
+         provided(pos) = .true.
+      end do
+      do i = 1, user_funcs(idx)%nargs
+         if (provided(i)) cycle
+         if (.not. user_funcs(idx)%has_default(i)) then
+            print *, "Error: missing required argument '", trim(user_funcs(idx)%args(i)), "' in function call to '", trim(fname), "'"
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            eval_error = .true.
+            res = [bad_value]
+            return
+         end if
+         tmp = evaluate(trim(user_funcs(idx)%defaults(i)))
+         if (eval_error) then
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            res = [bad_value]
+            return
+         end if
+         arg_vals(i)%v = tmp
+         provided(i) = .true.
+      end do
+      do i = 1, max_vars
+         vars(i)%name = ""
+         vars(i)%is_const = .false.
+         if (allocated(vars(i)%val)) deallocate (vars(i)%val)
+      end do
+      n_vars = 0
+      do i = 1, user_funcs(idx)%nargs
+         call set_variable(trim(user_funcs(idx)%args(i)), arg_vals(i)%v, is_const=.true.)
+         if (eval_error) then
+            vars = saved_vars
+            n_vars = saved_n_vars
+            exit_loop = saved_exit_loop
+            cycle_loop = saved_cycle_loop
+            exit_target_depth = saved_exit_target
+            cycle_target_depth = saved_cycle_target
+            in_user_function = saved_in_user
+            res = [bad_value]
+            return
+         end if
+      end do
+
+      call set_variable(trim(fname), [bad_value], is_const=.false.)
+      call run_loop_body(user_funcs(idx)%body)
+
+      if (eval_error) then
+         vars = saved_vars
+         n_vars = saved_n_vars
+         exit_loop = saved_exit_loop
+         cycle_loop = saved_cycle_loop
+         exit_target_depth = saved_exit_target
+         cycle_target_depth = saved_cycle_target
+         in_user_function = saved_in_user
+         res = [bad_value]
+         return
+      end if
+
+      argn = trim(fname)
+      do i = 1, n_vars
+         if (trim(vars(i)%name) == trim(argn)) then
+            if (allocated(vars(i)%val)) then
+               ret = vars(i)%val
+            else
+               ret = [bad_value]
+            end if
+            exit
+         end if
+      end do
+      if (.not. allocated(ret)) then
+         print *, "Error: function '"//trim(fname)//"' did not assign a return value"
+         eval_error = .true.
+         ret = [bad_value]
+      end if
+
+      vars = saved_vars
+      n_vars = saved_n_vars
+      exit_loop = saved_exit_loop
+      cycle_loop = saved_cycle_loop
+      exit_target_depth = saved_exit_target
+      cycle_target_depth = saved_cycle_target
+      in_user_function = saved_in_user
+
+      res = ret
+   end function call_user_function
+
+   subroutine parse_subroutine_header(line, sname, nargs, sargs, sintents, shas_default, sdefaults, ok)
+      character(len=*), intent(in) :: line
+      character(len=len_name), intent(out) :: sname
+      integer, intent(out) :: nargs
+      character(len=len_name), intent(out) :: sargs(max_sub_args)
+      integer, intent(out) :: sintents(max_sub_args)
+      logical, intent(out) :: shas_default(max_sub_args)
+      character(len=len_default_expr), intent(out) :: sdefaults(max_sub_args)
+      logical, intent(out) :: ok
+      character(len=:), allocatable :: tl, low, inside, part, argname, defexpr
+      character(len=:), allocatable :: parts(:)
+      integer :: p1, p2, i, n, peq
+      logical :: seen_default
+
+      ok = .false.
+      sname = ""
+      nargs = 0
+      sargs = ""
+      sintents = 0
+      shas_default = .false.
+      sdefaults = ""
+      tl = adjustl(trim(line))
+      low = lower_str(tl)
+      if (index(low, "subroutine ") /= 1) return
+      p1 = index(tl, "(")
+      p2 = scan(tl, ")", back=.true.)
+      if (p1 <= 11 .or. p2 <= p1) return
+      sname = adjustl(trim(tl(12:p1 - 1)))
+      if (.not. is_alnum_string(sname)) return
+      if (len_trim(tl(p2 + 1:)) > 0) return
+      inside = trim(tl(p1 + 1:p2 - 1))
+      if (len_trim(inside) == 0) then
+         ok = .true.
+         return
+      end if
+      call split_by_comma(inside, n, parts)
+      if (n < 1 .or. n > max_sub_args) return
+      seen_default = .false.
+      do i = 1, n
+         part = trim(parts(i))
+         peq = index(part, "=")
+         if (peq == 0) then
+            if (seen_default) return
+            if (.not. is_alnum_string(part)) return
+            sargs(i) = part
+            sintents(i) = 2
+         else
+            argname = adjustl(trim(part(1:peq - 1)))
+            defexpr = adjustl(trim(part(peq + 1:)))
+            if (.not. is_alnum_string(argname)) return
+            if (len_trim(defexpr) == 0) return
+            if (len_trim(defexpr) > len_default_expr) then
+               print *, "Error: default expression too long in subroutine header"
+               eval_error = .true.
+               return
+            end if
+            sargs(i) = argname
+            sintents(i) = 2
+            shas_default(i) = .true.
+            sdefaults(i) = defexpr
+            seen_default = .true.
+         end if
+      end do
+      nargs = n
+      ok = .true.
+   end subroutine parse_subroutine_header
+
+   subroutine parse_sub_intent_decl(line, args, nargs, intents, ok, fatal)
+      character(len=*), intent(in) :: line
+      character(len=len_name), intent(in) :: args(max_sub_args)
+      integer, intent(in) :: nargs
+      integer, intent(inout) :: intents(max_sub_args)
+      logical, intent(out) :: ok, fatal
+      character(len=:), allocatable :: tl, low, smode, compact, rest, vars_part
+      character(len=:), allocatable :: vars_l(:)
+      integer :: p1, p2, nvars, i, j, mode, idx
+
+      ok = .false.
+      fatal = .false.
+      tl = adjustl(trim(line))
+      if (len_trim(tl) == 0) return
+      low = lower_str(tl)
+      if (index(low, "intent(") /= 1) return
+
+      p1 = index(tl, "(")
+      p2 = scan(tl, ")", back=.true.)
+      if (p1 <= 0 .or. p2 <= p1) then
+         fatal = .true.; return
+      end if
+      smode = lower_str(adjustl(trim(tl(p1 + 1:p2 - 1))))
+      compact = ""
+      do i = 1, len_trim(smode)
+         if (smode(i:i) /= " ") compact = compact//smode(i:i)
+      end do
+      select case (trim(compact))
+      case ("in")
+         mode = 1
+      case ("inout")
+         mode = 2
+      case ("out")
+         mode = 3
+      case default
+         fatal = .true.; return
+      end select
+
+      rest = adjustl(trim(tl(p2 + 1:)))
+      if (index(rest, "::") /= 1) then
+         fatal = .true.; return
+      end if
+      vars_part = adjustl(trim(rest(3:)))
+      if (len_trim(vars_part) == 0) then
+         fatal = .true.; return
+      end if
+      call split_by_comma(vars_part, nvars, vars_l)
+      if (nvars < 1) then
+         fatal = .true.; return
+      end if
+      do i = 1, nvars
+         if (.not. is_alnum_string(trim(vars_l(i)))) then
+            fatal = .true.; return
+         end if
+         idx = 0
+         do j = 1, nargs
+            if (trim(args(j)) == trim(vars_l(i))) then
+               idx = j
+               exit
+            end if
+         end do
+         if (idx == 0) then
+            print *, "Error: intent declaration references unknown argument '", trim(vars_l(i)), "'"
+            fatal = .true.
+            return
+         end if
+         intents(idx) = mode
+      end do
+      ok = .true.
+   end subroutine parse_sub_intent_decl
+
+   subroutine strip_sub_intent_lines(raw_body, args, nargs, intents, exec_body, ok)
+      character(len=*), intent(in) :: raw_body
+      character(len=len_name), intent(in) :: args(max_sub_args)
+      integer, intent(in) :: nargs
+      integer, intent(inout) :: intents(max_sub_args)
+      character(len=32768), intent(out) :: exec_body
+      logical, intent(out) :: ok
+      integer :: p1, p2, nlen
+      character(len=:), allocatable :: line, tline
+      logical :: is_intent, fatal, seen_exec
+
+      exec_body = ""
+      ok = .true.
+      seen_exec = .false.
+      nlen = len_trim(raw_body)
+      p1 = 1
+      do while (p1 <= nlen)
+         p2 = index(raw_body(p1:), new_line("a"))
+         if (p2 == 0) then
+            line = raw_body(p1:nlen)
+         else
+            line = raw_body(p1:p1 + p2 - 2)
+         end if
+         tline = adjustl(trim(line))
+         call parse_sub_intent_decl(tline, args, nargs, intents, is_intent, fatal)
+         if (fatal) then
+            print *, "Error: bad intent declaration in subroutine: ", trim(tline)
+            ok = .false.
+            return
+         end if
+         if (is_intent) then
+            if (seen_exec) then
+               print *, "Error: intent declarations must appear before executable statements"
+               ok = .false.
+               return
+            end if
+         else
+            if (len_trim(tline) > 0) seen_exec = .true.
+            if (len_trim(exec_body) + len_trim(line) + 1 > len(exec_body)) then
+               print *, "Error: subroutine body too large"
+               ok = .false.
+               return
+            end if
+            exec_body = trim(exec_body)//trim(line)//new_line("a")
+         end if
+         if (p2 == 0) exit
+         p1 = p1 + p2
+      end do
+   end subroutine strip_sub_intent_lines
+
+   integer function user_sub_index(sname) result(idx)
+      character(len=*), intent(in) :: sname
+      integer :: i
+      idx = 0
+      do i = 1, n_user_subs
+         if (trim(user_subs(i)%name) == trim(sname)) then
+            idx = i
+            return
+         end if
+      end do
+   end function user_sub_index
+
+   subroutine set_user_subroutine(sname, nargs, sargs, sintents, shas_default, sdefaults, body)
+      character(len=*), intent(in) :: sname
+      integer, intent(in) :: nargs
+      character(len=*), intent(in) :: sargs(:)
+      integer, intent(in) :: sintents(:)
+      logical, intent(in) :: shas_default(:)
+      character(len=*), intent(in) :: sdefaults(:)
+      character(len=*), intent(in) :: body
+      integer :: i, idx
+
+      idx = user_sub_index(sname)
+      if (idx == 0) then
+         if (n_user_subs >= max_subs) then
+            print *, "Error: maximum number of user subroutines reached"
+            eval_error = .true.
+            return
+         end if
+         n_user_subs = n_user_subs + 1
+         idx = n_user_subs
+      end if
+      user_subs(idx)%name = trim(sname)
+      user_subs(idx)%nargs = nargs
+      user_subs(idx)%args = ""
+      user_subs(idx)%intents = 0
+      user_subs(idx)%has_default = .false.
+      user_subs(idx)%defaults = ""
+      do i = 1, nargs
+         user_subs(idx)%args(i) = trim(sargs(i))
+         user_subs(idx)%intents(i) = sintents(i)
+         user_subs(idx)%has_default(i) = shas_default(i)
+         user_subs(idx)%defaults(i) = trim(sdefaults(i))
+      end do
+      user_subs(idx)%body = body
+   end subroutine set_user_subroutine
+
+   subroutine call_user_subroutine(sname, args_text)
+      character(len=*), intent(in) :: sname, args_text
+      type(var_t) :: saved_vars(max_vars)
+      type(arr_t) :: actual_vals(max_sub_args), wb_vals(max_sub_args)
+      integer :: saved_n_vars, idx, i, j, k, n_args, n_required, pos
+      integer :: saved_exit_target, saved_cycle_target
+      logical :: saved_exit_loop, saved_cycle_loop, saved_in_user, saved_in_user_sub
+      character(len=len_name) :: saved_active_sub_name
+      integer :: saved_active_sub_nargs
+      character(len=len_name) :: saved_active_sub_args(max_sub_args)
+      integer :: saved_active_sub_intents(max_sub_args)
+      logical :: saved_active_sub_set(max_sub_args)
+      character(len=:), allocatable :: labels(:), tok, aexpr
+      character(len=len_name) :: aname
+      logical :: provided(max_sub_args), is_named, ok_named, saw_named
+      character(len=4096) :: actual_expr(max_sub_args)
+      character(len=len_name) :: tgt(max_sub_args)
+      logical :: needs_write(max_sub_args)
+      real(kind=dp), allocatable :: tmp(:)
+
+      idx = user_sub_index(sname)
+      if (idx == 0) then
+         print *, "Error: subroutine '"//trim(sname)//"' not defined"
+         eval_error = .true.
+         return
+      end if
+
+      if (len_trim(args_text) == 0) then
+         n_args = 0
+      else
+         call split_by_comma(args_text, n_args, labels)
+      end if
+      n_required = 0
+      do i = 1, user_subs(idx)%nargs
+         if (.not. user_subs(idx)%has_default(i)) n_required = i
+      end do
+      if (n_args < n_required .or. n_args > user_subs(idx)%nargs) then
+         print *, "Error: subroutine '"//trim(sname)//"' expects between", n_required, "and", user_subs(idx)%nargs, "arguments"
+         eval_error = .true.
+         return
+      end if
+
+      saved_n_vars = n_vars
+      saved_vars = vars
+      saved_exit_loop = exit_loop
+      saved_cycle_loop = cycle_loop
+      saved_exit_target = exit_target_depth
+      saved_cycle_target = cycle_target_depth
+      saved_in_user = in_user_function
+      saved_in_user_sub = in_user_subroutine
+      saved_active_sub_name = active_sub_name
+      saved_active_sub_nargs = active_sub_nargs
+      saved_active_sub_args = active_sub_args
+      saved_active_sub_intents = active_sub_intents
+      saved_active_sub_set = active_sub_set
+      needs_write = .false.
+      tgt = ""
+      provided = .false.
+      actual_expr = ""
+      saw_named = .false.
+
+      do i = 1, n_args
+         call parse_call_actual(labels(i), is_named, aname, aexpr, ok_named)
+         if (.not. ok_named) then
+            print *, "Error: bad argument syntax in subroutine call to '", trim(sname), "'"
+            eval_error = .true.
+            exit
+         end if
+         if (is_named) then
+            saw_named = .true.
+            pos = 0
+            do k = 1, user_subs(idx)%nargs
+               if (trim(user_subs(idx)%args(k)) == trim(aname)) then
+                  pos = k
+                  exit
+               end if
+            end do
+            if (pos == 0) then
+               print *, "Error: unknown named argument '", trim(aname), "' in subroutine call to '", trim(sname), "'"
+               eval_error = .true.
+               exit
+            end if
+         else
+            if (saw_named) then
+               print *, "Error: positional arguments cannot follow named arguments in subroutine call to '", trim(sname), "'"
+               eval_error = .true.
+               exit
+            end if
+            pos = 0
+            do k = 1, user_subs(idx)%nargs
+               if (.not. provided(k)) then
+                  pos = k
+                  exit
+               end if
+            end do
+            aexpr = adjustl(trim(labels(i)))
+         end if
+         if (pos == 0 .or. provided(pos)) then
+            print *, "Error: duplicate or invalid argument in subroutine call to '", trim(sname), "'"
+            eval_error = .true.
+            exit
+         end if
+         provided(pos) = .true.
+         actual_expr(pos) = trim(aexpr)
+      end do
+      if (eval_error) then
+         vars = saved_vars
+         n_vars = saved_n_vars
+         exit_loop = saved_exit_loop
+         cycle_loop = saved_cycle_loop
+         exit_target_depth = saved_exit_target
+         cycle_target_depth = saved_cycle_target
+         in_user_function = saved_in_user
+         in_user_subroutine = saved_in_user_sub
+         active_sub_name = saved_active_sub_name
+         active_sub_nargs = saved_active_sub_nargs
+         active_sub_args = saved_active_sub_args
+         active_sub_intents = saved_active_sub_intents
+         active_sub_set = saved_active_sub_set
+         return
+      end if
+
+      do i = 1, user_subs(idx)%nargs
+         if (provided(i)) then
+            tok = trim(actual_expr(i))
+         else
+            tok = ""
+         end if
+         select case (user_subs(idx)%intents(i))
+         case (1) ! in
+            if (provided(i)) then
+               actual_vals(i)%v = evaluate(tok)
+            else
+               if (.not. user_subs(idx)%has_default(i)) then
+                  print *, "Error: missing required argument '", trim(user_subs(idx)%args(i)), "' in subroutine call to '", trim(sname), "'"
+                  eval_error = .true.
+                  exit
+               end if
+               actual_vals(i)%v = evaluate(trim(user_subs(idx)%defaults(i)))
+            end if
+            if (eval_error) exit
+         case (2) ! inout
+            if (.not. provided(i)) then
+               print *, "Error: missing inout argument '", trim(user_subs(idx)%args(i)), "' in subroutine call to '", trim(sname), "'"
+               eval_error = .true.
+               exit
+            end if
+            if (.not. is_alnum_string(tok)) then
+               print *, "Error: inout argument must be a variable name"
+               eval_error = .true.
+               exit
+            end if
+            tmp = evaluate(tok)
+            if (eval_error) exit
+            actual_vals(i)%v = tmp
+            needs_write(i) = .true.
+            tgt(i) = trim(tok)
+         case (3) ! out
+            if (.not. provided(i)) then
+               print *, "Error: missing out argument '", trim(user_subs(idx)%args(i)), "' in subroutine call to '", trim(sname), "'"
+               eval_error = .true.
+               exit
+            end if
+            if (.not. is_alnum_string(tok)) then
+               print *, "Error: out argument must be a variable name"
+               eval_error = .true.
+               exit
+            end if
+            actual_vals(i)%v = [bad_value]
+            needs_write(i) = .true.
+            tgt(i) = trim(tok)
+         end select
+      end do
+
+      if (.not. eval_error) then
+         do i = 1, max_vars
+            vars(i)%name = ""
+            vars(i)%is_const = .false.
+            if (allocated(vars(i)%val)) deallocate (vars(i)%val)
+         end do
+         n_vars = 0
+         ! Subroutines execute with normal interactive printing semantics.
+         in_user_function = .false.
+         exit_loop = .false.
+         cycle_loop = .false.
+         do i = 1, user_subs(idx)%nargs
+            call set_variable(trim(user_subs(idx)%args(i)), actual_vals(i)%v, is_const=(user_subs(idx)%intents(i) == 1))
+            if (eval_error) exit
+         end do
+         active_sub_nargs = user_subs(idx)%nargs
+         active_sub_name = trim(sname)
+         active_sub_args = ""
+         active_sub_intents = 0
+         active_sub_set = .false.
+         if (user_subs(idx)%nargs > 0) then
+            active_sub_args(1:user_subs(idx)%nargs) = user_subs(idx)%args(1:user_subs(idx)%nargs)
+            active_sub_intents(1:user_subs(idx)%nargs) = user_subs(idx)%intents(1:user_subs(idx)%nargs)
+            do i = 1, user_subs(idx)%nargs
+               active_sub_set(i) = (active_sub_intents(i) /= 3)
+            end do
+         end if
+         in_user_subroutine = .true.
+      end if
+
+      if (.not. eval_error) call run_loop_body(user_subs(idx)%body)
+
+      if (.not. eval_error) then
+         do i = 1, user_subs(idx)%nargs
+            if (.not. needs_write(i)) cycle
+            wb_vals(i)%v = [bad_value]
+            do j = 1, n_vars
+               if (trim(vars(j)%name) == trim(user_subs(idx)%args(i))) then
+                  wb_vals(i)%v = vars(j)%val
+                  exit
+               end if
+            end do
+         end do
+      end if
+
+      vars = saved_vars
+      n_vars = saved_n_vars
+      if (.not. eval_error) then
+         do i = 1, user_subs(idx)%nargs
+            if (.not. needs_write(i)) cycle
+            call set_variable(trim(tgt(i)), wb_vals(i)%v)
+            if (eval_error) exit
+         end do
+      end if
+
+      exit_loop = saved_exit_loop
+      cycle_loop = saved_cycle_loop
+      exit_target_depth = saved_exit_target
+      cycle_target_depth = saved_cycle_target
+      in_user_function = saved_in_user
+      in_user_subroutine = saved_in_user_sub
+      active_sub_name = saved_active_sub_name
+      active_sub_nargs = saved_active_sub_nargs
+      active_sub_args = saved_active_sub_args
+      active_sub_intents = saved_active_sub_intents
+      active_sub_set = saved_active_sub_set
+   end subroutine call_user_subroutine
+
    pure logical function is_end_if_line(tl) result(ok)
       character(len=*), intent(in) :: tl
       character(len=:), allocatable :: t
@@ -647,6 +1620,14 @@ contains
       t = trim(lower_str(adjustl(tl)))
       ok = (t == "end for" .or. t == "endfor" .or. t == "end for;" .or. t == "endfor;")
    end function is_end_for_line
+
+   pure logical function is_end_subroutine_line(tl) result(ok)
+      character(len=*), intent(in) :: tl
+      character(len=:), allocatable :: t
+      t = trim(lower_str(adjustl(tl)))
+      ok = (t == "end subroutine" .or. t == "endsubroutine" .or. t == "end subroutine;" .or. t == "endsubroutine;")
+      if (.not. ok) ok = (index(t, "end subroutine ") == 1)
+   end function is_end_subroutine_line
 
    pure logical function is_op_char(ch) result(ok)
       character(len=1), intent(in) :: ch
@@ -1185,6 +2166,12 @@ contains
       ! assignment found  evaluate RHS then store
       if (eqpos > 0) then
          lhs = adjustl(expr(1:eqpos - 1))
+         if (.not. is_assignment_lhs(lhs)) then
+            eqpos = 0
+         end if
+      end if
+      if (eqpos > 0) then
+         lhs = adjustl(expr(1:eqpos - 1))
          rhs = expr(eqpos + 1:)
          res = evaluate(rhs)           ! recursive call
          if (.not. eval_error) then
@@ -1235,6 +2222,25 @@ contains
          end if
          pos = pos + 1
       end subroutine next_char
+
+      pure logical function is_assignment_lhs(lhs_txt) result(ok_lhs)
+         character(len=*), intent(in) :: lhs_txt
+         character(len=:), allocatable :: lt, name
+         integer :: p1, p2
+         lt = adjustl(trim(lhs_txt))
+         ok_lhs = .false.
+         if (len_trim(lt) == 0) return
+         if (is_alnum_string(lt)) then
+            ok_lhs = .true.
+            return
+         end if
+         p1 = index(lt, "(")
+         p2 = scan(lt, ")", back=.true.)
+         if (p1 > 1 .and. p2 == len_trim(lt) .and. p2 > p1) then
+            name = adjustl(trim(lt(1:p1 - 1)))
+            if (is_alnum_string(name)) ok_lhs = .true.
+         end if
+      end function is_assignment_lhs
 
       subroutine skip_spaces()
          ! Advance pos until non-space is found
@@ -1302,10 +2308,23 @@ contains
          ! or signal an undefined-variable error
          character(len=*), intent(in) :: name
          real(kind=dp), allocatable :: v(:)
-         integer :: i
+         integer :: i, j
 
          do i = 1, n_vars
             if (vars(i)%name == name) then
+               if (in_user_subroutine) then
+                  do j = 1, active_sub_nargs
+                     if (trim(active_sub_args(j)) == trim(name)) then
+                        if (active_sub_intents(j) == 3 .and. .not. active_sub_set(j)) then
+                           print *, "Error: intent(out) argument '", trim(name), "' used before assignment in subroutine '", trim(active_sub_name), "'"
+                           eval_error = .true.
+                           v = [bad_value]
+                           return
+                        end if
+                        exit
+                     end if
+                  end do
+               end if
                v = vars(i)%val
                return
             end if
@@ -1556,9 +2575,13 @@ contains
                      case ("mssk_laplace")
                         f = mssk_laplace(0.0_dp, 1.0_dp)
                      case default
-                        print *, "Error: function '"//trim(id)//"' needs arguments"
-                        eval_error = .true.
-                        f = [bad_value]
+                        if (user_func_index(trim(id)) > 0) then
+                           f = call_user_function(trim(id), "")
+                        else
+                           print *, "Error: function '"//trim(id)//"' needs arguments"
+                           eval_error = .true.
+                           f = [bad_value]
+                        end if
                      end select
                      return
                   end if
@@ -1592,6 +2615,19 @@ contains
                      call slice_array(id, idxs, f)
 
                      ! advance cursor just past ")"
+                     pos = pend + 1
+                     if (pos > lenstr) then
+                        curr_char = char(0)
+                     else
+                        curr_char = expr(pos:pos); pos = pos + 1
+                     end if
+                     return
+                  end if
+
+                  ! User-defined functions: pass raw argument text through so
+                  ! named/default argument handling stays in call_user_function.
+                  if (user_func_index(trim(id)) > 0) then
+                     f = call_user_function(trim(id), expr(pstart:pend - 1))
                      pos = pend + 1
                      if (pos > lenstr) then
                         curr_char = char(0)
@@ -6404,7 +7440,9 @@ contains
                      end if
 
                   case default ! subscript  x(i)
-                     if (have_second) then
+                     if (user_func_index(trim(id)) > 0) then
+                        f = call_user_function(trim(id), expr(pstart:pend - 1))
+                     else if (have_second) then
                         print *, "Error in have_second: function '"//trim(id)//"' not defined"
                         eval_error = .true.; f = [bad_value]
                      else
@@ -6717,6 +7755,7 @@ contains
                print *, "Error: size mismatch in assignment to '"//trim(name)//"'"
                eval_error = .true.
             end if
+            if (.not. eval_error) call mark_sub_arg_assigned(trim(name))
             return
          end if
       end do
@@ -6776,6 +7815,88 @@ contains
       len_adj = len_trim(adj_line)
       line_cp = line
       had_error = .false.
+      if (sub_collecting) then
+         if (len_trim(line_eval) > 0) then
+            if (is_end_subroutine_line(line_eval)) then
+               block
+                  integer :: parsed_intents(max_sub_args)
+                  character(len=32768) :: exec_body
+                  logical :: ok_intent
+                  parsed_intents = sub_collect_intents
+                  call strip_sub_intent_lines(sub_collect_body, sub_collect_args, sub_collect_nargs, parsed_intents, exec_body, ok_intent)
+                  if (.not. ok_intent) then
+                     eval_error = .true.
+                  else
+                     do i = 1, sub_collect_nargs
+                        if (sub_collect_has_default(i)) then
+                           if (parsed_intents(i) /= 1) then
+                              print *, "Error: default values are only allowed for intent(in) subroutine arguments: '", trim(sub_collect_args(i)), "'"
+                              eval_error = .true.
+                              exit
+                           end if
+                        end if
+                     end do
+                     if (.not. eval_error) then
+                        call set_user_subroutine(sub_collect_name, sub_collect_nargs, sub_collect_args, parsed_intents, sub_collect_has_default, sub_collect_defaults, trim(exec_body))
+                     end if
+                  end if
+               end block
+               sub_collecting = .false.
+               sub_collect_name = ""
+               sub_collect_nargs = 0
+               sub_collect_args = ""
+               sub_collect_intents = 0
+               sub_collect_has_default = .false.
+               sub_collect_defaults = ""
+               sub_collect_body = ""
+               goto 9000
+            end if
+            if (len_trim(sub_collect_body) + len_trim(line_eval) + 1 > len(sub_collect_body)) then
+               print *, "Error: subroutine body too large"
+               eval_error = .true.
+               sub_collecting = .false.
+               sub_collect_name = ""
+               sub_collect_nargs = 0
+               sub_collect_args = ""
+               sub_collect_intents = 0
+               sub_collect_has_default = .false.
+               sub_collect_defaults = ""
+               sub_collect_body = ""
+               goto 9000
+            end if
+            sub_collect_body = trim(sub_collect_body)//trim(line_eval)//new_line("a")
+         end if
+         goto 9000
+      end if
+      if (func_collecting) then
+         if (len_trim(line_eval) > 0) then
+            if (is_end_function_line(lower_str(adj_line))) then
+               call set_user_function(func_collect_name, func_collect_nargs, func_collect_args, func_collect_has_default, func_collect_defaults, trim(func_collect_body))
+               func_collecting = .false.
+               func_collect_name = ""
+               func_collect_nargs = 0
+               func_collect_args = ""
+               func_collect_has_default = .false.
+               func_collect_defaults = ""
+               func_collect_body = ""
+               goto 9000
+            end if
+            if (len_trim(func_collect_body) + len_trim(line_eval) + 1 > len(func_collect_body)) then
+               print *, "Error: function body too large"
+               eval_error = .true.
+               func_collecting = .false.
+               func_collect_name = ""
+               func_collect_nargs = 0
+               func_collect_args = ""
+               func_collect_has_default = .false.
+               func_collect_defaults = ""
+               func_collect_body = ""
+               goto 9000
+            end if
+            func_collect_body = trim(func_collect_body)//trim(line_eval)//new_line("a")
+         end if
+         goto 9000
+      end if
       if (if_collecting) then
          if (len_trim(line_eval) > 0) then
             if (len_trim(if_collect_body) + len_trim(line_eval) + 1 > len(if_collect_body)) then
@@ -6970,8 +8091,63 @@ contains
          if_collect_body = trim(line_eval)//new_line("a")
          goto 9000
       end if
+      block
+         character(len=len_name) :: ffname
+         character(len=len_name) :: fargs(max_func_args)
+         logical :: fhas_default(max_func_args)
+         character(len=len_default_expr) :: fdefaults(max_func_args)
+         integer :: fnargs
+         logical :: fok
+         call parse_function_header(adj_line, ffname, fnargs, fargs, fhas_default, fdefaults, fok)
+         if (fok) then
+            func_collecting = .true.
+            func_collect_name = trim(ffname)
+            func_collect_nargs = fnargs
+            func_collect_args = ""
+            func_collect_has_default = .false.
+            func_collect_defaults = ""
+            if (fnargs > 0) func_collect_args(1:fnargs) = fargs(1:fnargs)
+            if (fnargs > 0) then
+               func_collect_has_default(1:fnargs) = fhas_default(1:fnargs)
+               func_collect_defaults(1:fnargs) = fdefaults(1:fnargs)
+            end if
+            func_collect_body = ""
+            goto 9000
+         end if
+      end block
+      block
+         character(len=len_name) :: ssname
+         character(len=len_name) :: sargs(max_sub_args)
+         logical :: shas_default(max_sub_args)
+         character(len=len_default_expr) :: sdefaults(max_sub_args)
+         integer :: snargs, sintents(max_sub_args)
+         logical :: sok
+         call parse_subroutine_header(adj_line, ssname, snargs, sargs, sintents, shas_default, sdefaults, sok)
+         if (sok) then
+            sub_collecting = .true.
+            sub_collect_name = trim(ssname)
+            sub_collect_nargs = snargs
+            sub_collect_args = ""
+            sub_collect_intents = 0
+            sub_collect_has_default = .false.
+            sub_collect_defaults = ""
+            if (snargs > 0) then
+               sub_collect_args(1:snargs) = sargs(1:snargs)
+               sub_collect_intents(1:snargs) = sintents(1:snargs)
+               sub_collect_has_default(1:snargs) = shas_default(1:snargs)
+               sub_collect_defaults(1:snargs) = sdefaults(1:snargs)
+            end if
+            sub_collect_body = ""
+            goto 9000
+         end if
+      end block
       if (is_else_if_line(adj_line) .or. is_else_line(low_adj) .or. is_end_if_line(low_adj)) then
          print *, "Error: IF/ELSE branch without matching block IF"
+         had_error = .true.
+         goto 9000
+      end if
+      if (is_end_subroutine_line(low_adj)) then
+         print *, "Error: END SUBROUTINE without matching SUBROUTINE"
          had_error = .true.
          goto 9000
       end if
@@ -7485,9 +8661,37 @@ contains
             end if
          end if
 
+         block
+            character(len=:), allocatable :: pcall, lowcall, sname, argtxt
+            integer :: p1, p2
+            pcall = adjustl(trim(part_eval))
+            lowcall = lower_str(pcall)
+            if (index(lowcall, "call ") == 1) then
+               p1 = index(pcall, "(")
+               p2 = index(pcall, ")")
+               if (p1 <= 6 .or. p2 <= p1 .or. len_trim(pcall(p2 + 1:)) > 0) then
+                  print *, "Error: bad CALL syntax"
+                  had_error = .true.
+                  cycle
+               end if
+               sname = adjustl(trim(pcall(6:p1 - 1)))
+               if (.not. is_alnum_string(sname)) then
+                  print *, "Error: bad subroutine name in CALL"
+                  had_error = .true.
+                  cycle
+               end if
+               argtxt = trim(pcall(p1 + 1:p2 - 1))
+               call call_user_subroutine(trim(sname), argtxt)
+               if (eval_error) then
+                  had_error = .true.
+               end if
+               cycle
+            end if
+         end block
+
          call split_by_comma(part_eval, n_names, names)
          if (n_names > 1) then
-            if (.not. suppress(k)) then
+            if (.not. suppress(k) .and. .not. in_user_function) then
                if (echo_code) write (*, '(/,"> ",a)') trim(part_eval)
                do i = 1, n_names
                   if (len_trim(names(i)) >= 2 .and. names(i)(1:1) == '"' .and. &
@@ -7644,7 +8848,7 @@ contains
                end do
 
                if (all_ident) then
-                  if (.not. suppress(k)) then
+                  if (.not. suppress(k) .and. .not. in_user_function) then
                      if (echo_code) write (*, '(/,"> ",a)') trim(part_eval)
                      do j = 1, n_names
                         r = evaluate(names(j))
@@ -7714,7 +8918,7 @@ contains
          if (index(trim(parts(k)), "print_stats") == 1) cycle
 
          ! ---------- echo only when the segment is *not* suppressed ----------
-         if (.not. suppress(k)) then
+         if (.not. suppress(k) .and. .not. in_user_function) then
             if (echo_code) write (*, '(/,"> ",a)') trim(parts(k))
             rsize = size(r)
             if (rsize == 0) then
@@ -8182,6 +9386,11 @@ contains
             line = body(p1:p1 + p2 - 2)
          end if
          call eval_print(line)                            ! recursion
+         if (eval_error) then
+            in_loop_execute = .false.
+            loop_exec_base_depth = prev_base_depth
+            return
+         end if
          ! Nested run_loop_body calls may clear this flag; keep execution mode
          ! active for the current (outer) loop body.
          in_loop_execute = .true.

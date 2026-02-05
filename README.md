@@ -113,7 +113,7 @@ ks2_test(x, y)                    ! two-sample KS test -> [D, p]
 ! Workspace
 ?vars                              ! list currently defined variables and their values
 read prices.csv                    ! read columns from prices.csv into workspace variables
-clear                              ! remove all user-defined variables from the workspace
+clear                              ! remove user-defined variables and user-defined functions
 
 ! Control flow
 if (mean(x) > 0.5) then
@@ -129,11 +129,49 @@ for z in [0.1, 0.2, 0.3]
   z, sqrt(z)
 end for
 for z in [0.1, 0.2, 0.3] z,sqrt(z) ! one-line for loop
+
+! User-defined functions (arguments are read-only / intent(in)-style)
+function center(a)
+  center = a - mean(a)
+end function
+xc = center(x)
+
+function xnorm(a, power=2)         ! default argument in user function
+  xnorm = sum(abs(a)^power)^(1/power)
+end function
+xnorm(x)                            ! uses power=2
+xnorm(x, 1)                         ! overrides default
+xnorm(x= x, power=1)                ! named arguments
+
+! User-defined subroutines (default argument intent is inout)
+subroutine bump(a, b)
+  a = a + 1
+  b = 2*b
+end subroutine
+call bump(x, y)
+
+subroutine sum2(a, b, c)
+  intent(in) :: a, b
+  intent(out) :: c
+  c = a + b
+end subroutine
+call sum2(2, 3, z)
+
+subroutine shift_scale(y, shift=0, scale=1)
+  intent(in out) :: y
+  intent(in) :: shift, scale        ! defaults allowed for intent(in)
+  y = scale*y + shift
+end subroutine
+call shift_scale(x)                 ! uses shift=0, scale=1
+call shift_scale(x, 1.5, 0.5)       ! overrides defaults
+call shift_scale(y=x, shift=1.5)    ! named arguments
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
 `head`/`tail` accept an optional second argument for the number of elements to return.
 One-line `do`/`for` loop bodies must be a single statement (you can still use `;` within that statement).
+Defaults in function/subroutine headers must be trailing. In subroutines, defaults are allowed only for arguments declared `intent(in)`.
+Named arguments are supported in user-defined function and subroutine calls; positional arguments cannot appear after a named argument.
 
 ## Regression and model fitting
 

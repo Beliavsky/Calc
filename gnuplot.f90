@@ -4,6 +4,7 @@ module plot_mod
   implicit none
   private
   public :: plot, use_windows, plot_to_label, set_plotout, get_plotout
+  logical, parameter :: noplot = .false.
 
   !── Named executables for each platform
   character(len=*), parameter :: gnuplot_cmd_win  = "wgnuplot"
@@ -126,7 +127,10 @@ contains
     logical                       :: with_points
     character(len=*), parameter   :: fmt = "(F12.6,1x,F12.6)"
     character(len=*), parameter   :: fmtp = "(F12.6,1x,F12.6,1x,F12.6)"
-
+    if (noplot) then
+       print*,"in plot_1d, not plotting" ! debug
+       return
+    end if
     n = size(x)
 
     !── defaults
@@ -229,7 +233,10 @@ contains
     character(len=*), parameter   :: fmty = "(1x,*(F12.6,1x))"
     character(len=*), parameter   :: fmtp = "(1x,*(F12.6,1x),F12.6)"
     logical                       :: with_points
-
+    if (noplot) then
+       print*,"in plot_2d, not plotting" ! debug
+       return
+    end if
     n  = size(x)
     ns = size(y,2)
 
