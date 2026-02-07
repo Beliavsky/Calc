@@ -218,13 +218,10 @@ resample(x, n=20, replace=0)      ! sample without replacement
 ## Distribution helpers
 
 - Most distributions expose `r*`/`d*`/`p*`/`q*` helpers plus `fit_*` and often `mssk_*`.
-- Noncentral Student t helpers are available as `rnct`, `dnct`, `pnct`, `qnct`, `fit_nct`, and `mssk_nct`.
 
 ```text
-x = rnct(5000, 8.0, 1.5)
+x = rnorm(5000)
 mssk(x)                            ! empirical [mean, sd, skew, excess kurtosis]
-mssk_nct(8.0, 1.5)                 ! theoretical noncentral t moments
-fit_nct(x)                         ! MLE fit, returns [df, ncp]
 distaicscan(abs(x), 1)             ! fit compatible distributions and rank by AIC
 ```
 
