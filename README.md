@@ -76,8 +76,8 @@ geomean(x)
 harmean(x)
 sd(x)
 [mean(x) sd(x) minval(x) maxval(x)]
-mssk(x)                                 ! mean, sd, skew, kurtosis
-mssk_norm(0, 1)                         ! theoretical Normal moments [mean, sd, skew, excess kurtosis]
+mssk(x)                             ! mean, sd, skew, kurtosis
+mssk_norm(0, 1)                     ! theoretical Normal moments [mean, sd, skew, kurtosis]
 median(x)
 rank(x)
 stdz(x)
