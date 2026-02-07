@@ -67,15 +67,16 @@ armastab(ma=[0.3])                           ! MA-only invertibility check
 sum(x)
 product(x)
 mean(x)
-trimmean(x, 0.1)
-winsor_mean(x, 0.1)
-mad(x)
-iqr_scale(x)
+trimmean(x, 0.1)      ! 10% trimmed mean (drop lowest/highest 10%)
+winsor_mean(x, 0.1)   ! 10% winsorized mean (cap tails at 10% quantiles)
+mad(x)                ! median absolute deviation (robust scale)
+iqr(x)                ! interquartile range
+iqr_scale(x)          ! robust sd estimate: IQR / 1.349
 geomean(x)
 harmean(x)
 sd(x)
 [mean(x) sd(x) minval(x) maxval(x)]
-mssk(x)
+mssk(x)                                 ! mean, sd, skew, kurtosis
 mssk_norm(0, 1)                         ! theoretical Normal moments [mean, sd, skew, excess kurtosis]
 median(x)
 rank(x)
