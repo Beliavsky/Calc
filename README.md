@@ -59,6 +59,9 @@ arfimaacf([0.4], [0.2], 0.25, 10)            ! theoretical ACF of ARFIMA(1,d,1)
 fracdiff(x, 0.3)                             ! fractional differencing (1-L)^0.3 x
 arfimafit(x, 1, 1)                           ! fit ARFIMA(1,d,1)
 arfimasim(1000, 0.25, phi=[0.4], theta=[0.2]) ! simulate ARFIMA(1,d,1)
+polyroots([-6, -1, 1])                       ! roots of x^2 - x - 6 -> packed as [Re1, Im1, Re2, Im2]
+armastab([0.6, 0.2], [0.3])                  ! [is_stationary, is_invertible, min_mod_ar, min_mod_ma]
+armastab(ma=[0.3])                           ! MA-only invertibility check
 
 ! Stats
 sum(x)
@@ -191,6 +194,9 @@ poly1reg(y, x, 3)                 ! polynomial regression in one predictor up to
 arfit(y, 1, 5)                    ! fit AR orders 1..5 and report fit metrics
 mafit(y, 1, 5)                    ! fit MA orders 1..5 and report fit metrics
 armafit(y, 1, 1)                  ! fit one ARMA(1,1) model
+arsimfit(10^4, [0.6, 0.4])        ! simulate AR and fit default order=size(phi)
+masimfit(10^4, [0.6, 0.4])        ! simulate MA and fit default order=size(theta)
+armasimfit(10^4, [0.6], [0.3])    ! simulate ARMA and fit default p=size(ar), q=size(ma)
 armafitgrid(y, 0, 3, 0, 3)        ! grid search over ARMA(p,q), p=0..3 and q=0..3
 armafitaic(y, 0, 5, 0, 5)         ! choose ARMA order by information criterion over p,q ranges
 fit_mixnorm(y, 2)                 ! fit a 2-component normal mixture [wgt, mean, sd]
@@ -373,6 +379,12 @@ make
 fcalc.exe
 ```
 
+- Run interpreter with plotting disabled:
+
+```bat
+fcalc.exe --noplot
+```
+
 ## Transpiler (`transpile_session.py`)
 
 Transpiles a `.fi` session script to a standalone Fortran program.
@@ -401,6 +413,40 @@ make -f Makefile_tests
 - Supports the newer analysis helpers used above (`poly1reg`, `distaicscan`, robust stats, and tests).
 - Rewrites legacy ARFIMA simulation call form when possible:
   - `arfimasim(n, [phi], [theta], d)` -> `arfimasim(n, d, phi=[phi], theta=[theta])`
+- Rewrites `iter=` to `niter=` where required by Fortran procedures (for relevant time-series helpers).
+- Rewrites integer order ranges to compile-safe forms for simulation-fit helpers:
+  - `arsimfit(..., arange(...))` / `masimfit(..., arange(...))` -> `... irange(...)`
+  - `armasimfit(..., pvec=..., qvec=...)` order arguments are emitted as real vectors as required by the procedure interface.
+- Rewrites method-name shorthands to quoted strings where required (for example `method=burg` -> `method="burg"`).
+- Treats `run("...fi")` in scripts as non-transpilable runtime control and comments it out in generated Fortran.
+
+## Batch transpile runner (`xpytr_all.py`)
+
+Runs `transpile_session.py` across many `.fi` scripts, compiles with `Makefile_tests`, and optionally runs interpreter scripts and generated executables.
+
+```bat
+python xpytr_all.py --include-re *simfit*.fi
+```
+
+Common options:
+
+- `--include-re REGEX_OR_GLOB` include only matching files (supports regex, and glob-like patterns such as `*simfit*.fi`).
+- `--exclude-re REGEX_OR_GLOB` exclude matching files.
+- `--files "a.fi b.fi"` or `--files a.fi,b.fi` explicit file list.
+- `--limit N` process only first `N` selected files.
+- `--run-script` run `fcalc` on each script before Fortran compile.
+- `--run-exe` run compiled `tests.exe`.
+- `--hide-output` suppress runtime stdout/stderr from interpreter/exe runs.
+- `--noplot` propagate `--noplot` to interpreter runs.
+- `--time` print timing DataFrame and summary stats.
+- `--fail-fast` stop on first failure.
+- `--resume` / `--restart` resume or reset checkpoint (`xpytr_all_state.json` by default).
+
+When failures occur, it writes `xpytr_all_errors.txt` containing, for each failed script:
+
+- original `.fi` script
+- transpiled `tests.f90` (when available)
+- tool/compiler/runtime output
 
 ## Interpreter-only commands
 
