@@ -14,8 +14,8 @@ Calc naming follows R-style prefixes in many places:
 
 | Interpreter name family | Statistical name |
 |---|---|
-| `runif`, `dunif`, `punif`, `qunif` | Uniform distribution (default: Uniform(0,1)) |
-| `rnorm`, `dnorm`, `pnorm`, `qnorm`, `fit_norm` | Normal (Gaussian) distribution |
+| `runif`, `dunif`, `punif`, `qunif`, `mssk_unif` | Uniform distribution (default: Uniform(0,1)) |
+| `rnorm`, `dnorm`, `pnorm`, `qnorm`, `fit_norm`, `mssk_norm` | Normal (Gaussian) distribution |
 | `rexp`, `dexp`, `pexp`, `qexp`, `fit_exp`, `mssk_exp` | Exponential distribution |
 | `rgamma`, `dgamma`, `pgamma`, `qgamma`, `fit_gamma`, `mssk_gamma` | Gamma distribution |
 | `rlnorm`, `dlnorm`, `plnorm`, `qlnorm`, `fit_lnorm`, `mssk_lnorm` | Lognormal distribution |
@@ -28,13 +28,15 @@ Calc naming follows R-style prefixes in many places:
 | `rlogis`, `dlogis`, `plogis`, `qlogis`, `fit_logis`, `mssk_logis` | Logistic distribution |
 | `rsech`, `dsech`, `psech`, `qsech`, `fit_sech`, `mssk_sech` | Hyperbolic secant distribution |
 | `rlaplace`, `dlaplace`, `plaplace`, `qlaplace`, `fit_laplace`, `mssk_laplace` | Laplace (double exponential) distribution |
-| `rcauchy`, `dcauchy`, `pcauchy`, `qcauchy`, `fit_cauchy` | Cauchy distribution |
-| `rged`, `dged`, `pged`, `qged`, `fit_ged` | Generalized Error Distribution (GED, generalized normal / exponential power) |
-| `rhyperb`, `dhyperb`, `phyperb`, `qhyperb`, `fit_hyperb` | Hyperbolic distribution |
+| `rcauchy`, `dcauchy`, `pcauchy`, `qcauchy`, `fit_cauchy`, `mssk_cauchy` | Cauchy distribution |
+| `rged`, `dged`, `pged`, `qged`, `fit_ged`, `mssk_ged` | Generalized Error Distribution (GED, generalized normal / exponential power) |
+| `rhyperb`, `dhyperb`, `phyperb`, `qhyperb`, `fit_hyperb`, `mssk_hyperb` | Hyperbolic distribution |
 
 ## Notes
 
 - Uniform helper defaults use the standard support `[0,1]` when bounds are omitted.
 - `mssk(x)` computes empirical moments from a sample, while `mssk_*` routines return theoretical moments for named distributions.
+- `mssk_norm(loc)` and `mssk_cauchy(loc)` use default `scale=1`; pass two arguments to override scale.
+- `mssk_cauchy(loc, scale)` returns `NaN` moments because Cauchy mean/variance/skew/kurtosis are undefined.
 - `mssk_nct(df)` defaults to central t moments (`ncp=0`); `mssk_nct(df, ncp)` uses the noncentral case.
 - `fit_mixnorm(x, k)` returns a length `3k` vector as `[wgt(1:k), mean(1:k), sd(1:k)]`.
