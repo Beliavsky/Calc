@@ -76,10 +76,7 @@ harmean(x)
 sd(x)
 [mean(x) sd(x) minval(x) maxval(x)]
 mssk(x)
-mssk_unif(0, 1)
-mssk_norm(0, 1)
-mssk_cauchy(0, 1)
-mssk_hyperb(0, 1, 1.2)
+mssk_norm(0, 1)                         ! theoretical Normal moments [mean, sd, skew, excess kurtosis]
 median(x)
 rank(x)
 stdz(x)
@@ -225,12 +222,14 @@ resample(x, n=20, replace=0)      ! sample without replacement
 - Most distributions expose `r*`/`d*`/`p*`/`q*` helpers plus `fit_*` and often `mssk_*`.
 
 ```text
-x = rnorm(5000)
-mssk(x)                            ! empirical [mean, sd, skew, excess kurtosis]
-mssk_unif(0, 1)                    ! theoretical Uniform moments
-mssk_norm(0, 1)                    ! theoretical Normal moments
-mssk_cauchy(0, 1)                  ! [NaN, NaN, NaN, NaN] (moments undefined)
-mssk_hyperb(0, 1, 1.2)             ! theoretical symmetric hyperbolic moments
+x = rlnorm(5000, 0.0, 0.5)             ! r: random draws from Lognormal(meanlog, sdlog)
+dlnorm(x, 0.0, 0.5)                    ! d: lognormal density
+plnorm(x, 0.0, 0.5)                    ! p: lognormal CDF
+qlnorm(0.95, 0.0, 0.5)                 ! q: lognormal quantile
+skew_lnorm(0.5)                        ! theoretical skewness
+kurt_lnorm(0.5)                        ! theoretical excess kurtosis
+mssk_lnorm(0.0, 0.5)                   ! theoretical [mean, sd, skew, excess kurtosis]
+fit_lnorm(x)                           ! fit [meanlog, sdlog] from data
 distaicscan(abs(x), 1)             ! fit compatible distributions and rank by AIC
 ```
 

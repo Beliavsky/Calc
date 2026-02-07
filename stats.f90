@@ -4,7 +4,7 @@ use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 use random_mod, only: random_normal, random_seed_init
 use qsort_mod, only: median, quantile, sorted
-use util_mod, only: polyroots
+use util_mod, only: polyroots, lowercase
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
@@ -12,6 +12,8 @@ public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, kde, &
           acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, armastab, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, &
+          skew_gamma, skew_lnorm, skew_nct, skew_chisq, skew_f, skew_beta, &
+          kurt_gamma, kurt_lnorm, kurt_t, kurt_nct, kurt_chisq, kurt_f, kurt_beta, kurt_ged, kurt_hyperb, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
           qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
@@ -89,10 +91,20 @@ interface masimfit
    module procedure masimfit_vec
 end interface masimfit
 
+interface kurt_nct
+   module procedure kurt_nct
+   module procedure kurt_nctn
+end interface kurt_nct
+
+interface skew_nct
+   module procedure skew_nct
+   module procedure skew_nctn
+end interface skew_nct
+
 abstract interface
    function obj_fun(x) result(f)
       import dp
-      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp), intent(in) :: x(:)   ! parameter vector
       real(kind=dp) :: f
    end function obj_fun
 end interface
@@ -107,7 +119,7 @@ end function nanv
 
 pure function lower_ascii(s) result(t)
 ! Lowercase ASCII helper for option parsing.
-character(len=*), intent(in) :: s
+character(len=*), intent(in) :: s   ! input string
 character(len=len(s)) :: t
 integer :: i, c
 t = s
@@ -119,7 +131,9 @@ end function lower_ascii
 
 pure logical function mixnorm_params_ok(wgt, mu, sig) result(ok)
 ! Validate finite normal-mixture parameters.
-real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp), intent(in) :: wgt(:)   ! mixture component weights
+real(kind=dp), intent(in) :: mu(:)   ! component means
+real(kind=dp), intent(in) :: sig(:)   ! component standard deviations
 ok = .false.
 if (size(wgt) < 1) return
 if (size(mu) /= size(wgt) .or. size(sig) /= size(wgt)) return
@@ -130,7 +144,7 @@ end function mixnorm_params_ok
 
 pure function standardize(x) result(y)
 ! shift and scale x so it has mean 0 and variance 1
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp)             :: y(size(x))
 real(kind=dp)             :: sumsq
 integer                   :: n
@@ -144,21 +158,21 @@ end function standardize
 
 pure function mean(x) result(mean_val)
 ! return the mean of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp) :: mean_val
 mean_val = sum(x) / (max(1, size(x)))
 end function mean
 
 pure function geomean(x) result(geomean_val)
 ! return the geometric mean of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! positive input data vector
 real(kind=dp) :: geomean_val
 geomean_val = exp(mean(log(x)))
 end function geomean
 
 pure function harmean(x) result(harmean_val)
 ! return the harmonic mean of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! nonzero input data vector
 real(kind=dp) :: harmean_val
 integer :: n
 n = size(x)
@@ -171,8 +185,8 @@ end function harmean
 
 pure function trimmean(x, alpha) result(tm)
 ! Trimmed mean with symmetric trim fraction alpha in [0,0.5).
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: alpha
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in), optional :: alpha   ! symmetric trim fraction
 real(kind=dp) :: tm
 real(kind=dp), allocatable :: xs(:)
 real(kind=dp) :: a
@@ -201,8 +215,8 @@ end function trimmean
 
 pure function winsor_mean(x, alpha) result(wm)
 ! Winsorized mean with symmetric winsor fraction alpha in [0,0.5).
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: alpha
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in), optional :: alpha   ! symmetric winsor fraction
 real(kind=dp) :: wm
 real(kind=dp), allocatable :: xs(:), y(:)
 real(kind=dp) :: a
@@ -231,8 +245,8 @@ end function winsor_mean
 
 pure function mad(x, center) result(v)
 ! Median absolute deviation from median (or provided center).
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: center
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in), optional :: center   ! center value for deviations
 real(kind=dp) :: v
 real(kind=dp), allocatable :: ad(:)
 real(kind=dp) :: c
@@ -252,7 +266,7 @@ end function mad
 
 pure function iqr_scale(x) result(v)
 ! IQR-based robust scale estimate (IQR/1.349).
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp) :: v
 real(kind=dp), allocatable :: q(:)
 if (size(x) < 1) then
@@ -264,7 +278,7 @@ end function iqr_scale
 
 pure function sd(x) result(sd_val)
 ! return the standard deviation of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp) :: sd_val
 real(kind=dp) :: mean_x
 mean_x = mean(x)
@@ -274,7 +288,8 @@ end function sd
 pure function cor(x, y) result(corr_xy)
 ! Returns the linear Pearson correlation of x(:) and y(:)
 ! Returns a correlation < -1.0_dp to signal an error
-real(kind=dp), intent(in) :: x(:), y(:)
+real(kind=dp), intent(in) :: x(:)   ! first data vector
+real(kind=dp), intent(in) :: y(:)   ! second data vector
 real(kind=dp) :: corr_xy
 real(kind=dp) :: x_mean, y_mean, cov_xy, var_x, var_y
 integer :: n
@@ -297,7 +312,8 @@ end function cor
 
 pure function cov(x, y) result(cov_xy)
 ! Returns the covariance of two 1D arrays
-real(kind=dp), intent(in) :: x(:), y(:)
+real(kind=dp), intent(in) :: x(:)   ! first data vector
+real(kind=dp), intent(in) :: y(:)   ! second data vector
 real(kind=dp) :: cov_xy
 real(kind=dp) :: x_mean, y_mean
 integer :: n
@@ -312,8 +328,8 @@ end function cov
 
 pure function acf(x, k) result(r)
 ! return the first k autocorrelations (lags 1..k) of x
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 real(kind=dp) :: mean_x, denom
 integer :: n, lag, k_eff
@@ -338,11 +354,11 @@ end function acf
 function arspec(x, p, nfreq, plot, method) result(s)
 ! AR(p)-based spectral density estimate on a regular frequency grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p
-integer, intent(in), optional :: nfreq
-logical, intent(in), optional :: plot
-character(len=*), intent(in), optional :: method
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p   ! AR model order
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
+character(len=*), intent(in), optional :: method   ! AR estimation method (ls/yw/burg)
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: xd(:), phi(:), resid(:), freq(:)
 real(kind=dp) :: sigma2, w, re_part, im_part, denom
@@ -435,10 +451,12 @@ end function arspec
 function arspecaic(x, pmax, nfreq, plot, niter, method) result(s)
 ! AR-spectrum using AR order selected by AIC over p=0..pmax.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: pmax, nfreq, niter
-logical, intent(in), optional :: plot
-character(len=*), intent(in), optional :: method
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: pmax   ! maximum AR order considered
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: niter   ! early-stop patience for order scan
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
+character(len=*), intent(in), optional :: method   ! AR estimation method (ls/yw/burg)
 real(kind=dp), allocatable :: s(:)
 integer :: pmax_i, nf, p, best_p, no_improve, n_eff, j
 real(kind=dp) :: aic, best_aic, best_aic_prev, sse, sigma2
@@ -556,10 +574,15 @@ function armaspec(x, p, q, ar, ma, sigma2, nfreq, plot, niter) result(s)
 ! - fitted mode: armaspec(x,p,q,...)
 ! - theoretical mode: armaspec(ar=phi, ma=theta, sigma2=..., ...)
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in), optional :: x(:), ar(:), ma(:), sigma2
-integer, intent(in), optional :: p, q
-integer, intent(in), optional :: nfreq, niter
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in), optional :: x(:)   ! input series in fitted mode
+real(kind=dp), intent(in), optional :: ar(:)   ! AR coefficients in theory mode
+real(kind=dp), intent(in), optional :: ma(:)   ! MA coefficients in theory mode
+real(kind=dp), intent(in), optional :: sigma2   ! innovation variance in theory mode
+integer, intent(in), optional :: p   ! AR order in fitted mode
+integer, intent(in), optional :: q   ! MA order in fitted mode
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: niter   ! iterations for ARMA fitting
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: phi(:), theta(:), freq(:)
 real(kind=dp) :: rmse, aic, bic, sig2, w, num_re, num_im, den_re, den_im, denom, numer
@@ -709,8 +732,8 @@ end if
 end function armaspec
 
 pure function coeff_vec_text(v, nshow) result(txt)
-real(kind=dp), intent(in) :: v(:)
-integer, intent(in) :: nshow
+real(kind=dp), intent(in) :: v(:)   ! coefficient vector
+integer, intent(in) :: nshow   ! number of leading elements to print
 character(len=96) :: txt
 character(len=24) :: num
 integer :: i
@@ -728,9 +751,12 @@ end function coeff_vec_text
 
 function armaspecaic(x, pmax, qmax, nfreq, plot, iter) result(s)
 ! ARMA-spectrum with (p,q) selected by AIC on a bounded grid.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: pmax, qmax, nfreq, iter
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: pmax   ! maximum AR order in AIC grid
+integer, intent(in), optional :: qmax   ! maximum MA order in AIC grid
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: iter   ! iterations per ARMA fit
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 integer :: pmax_i, qmax_i, nf, it, p, q, best_p, best_q, n
 real(kind=dp) :: rmse, aic, bic, best_aic
@@ -809,11 +835,14 @@ end function armaspecaic
 function arma_mt_spec(x, p, q, nfreq, iter, nw, k, plot) result(s)
 ! Compare ARMA and multitaper spectra on one plot; return ARMA spectrum.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p, q
-integer, intent(in), optional :: nfreq, iter, k
-real(kind=dp), intent(in), optional :: nw
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p   ! AR order for ARMA model
+integer, intent(in) :: q   ! MA order for ARMA model
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: iter   ! iterations for ARMA fitting
+integer, intent(in), optional :: k   ! number of tapers in MT estimate
+real(kind=dp), intent(in), optional :: nw   ! time-bandwidth product for MT
+logical, intent(in), optional :: plot   ! whether to draw comparison plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: smt(:), y2(:,:), freq(:)
 character(len=4) :: legends(2)
@@ -901,10 +930,14 @@ end function arma_mt_spec
 
 function armaaic_mt_spec(x, pmax, qmax, nfreq, iter, nw, k, plot) result(s)
 ! Choose ARMA(p,q) by AIC, then compare ARMA and MT spectra on one plot.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: pmax, qmax, nfreq, iter, k
-real(kind=dp), intent(in), optional :: nw
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: pmax   ! maximum AR order in AIC grid
+integer, intent(in), optional :: qmax   ! maximum MA order in AIC grid
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: iter   ! iterations per ARMA fit
+integer, intent(in), optional :: k   ! number of tapers in MT estimate
+real(kind=dp), intent(in), optional :: nw   ! time-bandwidth product for MT
+logical, intent(in), optional :: plot   ! whether to draw comparison plot
 real(kind=dp), allocatable :: s(:)
 integer :: pmax_i, qmax_i, nf, it, kk, p, q, best_p, best_q, n
 real(kind=dp) :: nw_i, rmse, aic, bic, best_aic
@@ -1002,11 +1035,13 @@ end function armaaic_mt_spec
 function welchspec_scalar(x, seglen, overlap, window, nfreq, detrend, plot) result(s)
 ! Welch averaged periodogram spectrum estimate.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: seglen, nfreq
-real(kind=dp), intent(in), optional :: overlap
-character(len=*), intent(in), optional :: window, detrend
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: seglen   ! segment length
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+real(kind=dp), intent(in), optional :: overlap   ! segment overlap fraction [0,1)
+character(len=*), intent(in), optional :: window   ! window type (hann/hamming/bartlett/rect)
+character(len=*), intent(in), optional :: detrend   ! detrending mode (none/mean/linear)
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: seg(:), wv(:), freq(:), sone(:)
 real(kind=dp) :: ov, w, re_part, im_part, u, sw, sy, st, sty, st2, a0, b1
@@ -1162,12 +1197,13 @@ end function welchspec_scalar
 function welchspec_vec(x, seglen, overlap, window, nfreq, detrend, plot) result(s)
 ! Welch spectrum for multiple segment lengths (plots all curves if plot=.true.).
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: seglen(:)
-real(kind=dp), intent(in), optional :: overlap
-character(len=*), intent(in), optional :: window, detrend
-integer, intent(in), optional :: nfreq
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: seglen(:)   ! vector of segment lengths
+real(kind=dp), intent(in), optional :: overlap   ! segment overlap fraction [0,1)
+character(len=*), intent(in), optional :: window   ! window type (hann/hamming/bartlett/rect)
+character(len=*), intent(in), optional :: detrend   ! detrending mode (none/mean/linear)
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=16), allocatable :: legends(:)
@@ -1224,10 +1260,12 @@ end function welchspec_vec
 function pgramspec_scalar(x, nfreq, demean, taper, smooth, plot) result(s)
 ! Nonparametric periodogram spectrum estimate with optional taper/smoothing.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nfreq, smooth
-logical, intent(in), optional :: demean, plot
-real(kind=dp), intent(in), optional :: taper
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: smooth   ! smoothing window width (odd enforced)
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
+real(kind=dp), intent(in), optional :: taper   ! end-taper fraction in [0,0.5]
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y(:), sraw(:), freq(:)
 real(kind=dp) :: w, re_part, im_part, taper_frac, ww
@@ -1317,11 +1355,12 @@ end function pgramspec_scalar
 function pgramspec_vec(x, nfreq, demean, taper, smooth, plot) result(s)
 ! Periodogram spectrum with multiple smoothing widths; plots all curves.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nfreq
-logical, intent(in), optional :: demean, plot
-real(kind=dp), intent(in), optional :: taper
-integer, intent(in) :: smooth(:)
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
+real(kind=dp), intent(in), optional :: taper   ! end-taper fraction in [0,0.5]
+integer, intent(in) :: smooth(:)   ! vector of smoothing window widths
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=16), allocatable :: legends(:)
@@ -1377,11 +1416,11 @@ end function pgramspec_vec
 function acfspec_scalar(x, m, nfreq, window, plot) result(s)
 ! Spectrum estimate via tapered autocovariance up to lag m.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: m
-integer, intent(in), optional :: nfreq
-character(len=*), intent(in), optional :: window
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: m   ! maximum autocovariance lag
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+character(len=*), intent(in), optional :: window   ! lag window (bartlett/parzen/none)
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: gamma(:), freq(:)
 real(kind=dp) :: mu, w, sumk, u
@@ -1463,11 +1502,11 @@ end function acfspec_scalar
 function acfspec_vec(x, m, nfreq, window, plot) result(s)
 ! Spectrum estimate for multiple m values; plots all curves.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: m(:)
-integer, intent(in), optional :: nfreq
-character(len=*), intent(in), optional :: window
-logical, intent(in), optional :: plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: m(:)   ! vector of maximum lags
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+character(len=*), intent(in), optional :: window   ! lag window (bartlett/parzen/none)
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=16), allocatable :: legends(:)
@@ -1514,10 +1553,12 @@ end function acfspec_vec
 function mtspec_scalar(x, nfreq, nw, k, demean, plot) result(s)
 ! Multitaper spectrum using DPSS tapers from the exact concentration matrix.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nfreq, k
-real(kind=dp), intent(in), optional :: nw
-logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: k   ! number of DPSS tapers
+real(kind=dp), intent(in), optional :: nw   ! time-bandwidth product
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y(:), tapers(:,:), evals(:), freq(:)
 real(kind=dp) :: nw_i, w, re_part, im_part, tmpn
@@ -1614,9 +1655,12 @@ end function mtspec_scalar
 function mtspec_nwvec(x, nfreq, nw, k, demean, plot) result(s)
 ! Multitaper spectrum for multiple nw values (fixed k).
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:), nw(:)
-integer, intent(in), optional :: nfreq, k
-logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(in) :: nw(:)   ! vector of time-bandwidth values
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+integer, intent(in), optional :: k   ! number of DPSS tapers
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=20), allocatable :: legends(:)
@@ -1668,11 +1712,12 @@ end function mtspec_nwvec
 function mtspec_kvec(x, nfreq, nw, k, demean, plot) result(s)
 ! Multitaper spectrum for multiple k values (fixed nw).
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k(:)
-integer, intent(in), optional :: nfreq
-real(kind=dp), intent(in), optional :: nw
-logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k(:)   ! vector of taper counts
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+real(kind=dp), intent(in), optional :: nw   ! time-bandwidth product
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=20), allocatable :: legends(:)
@@ -1728,10 +1773,12 @@ end function mtspec_kvec
 function mtspec_nwkvec(x, nfreq, nw, k, demean, plot) result(s)
 ! Multitaper spectrum for all (nw,k) combinations.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:), nw(:)
-integer, intent(in) :: k(:)
-integer, intent(in), optional :: nfreq
-logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(in) :: nw(:)   ! vector of time-bandwidth values
+integer, intent(in) :: k(:)   ! vector of taper counts
+integer, intent(in), optional :: nfreq   ! number of frequency grid points
+logical, intent(in), optional :: demean   ! remove sample mean before spectrum
+logical, intent(in), optional :: plot   ! whether to draw spectrum plot
 real(kind=dp), allocatable :: s(:)
 real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
 character(len=24), allocatable :: legends(:)
@@ -1782,10 +1829,12 @@ end function mtspec_nwkvec
 
 subroutine dpss_tapers(n, nw, k, tapers, evals, ok)
 ! Compute first k DPSS tapers by eigendecomposition of concentration matrix.
-integer, intent(in) :: n, k
-real(kind=dp), intent(in) :: nw
-real(kind=dp), intent(out) :: tapers(n, k), evals(k)
-logical, intent(out) :: ok
+integer, intent(in) :: n   ! taper length
+integer, intent(in) :: k   ! number of tapers to compute
+real(kind=dp), intent(in) :: nw   ! time-bandwidth product
+real(kind=dp), intent(out) :: tapers(n, k)   ! output DPSS taper matrix
+real(kind=dp), intent(out) :: evals(k)   ! concentration eigenvalues
+logical, intent(out) :: ok   ! success flag
 real(kind=dp), allocatable :: cmat(:,:), evec(:,:), all_eval(:), col(:)
 logical, allocatable :: used(:)
 real(kind=dp) :: w, x, best
@@ -1833,9 +1882,10 @@ end subroutine dpss_tapers
 
 subroutine symmetric_jacobi_eig(a_in, evals, evecs, ok)
 ! Jacobi eigensolver for real symmetric matrix.
-real(kind=dp), intent(in) :: a_in(:,:)
-real(kind=dp), intent(out) :: evals(:), evecs(:,:)
-logical, intent(out) :: ok
+real(kind=dp), intent(in) :: a_in(:,:)   ! input symmetric matrix
+real(kind=dp), intent(out) :: evals(:)   ! eigenvalues
+real(kind=dp), intent(out) :: evecs(:,:)   ! eigenvectors by column
+logical, intent(out) :: ok   ! success flag
 real(kind=dp), allocatable :: a(:,:)
 real(kind=dp) :: app, aqq, apq, theta, tt, c, ss, tau, g, h, offmax
 integer :: n, p, q, i, j, it, max_iter
@@ -1907,8 +1957,8 @@ end subroutine symmetric_jacobi_eig
 
 pure function pacf(x, k) result(p)
 ! return the first k partial autocorrelations (lags 1..k) of x
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: p(:)
 real(kind=dp), allocatable :: r(:), phi_dl(:,:), v(:)
 integer :: n, k_eff, j, m
@@ -1952,10 +2002,10 @@ end function pacf
 subroutine acfpacf(x, k, plot, title)
 ! print ACF/PACF table and optionally plot both series
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
-logical, intent(in), optional :: plot
-character(len=*), intent(in), optional :: title
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! maximum lag
+logical, intent(in), optional :: plot   ! whether to draw ACF/PACF plot
+character(len=*), intent(in), optional :: title   ! plot title override
 real(kind=dp), allocatable :: ac(:), pc(:), lags(:), y2(:,:)
 character(len=4) :: legends(2)
 character(len=:), allocatable :: ttl
@@ -2003,10 +2053,10 @@ end subroutine acfpacf
 subroutine acfpacfar(x, k, plot, title)
 ! print ACF/PACF/AR table and optionally plot all three series
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
-logical, intent(in), optional :: plot
-character(len=*), intent(in), optional :: title
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! maximum lag/order
+logical, intent(in), optional :: plot   ! whether to draw ACF/PACF/AR plot
+character(len=*), intent(in), optional :: title   ! plot title override
 real(kind=dp), allocatable :: ac(:), pc(:), ar(:), lags(:), y3(:,:)
 character(len=4) :: legends(3)
 character(len=:), allocatable :: ttl
@@ -2055,8 +2105,8 @@ end subroutine acfpacfar
 
 pure function fiacf(d, k) result(r)
 ! theoretical ACF of ARFIMA(0,d,0) for lags 1..k
-real(kind=dp), intent(in) :: d
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: d   ! fractional differencing parameter
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 integer :: j
 real(kind=dp), parameter :: eps = 1.0e-12_dp
@@ -2086,9 +2136,9 @@ end function fiacf
 
 pure function fracdiff(x, d, m) result(y)
 ! fractional differencing: y = (1-L)^d x, truncated at lag m (default n-1)
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: d
-integer, intent(in), optional :: m
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(in) :: d   ! fractional differencing parameter
+integer, intent(in), optional :: m   ! maximum truncation lag
 real(kind=dp), allocatable :: y(:)
 real(kind=dp), allocatable :: w(:)
 integer :: n, m_eff, t, k
@@ -2116,8 +2166,8 @@ end function fracdiff
 
 pure function arcoef(x, k) result(phi)
 ! fit AR(k) coefficients by least squares
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! AR model order
 real(kind=dp), allocatable :: phi(:)
 real(kind=dp), allocatable :: y(:), xmat(:,:), xtx(:,:), xty(:)
 logical :: ok
@@ -2145,8 +2195,8 @@ end function arcoef
 
 function arcoef_yw(x, k) result(phi)
 ! Fit AR(k) coefficients by Yule-Walker equations.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! AR model order
 real(kind=dp), allocatable :: phi(:)
 real(kind=dp), allocatable :: r(:), rmat(:,:), rhs(:)
 real(kind=dp) :: xm
@@ -2180,8 +2230,8 @@ end function arcoef_yw
 
 function arcoef_burg(x, k) result(phi)
 ! Fit AR(k) coefficients by Burg's algorithm.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! AR model order
 real(kind=dp), allocatable :: phi(:)
 real(kind=dp), allocatable :: ef(:), eb(:), a(:), a_old(:), y(:)
 real(kind=dp) :: num, den, km
@@ -2234,9 +2284,9 @@ end function arcoef_burg
 
 function arcoef_method(x, k, method) result(phi)
 ! Dispatch AR coefficient estimation by method.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
-character(len=*), intent(in) :: method
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: k   ! AR model order
+character(len=*), intent(in) :: method   ! estimator name (ls/yw/burg)
 real(kind=dp), allocatable :: phi(:)
 character(len=16) :: m
 
@@ -2255,9 +2305,10 @@ end function arcoef_method
 
 subroutine arfimafit(x, p, q, niter)
 ! fit ARFIMA(p,d,q) by approximate Whittle likelihood
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p, q
-integer, intent(in), optional :: niter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p   ! AR order
+integer, intent(in) :: q   ! MA order
+integer, intent(in), optional :: niter   ! optimizer iteration budget
 integer :: n, m, i, t, j, maxpq, n_eff, it, k_params
 real(kind=dp) :: d, rmse, aic, bic, sse, sigma2
 real(kind=dp), allocatable :: xd(:), resid(:), phi(:), theta(:), ar0(:), u0(:), ubest(:), lam(:), per(:)
@@ -2374,8 +2425,10 @@ end if
 
 contains
    pure subroutine unpack_params(u, phi_p, theta_q, d_out)
-      real(kind=dp), intent(in) :: u(:)
-      real(kind=dp), intent(out) :: phi_p(:), theta_q(:), d_out
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained optimization parameters
+      real(kind=dp), intent(out) :: phi_p(:)   ! transformed AR coefficients
+      real(kind=dp), intent(out) :: theta_q(:)   ! transformed MA coefficients
+      real(kind=dp), intent(out) :: d_out   ! transformed fractional differencing parameter
       integer :: k
       if (p > 0) then
          do k = 1, p
@@ -2391,7 +2444,7 @@ contains
    end subroutine unpack_params
 
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained optimization parameters
       real(kind=dp) :: f
       real(kind=dp), allocatable :: phi_l(:), theta_l(:), g(:)
       real(kind=dp) :: d_l, num_re, num_im, den_re, den_im, denom2, frac_term
@@ -2441,9 +2494,9 @@ end subroutine arfimafit
 
 function arsim(n, phi, noise) result(x)
 ! simulate n observations from an AR(p) with coefficients phi(:)
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in), optional :: noise(:)
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in), optional :: noise(:)   ! optional innovation sequence
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: p, t, j, m
@@ -2478,9 +2531,9 @@ end function arsim
 
 function masim(n, theta, noise) result(x)
 ! simulate n observations from an MA(q) with coefficients theta(:)
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: theta(:)
-real(kind=dp), intent(in), optional :: noise(:)
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+real(kind=dp), intent(in), optional :: noise(:)   ! optional innovation sequence
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: q, t, j, m
@@ -2515,10 +2568,10 @@ end function masim
 
 function armasim(n, phi, theta, noise) result(x)
 ! simulate n observations from an ARMA(p,q)
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in) :: theta(:)
-real(kind=dp), intent(in), optional :: noise(:)
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+real(kind=dp), intent(in), optional :: noise(:)   ! optional innovation sequence
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: p, q, t, j, m
@@ -2561,13 +2614,13 @@ end function armasim
 
 function arfimasim(n, d, phi, theta, burn, m, noise) result(x)
 ! simulate n observations from ARFIMA(p,d,q)
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: d
-real(kind=dp), intent(in), optional :: phi(:)
-real(kind=dp), intent(in), optional :: theta(:)
-integer, intent(in), optional :: burn
-integer, intent(in), optional :: m
-real(kind=dp), intent(in), optional :: noise(:)
+integer, intent(in) :: n   ! number of observations to return
+real(kind=dp), intent(in) :: d   ! fractional differencing parameter
+real(kind=dp), intent(in), optional :: phi(:)   ! optional AR coefficients
+real(kind=dp), intent(in), optional :: theta(:)   ! optional MA coefficients
+integer, intent(in), optional :: burn   ! burn-in sample count
+integer, intent(in), optional :: m   ! truncation lag for fracdiff
+real(kind=dp), intent(in), optional :: noise(:)   ! optional innovation sequence
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: y(:), eps(:), xfd(:)
 integer :: p, q, t, j, ar_m, ma_m, burn_eff, n_all, m_eff
@@ -2633,7 +2686,7 @@ end function arfimasim
 
 pure function mssk_exp(rate) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of exponential distribution.
-real(kind=dp), intent(in) :: rate
+real(kind=dp), intent(in) :: rate   ! rate parameter (> 0)
 real(kind=dp) :: v(4)
 if (rate <= 0.0_dp) then
    v = nanv()
@@ -2647,7 +2700,8 @@ end function mssk_exp
 
 pure function mssk_unif(a, b) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of uniform(a,b).
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: a   ! lower bound
+real(kind=dp), intent(in) :: b   ! upper bound
 real(kind=dp) :: v(4)
 if (b <= a) then
    v = nanv()
@@ -2661,7 +2715,8 @@ end function mssk_unif
 
 pure function mssk_norm(loc, scale) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of normal(loc, scale).
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: v(4)
 if (scale <= 0.0_dp) then
    v = nanv()
@@ -2675,7 +2730,8 @@ end function mssk_norm
 
 pure function mssk_gamma(shape, scale) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of gamma distribution.
-real(kind=dp), intent(in) :: shape, scale
+real(kind=dp), intent(in) :: shape   ! shape parameter (> 0)
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: v(4)
 if (shape <= 0.0_dp .or. scale <= 0.0_dp) then
    v = nanv()
@@ -2689,7 +2745,8 @@ end function mssk_gamma
 
 pure function mssk_lnorm(meanlog, sdlog) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of lognormal distribution.
-real(kind=dp), intent(in) :: meanlog, sdlog
+real(kind=dp), intent(in) :: meanlog   ! mean on log scale
+real(kind=dp), intent(in) :: sdlog   ! standard deviation on log scale (> 0)
 real(kind=dp) :: v(4)
 real(kind=dp) :: s2, m, var
 if (sdlog <= 0.0_dp) then
@@ -2707,7 +2764,7 @@ end function mssk_lnorm
 
 pure function mssk_t(df) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of Student t distribution.
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: df   ! degrees of freedom
 real(kind=dp) :: v(4)
 if (df <= 0.0_dp) then
    v = nanv()
@@ -2737,8 +2794,8 @@ end function mssk_t
 
 pure function mssk_nct(df, ncp) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of noncentral t distribution.
-real(kind=dp), intent(in) :: df
-real(kind=dp), intent(in), optional :: ncp
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp), intent(in), optional :: ncp   ! noncentrality parameter
 real(kind=dp) :: v(4)
 real(kind=dp) :: delta
 real(kind=dp) :: mu1r, mu2r, mu3r, mu4r
@@ -2798,7 +2855,9 @@ end function mssk_nct
 
 pure function mssk_mixnorm(wgt, mu, sig) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of a finite normal mixture.
-real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp), intent(in) :: wgt(:)   ! mixture component weights
+real(kind=dp), intent(in) :: mu(:)   ! component means
+real(kind=dp), intent(in) :: sig(:)   ! component standard deviations
 real(kind=dp) :: v(4)
 real(kind=dp), allocatable :: wn(:)
 real(kind=dp) :: sw, m1, m2, m3, m4, var, sdv, cm3, cm4
@@ -2836,7 +2895,7 @@ end function mssk_mixnorm
 
 pure function mssk_chisq(df) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of chi-square distribution.
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: v(4)
 if (df <= 0.0_dp) then
    v = nanv()
@@ -2850,7 +2909,8 @@ end function mssk_chisq
 
 pure function mssk_f(df1, df2) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of F distribution.
-real(kind=dp), intent(in) :: df1, df2
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
 real(kind=dp) :: v(4)
 real(kind=dp) :: var
 if (df1 <= 0.0_dp .or. df2 <= 0.0_dp) then
@@ -2885,7 +2945,8 @@ end function mssk_f
 
 pure function mssk_beta(a, b) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of beta distribution.
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: a   ! first shape parameter
+real(kind=dp), intent(in) :: b   ! second shape parameter
 real(kind=dp) :: v(4)
 real(kind=dp) :: denom, var
 if (a <= 0.0_dp .or. b <= 0.0_dp) then
@@ -2903,7 +2964,8 @@ end function mssk_beta
 
 pure function mssk_logis(loc, scale) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of logistic distribution.
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: v(4)
 if (scale <= 0.0_dp) then
    v = nanv()
@@ -2926,7 +2988,8 @@ end function mssk_sech
 
 pure function mssk_laplace(loc, scale) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of Laplace distribution.
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: v(4)
 if (scale <= 0.0_dp) then
    v = nanv()
@@ -2940,14 +3003,17 @@ end function mssk_laplace
 
 pure function mssk_cauchy(loc, scale) result(v)
 ! Cauchy distribution has undefined mean, sd, skewness and kurtosis.
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter
 real(kind=dp) :: v(4)
 v = nanv() + 0.0_dp*loc + 0.0_dp*scale
 end function mssk_cauchy
 
 pure function mssk_ged(loc, scale, beta) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of GED distribution.
-real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: beta   ! GED shape parameter (> 0)
 real(kind=dp) :: v(4)
 real(kind=dp) :: g1, g3, g5
 if (scale <= 0.0_dp .or. beta <= 0.0_dp) then
@@ -2965,17 +3031,44 @@ end function mssk_ged
 
 pure function mssk_hyperb(loc, scale, alpha) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of symmetric hyperbolic.
-real(kind=dp), intent(in) :: loc, scale, alpha
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! tail/shape parameter (> 0)
 real(kind=dp) :: v(4)
-integer, parameter :: ngrid = 4096
-real(kind=dp) :: tmax, h, s2, s4, t, f
-integer :: i
+real(kind=dp) :: m2, m4
 if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
    v = nanv()
    return
 end if
 v(1) = loc
 v(3) = 0.0_dp
+call hyperb_moments_2_4(loc, scale, alpha, m2, m4)
+if (m2 <= 0.0_dp) then
+   v(2) = nanv()
+   v(4) = nanv()
+else
+   v(2) = sqrt(m2)
+   v(4) = m4 / (m2 * m2) - 3.0_dp
+end if
+end function mssk_hyperb
+
+pure elemental subroutine hyperb_moments_2_4(loc, scale, alpha, m2, m4)
+! Second and fourth central moments of symmetric hyperbolic distribution.
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! tail/shape parameter (> 0)
+real(kind=dp), intent(out) :: m2   ! second central moment
+real(kind=dp), intent(out) :: m4   ! fourth central moment
+integer, parameter :: ngrid = 4096
+real(kind=dp) :: tmax, h, s2, s4, t, f
+integer :: i
+
+if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
+   m2 = nanv()
+   m4 = nanv()
+   return
+end if
+
 tmax = max(10.0_dp * scale, 10.0_dp / alpha)
 h = tmax / real(ngrid - 1, dp)
 s2 = 0.0_dp
@@ -2991,20 +3084,265 @@ do i = 1, ngrid
       s4 = s4 + t**4 * f
    end if
 end do
-s2 = 2.0_dp * s2 * h
-s4 = 2.0_dp * s4 * h
-if (s2 <= 0.0_dp) then
-   v(2) = nanv()
-   v(4) = nanv()
+m2 = 2.0_dp * s2 * h
+m4 = 2.0_dp * s4 * h
+end subroutine hyperb_moments_2_4
+
+pure elemental function skew_gamma(shape) result(s)
+! skewness of gamma(shape, scale)
+real(kind=dp), intent(in) :: shape   ! gamma shape parameter (> 0)
+real(kind=dp) :: s
+if (shape <= 0.0_dp) then
+   s = nanv()
 else
-   v(2) = sqrt(s2)
-   v(4) = s4 / (s2 * s2) - 3.0_dp
+   s = 2.0_dp / sqrt(shape)
 end if
-end function mssk_hyperb
+end function skew_gamma
+
+pure elemental function skew_lnorm(sdlog) result(s)
+! skewness of lognormal(meanlog, sdlog)
+real(kind=dp), intent(in) :: sdlog   ! log-scale (sdlog > 0)
+real(kind=dp) :: s
+real(kind=dp) :: e2
+if (sdlog <= 0.0_dp) then
+   s = nanv()
+else
+   e2 = exp(sdlog*sdlog)
+   s = (e2 + 2.0_dp) * sqrt(max(0.0_dp, e2 - 1.0_dp))
+end if
+end function skew_lnorm
+
+pure elemental function skew_nctn(df, ncp) result(s)
+! skewness of noncentral t(df, ncp)
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
+real(kind=dp) :: s
+real(kind=dp) :: mu1r, mu2r, mu3r
+real(kind=dp) :: mu, var, cm3, sdv
+real(kind=dp) :: g1, g2, g3, log_half_df
+
+if (df <= 3.0_dp) then
+   s = nanv()
+   return
+end if
+
+log_half_df = log(0.5_dp * df)
+g1 = exp(0.5_dp * log_half_df + log_gamma(0.5_dp * (df - 1.0_dp)) - log_gamma(0.5_dp * df))
+g2 = exp(log_half_df + log_gamma(0.5_dp * (df - 2.0_dp)) - log_gamma(0.5_dp * df))
+g3 = exp(1.5_dp * log_half_df + log_gamma(0.5_dp * (df - 3.0_dp)) - log_gamma(0.5_dp * df))
+
+mu1r = ncp * g1
+mu2r = (1.0_dp + ncp*ncp) * g2
+mu3r = (3.0_dp*ncp + ncp**3) * g3
+
+mu = mu1r
+var = mu2r - mu*mu
+if (var <= 0.0_dp) then
+   s = nanv()
+   return
+end if
+sdv = sqrt(var)
+cm3 = mu3r - 3.0_dp*mu*mu2r + 2.0_dp*mu**3
+s = cm3 / (sdv**3)
+end function skew_nctn
+
+pure elemental function skew_nct(df) result(s)
+! skewness of noncentral t(df, 0)
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp) :: s
+s = skew_nctn(df, 0.0_dp)
+end function skew_nct
+
+pure elemental function skew_chisq(df) result(s)
+! skewness of chi-square(df)
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp) :: s
+if (df <= 0.0_dp) then
+   s = nanv()
+else
+   s = sqrt(8.0_dp / df)
+end if
+end function skew_chisq
+
+pure elemental function skew_f(df1, df2) result(s)
+! skewness of F(df1, df2)
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
+real(kind=dp) :: s
+if (df1 <= 0.0_dp .or. df2 <= 6.0_dp) then
+   s = nanv()
+else
+   s = (2.0_dp*df1 + df2 - 2.0_dp) * sqrt(8.0_dp*(df2 - 4.0_dp)) / &
+       ((df2 - 6.0_dp) * sqrt(df1*(df1 + df2 - 2.0_dp)))
+end if
+end function skew_f
+
+pure elemental function skew_beta(a, b) result(s)
+! skewness of beta(a, b)
+real(kind=dp), intent(in) :: a   ! first shape parameter (> 0)
+real(kind=dp), intent(in) :: b   ! second shape parameter (> 0)
+real(kind=dp) :: s
+real(kind=dp) :: denom
+if (a <= 0.0_dp .or. b <= 0.0_dp) then
+   s = nanv()
+else
+   denom = a + b
+   s = 2.0_dp * (b - a) * sqrt(denom + 1.0_dp) / ((denom + 2.0_dp) * sqrt(a*b))
+end if
+end function skew_beta
+
+pure elemental function kurt_gamma(shape) result(k)
+! excess kurtosis of gamma(shape, scale)
+real(kind=dp), intent(in) :: shape   ! gamma shape parameter (> 0)
+real(kind=dp) :: k
+if (shape <= 0.0_dp) then
+   k = nanv()
+else
+   k = 6.0_dp / shape
+end if
+end function kurt_gamma
+
+pure elemental function kurt_lnorm(sdlog) result(k)
+! excess kurtosis of lognormal(meanlog, sdlog)
+real(kind=dp), intent(in) :: sdlog   ! log-scale (sdlog > 0)
+real(kind=dp) :: k
+real(kind=dp) :: s2
+if (sdlog <= 0.0_dp) then
+   k = nanv()
+else
+   s2 = sdlog*sdlog
+   k = exp(4.0_dp*s2) + 2.0_dp*exp(3.0_dp*s2) + 3.0_dp*exp(2.0_dp*s2) - 6.0_dp
+end if
+end function kurt_lnorm
+
+pure elemental function kurt_t(df) result(k)
+! excess kurtosis of Student t(df)
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp) :: k
+if (df <= 4.0_dp) then
+   k = nanv()
+else
+   k = 6.0_dp / (df - 4.0_dp)
+end if
+end function kurt_t
+
+pure elemental function kurt_nctn(df, ncp) result(k)
+! excess kurtosis of noncentral t(df, ncp)
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
+real(kind=dp) :: k
+real(kind=dp) :: mu1r, mu2r, mu3r, mu4r
+real(kind=dp) :: mu, var, cm4
+real(kind=dp) :: g1, g2, g3, g4, log_half_df
+
+if (df <= 4.0_dp) then
+   k = nanv()
+   return
+end if
+
+log_half_df = log(0.5_dp * df)
+g1 = exp(0.5_dp * log_half_df + log_gamma(0.5_dp * (df - 1.0_dp)) - log_gamma(0.5_dp * df))
+g2 = exp(log_half_df + log_gamma(0.5_dp * (df - 2.0_dp)) - log_gamma(0.5_dp * df))
+g3 = exp(1.5_dp * log_half_df + log_gamma(0.5_dp * (df - 3.0_dp)) - log_gamma(0.5_dp * df))
+g4 = exp(2.0_dp * log_half_df + log_gamma(0.5_dp * (df - 4.0_dp)) - log_gamma(0.5_dp * df))
+
+mu1r = ncp * g1
+mu2r = (1.0_dp + ncp*ncp) * g2
+mu3r = (3.0_dp*ncp + ncp**3) * g3
+mu4r = (3.0_dp + 6.0_dp*ncp*ncp + ncp**4) * g4
+
+mu = mu1r
+var = mu2r - mu*mu
+if (var <= 0.0_dp) then
+   k = nanv()
+   return
+end if
+cm4 = mu4r - 4.0_dp*mu*mu3r + 6.0_dp*mu*mu*mu2r - 3.0_dp*mu**4
+k = cm4/(var*var) - 3.0_dp
+end function kurt_nctn
+
+pure elemental function kurt_nct(df) result(k)
+! excess kurtosis of noncentral t(df, 0)
+real(kind=dp), intent(in) :: df   ! degrees of freedom
+real(kind=dp) :: k
+k = kurt_nctn(df, 0.0_dp)
+end function kurt_nct
+
+pure elemental function kurt_chisq(df) result(k)
+! excess kurtosis of chi-square(df)
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp) :: k
+if (df <= 0.0_dp) then
+   k = nanv()
+else
+   k = 12.0_dp / df
+end if
+end function kurt_chisq
+
+pure elemental function kurt_f(df1, df2) result(k)
+! excess kurtosis of F(df1, df2)
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
+real(kind=dp) :: k
+if (df1 <= 0.0_dp .or. df2 <= 0.0_dp .or. df2 <= 8.0_dp) then
+   k = nanv()
+else
+   k = (12.0_dp * df1 * (5.0_dp * df2 - 22.0_dp) * (df1 + df2 - 2.0_dp) + &
+        (df2 - 4.0_dp) * (df2 - 2.0_dp)**2 * (df1 - 2.0_dp)**2) / &
+       (df1 * (df2 - 6.0_dp) * (df2 - 8.0_dp) * (df1 + df2 - 2.0_dp)) - 3.0_dp
+end if
+end function kurt_f
+
+pure elemental function kurt_beta(a, b) result(k)
+! excess kurtosis of beta(a, b)
+real(kind=dp), intent(in) :: a   ! first shape parameter (> 0)
+real(kind=dp), intent(in) :: b   ! second shape parameter (> 0)
+real(kind=dp) :: k
+real(kind=dp) :: denom
+if (a <= 0.0_dp .or. b <= 0.0_dp) then
+   k = nanv()
+else
+   denom = a + b
+   k = 6.0_dp * ((a - b)**2 * (denom + 1.0_dp) - a * b * (denom + 2.0_dp)) / &
+       (a * b * (denom + 2.0_dp) * (denom + 3.0_dp))
+end if
+end function kurt_beta
+
+pure elemental function kurt_ged(beta) result(k)
+! excess kurtosis of GED(beta)
+real(kind=dp), intent(in) :: beta   ! GED shape parameter (> 0)
+real(kind=dp) :: k
+real(kind=dp) :: g1, g3, g5
+if (beta <= 0.0_dp) then
+   k = nanv()
+else
+   g1 = exp(log_gamma(1.0_dp / beta))
+   g3 = exp(log_gamma(3.0_dp / beta))
+   g5 = exp(log_gamma(5.0_dp / beta))
+   k = g5 * g1 / (g3 * g3) - 3.0_dp
+end if
+end function kurt_ged
+
+pure elemental function kurt_hyperb(alpha) result(k)
+! excess kurtosis of symmetric hyperbolic with loc=0, scale=1
+real(kind=dp), intent(in) :: alpha   ! tail/shape parameter (> 0)
+real(kind=dp) :: k
+real(kind=dp) :: m2, m4
+if (alpha <= 0.0_dp) then
+   k = nanv()
+else
+   call hyperb_moments_2_4(0.0_dp, 1.0_dp, alpha, m2, m4)
+   if (m2 <= 0.0_dp) then
+      k = nanv()
+   else
+      k = m4 / (m2 * m2) - 3.0_dp
+   end if
+end if
+end function kurt_hyperb
 
 pure function mssk(x) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of data array.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp) :: v(4)
 v(1) = mean(x)
 v(2) = sd(x)
@@ -3015,8 +3353,8 @@ end function mssk
 function kde(x, ngrid) result(y)
 ! Gaussian-kernel density estimate; always plots estimate versus grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: ngrid
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+integer, intent(in), optional :: ngrid   ! number of evaluation grid points
 real(kind=dp), allocatable :: y(:)
 real(kind=dp), allocatable :: gx(:)
 real(kind=dp) :: h, sx, xmin, xmax, z
@@ -3059,8 +3397,9 @@ end function kde
 
 pure function dunif(x, a, b) result(y)
 ! Uniform density on [a,b], defaults a=0 and b=1.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: a, b
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in), optional :: a   ! lower bound
+real(kind=dp), intent(in), optional :: b   ! upper bound
 real(kind=dp) :: y(size(x))
 real(kind=dp) :: lo, hi
 if (present(a)) then
@@ -3085,8 +3424,8 @@ end function dunif
 
 pure function dexp(x, rate) result(y)
 ! Exponential density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: rate
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: rate   ! rate parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (rate <= 0.0_dp) then
@@ -3104,8 +3443,9 @@ end function dexp
 
 pure function dgamma(x, shape, scale) result(y)
 ! Gamma density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: shape, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: shape   ! shape parameter (> 0)
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc
@@ -3125,8 +3465,9 @@ end function dgamma
 
 pure function dlnorm(x, meanlog, sdlog) result(y)
 ! Lognormal density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: meanlog, sdlog
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: meanlog   ! mean on log scale
+real(kind=dp), intent(in) :: sdlog   ! standard deviation on log scale (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc
@@ -3146,8 +3487,9 @@ end function dlnorm
 
 pure function dnorm(x, mean, sd) result(y)
 ! Normal density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: mean, sd
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: mean   ! location parameter
+real(kind=dp), intent(in) :: sd   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc, z
@@ -3164,8 +3506,10 @@ end function dnorm
 
 pure function dmixnorm(x, wgt, mu, sig) result(y)
 ! Finite normal mixture density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: wgt(:)   ! mixture component weights
+real(kind=dp), intent(in) :: mu(:)   ! component means
+real(kind=dp), intent(in) :: sig(:)   ! component standard deviations
 real(kind=dp) :: y(size(x))
 real(kind=dp), allocatable :: wn(:)
 real(kind=dp) :: sw
@@ -3189,8 +3533,8 @@ end function dmixnorm
 
 pure function dt(x, df) result(y)
 ! Student t density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc
@@ -3206,8 +3550,9 @@ end function dt
 
 pure function dnct(x, df, ncp) result(y)
 ! Noncentral Student t density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df, ncp
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
 real(kind=dp) :: y(size(x))
 integer :: i
 if (df <= 0.0_dp) then
@@ -3221,7 +3566,9 @@ end function dnct
 
 pure elemental function nct_pdf_scalar(x, df, ncp) result(val)
 ! Numerical integration over chi-square(df) mixing distribution.
-real(kind=dp), intent(in) :: x, df, ncp
+real(kind=dp), intent(in) :: x   ! evaluation point
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
 real(kind=dp) :: val
 integer, parameter :: nseg = 240
 integer :: j
@@ -3264,8 +3611,8 @@ end function nct_pdf_scalar
 
 pure function dchisq(x, df) result(y)
 ! Chi-square density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc, shape, scale
@@ -3287,8 +3634,9 @@ end function dchisq
 
 pure function df(x, df1, df2) result(y)
 ! F density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df1, df2
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: a, b, logc
@@ -3310,8 +3658,9 @@ end function df
 
 pure function dbeta(x, a, b) result(y)
 ! Beta density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: a   ! first shape parameter (> 0)
+real(kind=dp), intent(in) :: b   ! second shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc
@@ -3331,8 +3680,9 @@ end function dbeta
 
 pure function dlogis(x, loc, scale) result(y)
 ! Logistic density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z, ez
@@ -3349,8 +3699,9 @@ end function dlogis
 
 pure function dlaplace(x, loc, scale) result(y)
 ! Laplace density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (scale <= 0.0_dp) then
@@ -3364,8 +3715,9 @@ end function dlaplace
 
 pure function dcauchy(x, loc, scale) result(y)
 ! Cauchy density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z
@@ -3381,8 +3733,10 @@ end function dcauchy
 
 pure function dged(x, loc, scale, beta) result(y)
 ! Generalized error density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: beta   ! GED shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: logc
@@ -3398,8 +3752,10 @@ end function dged
 
 pure function dhyperb(x, loc, scale, alpha) result(y)
 ! Symmetric hyperbolic density.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale, alpha
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: c, k1, r
@@ -3421,7 +3777,7 @@ end function dhyperb
 
 pure function dsech(x) result(y)
 ! Hyperbolic secant density.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
 real(kind=dp) :: y(size(x))
 integer :: i
 do i = 1, size(x)
@@ -3431,8 +3787,9 @@ end function dsech
 
 pure function punif(x, a, b) result(y)
 ! Uniform CDF on [a,b], defaults a=0 and b=1.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: a, b
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in), optional :: a   ! lower bound
+real(kind=dp), intent(in), optional :: b   ! upper bound
 real(kind=dp) :: y(size(x))
 real(kind=dp) :: lo, hi
 integer :: i
@@ -3463,8 +3820,8 @@ end function punif
 
 pure function pexp(x, rate) result(y)
 ! Exponential CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: rate
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: rate   ! rate parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (rate <= 0.0_dp) then
@@ -3482,8 +3839,9 @@ end function pexp
 
 pure function pgamma(x, shape, scale) result(y)
 ! Gamma CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: shape, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: shape   ! shape parameter (> 0)
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (shape <= 0.0_dp .or. scale <= 0.0_dp) then
@@ -3501,8 +3859,9 @@ end function pgamma
 
 pure function plnorm(x, meanlog, sdlog) result(y)
 ! Lognormal CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: meanlog, sdlog
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: meanlog   ! mean on log scale
+real(kind=dp), intent(in) :: sdlog   ! standard deviation on log scale (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z
@@ -3522,8 +3881,8 @@ end function plnorm
 
 pure function pt(x, df) result(y)
 ! Student t CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (df <= 0.0_dp) then
@@ -3537,8 +3896,9 @@ end function pt
 
 pure function pnct(x, df, ncp) result(y)
 ! Noncentral Student t CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df, ncp
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
 real(kind=dp) :: y(size(x))
 integer :: i
 if (df <= 0.0_dp) then
@@ -3552,7 +3912,9 @@ end function pnct
 
 pure elemental function nct_cdf_scalar(x, df, ncp) result(val)
 ! Numerical integration over chi-square(df) mixing distribution.
-real(kind=dp), intent(in) :: x, df, ncp
+real(kind=dp), intent(in) :: x   ! evaluation point
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
 real(kind=dp) :: val
 integer, parameter :: nseg = 240
 integer :: j
@@ -3596,8 +3958,8 @@ end function nct_cdf_scalar
 
 pure function pchisq(x, df) result(y)
 ! Chi-square CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (df <= 0.0_dp) then
@@ -3615,8 +3977,9 @@ end function pchisq
 
 pure function pf(x, df1, df2) result(y)
 ! F CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: df1, df2
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: a, b, z
@@ -3638,8 +4001,9 @@ end function pf
 
 pure function pbeta(x, a, b) result(y)
 ! Beta CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: a   ! first shape parameter (> 0)
+real(kind=dp), intent(in) :: b   ! second shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (a <= 0.0_dp .or. b <= 0.0_dp) then
@@ -3659,8 +4023,9 @@ end function pbeta
 
 pure function plogis(x, loc, scale) result(y)
 ! Logistic CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z
@@ -3676,8 +4041,9 @@ end function plogis
 
 pure function plaplace(x, loc, scale) result(y)
 ! Laplace CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 if (scale <= 0.0_dp) then
@@ -3695,8 +4061,9 @@ end function plaplace
 
 pure function pcauchy(x, loc, scale) result(y)
 ! Cauchy CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z
@@ -3712,8 +4079,10 @@ end function pcauchy
 
 pure function pged(x, loc, scale, beta) result(y)
 ! Generalized error CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: beta   ! GED shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: a, t, g
@@ -3735,8 +4104,10 @@ end function pged
 
 pure function phyperb(x, loc, scale, alpha) result(y)
 ! Symmetric hyperbolic CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: loc, scale, alpha
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: t, area
@@ -3763,7 +4134,7 @@ end function phyperb
 
 pure function psech(x) result(y)
 ! Hyperbolic secant CDF.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
 real(kind=dp) :: y(size(x))
 integer :: i
 do i = 1, size(x)
@@ -3773,8 +4144,9 @@ end function psech
 
 pure function pnorm(x, mean, sd) result(y)
 ! Normal CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: mean, sd
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: mean   ! location parameter
+real(kind=dp), intent(in) :: sd   ! scale parameter (> 0)
 real(kind=dp) :: y(size(x))
 integer :: i
 real(kind=dp) :: z
@@ -3790,8 +4162,10 @@ end function pnorm
 
 pure function pmixnorm(x, wgt, mu, sig) result(y)
 ! Finite normal mixture CDF.
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp), intent(in) :: x(:)   ! evaluation points
+real(kind=dp), intent(in) :: wgt(:)   ! mixture component weights
+real(kind=dp), intent(in) :: mu(:)   ! component means
+real(kind=dp), intent(in) :: sig(:)   ! component standard deviations
 real(kind=dp) :: y(size(x))
 real(kind=dp), allocatable :: wn(:)
 real(kind=dp) :: sw
@@ -3817,7 +4191,10 @@ end function pmixnorm
 
 elemental function hyperb_pdf_scalar(x, loc, scale, alpha) result(y)
 ! Symmetric hyperbolic density (scalar).
-real(kind=dp), intent(in) :: x, loc, scale, alpha
+real(kind=dp), intent(in) :: x   ! evaluation point
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp) :: y
 real(kind=dp) :: c, k1, r
 if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
@@ -3836,7 +4213,10 @@ end function hyperb_pdf_scalar
 
 elemental function hyperb_int(t, loc, scale, alpha) result(area)
 ! Integral of symmetric hyperbolic density from 0 to t.
-real(kind=dp), intent(in) :: t, loc, scale, alpha
+real(kind=dp), intent(in) :: t   ! upper integration limit from loc
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp) :: area
 integer :: n, i
 real(kind=dp) :: h, s, s2, f0, fn, x, prev
@@ -3876,7 +4256,7 @@ end function hyperb_int
 
 elemental function inv_norm(p) result(x)
 ! Inverse standard normal CDF.
-real(kind=dp), intent(in) :: p
+real(kind=dp), intent(in) :: p   ! probability in (0,1)
 real(kind=dp) :: x, q, r
 real(kind=dp), parameter :: a1 = -3.969683028665376e+01_dp
 real(kind=dp), parameter :: a2 =  2.209460984245205e+02_dp
@@ -3928,10 +4308,10 @@ end function inv_norm
 function nelder_mead(f, x0, step, max_iter, tol) result(xbest)
 ! Nelder-Mead optimizer (maximization).
 procedure(obj_fun) :: f
-real(kind=dp), intent(in) :: x0(:)
-real(kind=dp), intent(in) :: step
-integer, intent(in) :: max_iter
-real(kind=dp), intent(in) :: tol
+real(kind=dp), intent(in) :: x0(:)   ! initial parameter vector
+real(kind=dp), intent(in) :: step   ! initial simplex step size
+integer, intent(in) :: max_iter   ! iteration limit
+real(kind=dp), intent(in) :: tol   ! termination tolerance
 real(kind=dp) :: xbest(size(x0))
 integer :: n, i, j, iter, best, worst, second
 real(kind=dp), allocatable :: simplex(:,:), fval(:), centroid(:), xr(:), xe(:), xc(:)
@@ -4009,8 +4389,9 @@ end function nelder_mead
 
 pure function qunif(p, a, b) result(x)
 ! Uniform quantile on [a,b], defaults a=0 and b=1.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in), optional :: a, b
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in), optional :: a   ! lower bound
+real(kind=dp), intent(in), optional :: b   ! upper bound
 real(kind=dp) :: x(size(p))
 real(kind=dp) :: lo, hi
 integer :: i
@@ -4041,8 +4422,8 @@ end function qunif
 
 pure function qexp(p, rate) result(x)
 ! Exponential quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: rate
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: rate   ! rate parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (rate <= 0.0_dp) then
@@ -4062,8 +4443,9 @@ end function qexp
 
 pure function qgamma(p, shape, scale) result(x)
 ! Gamma quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: shape, scale
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: shape   ! shape parameter (> 0)
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm
@@ -4099,8 +4481,9 @@ end function qgamma
 
 pure function qlnorm(p, meanlog, sdlog) result(x)
 ! Lognormal quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: meanlog, sdlog
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: meanlog   ! mean on log scale
+real(kind=dp), intent(in) :: sdlog   ! standard deviation on log scale (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (sdlog <= 0.0_dp) then
@@ -4120,8 +4503,8 @@ end function qlnorm
 
 pure function qt(p, df) result(x)
 ! Student t quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm
@@ -4163,8 +4546,9 @@ end function qt
 
 pure function qnct(p, df, ncp) result(x)
 ! Noncentral Student t quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: df, ncp
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
+real(kind=dp), intent(in) :: ncp   ! noncentrality parameter
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm
@@ -4206,8 +4590,8 @@ end function qnct
 
 pure function qchisq(p, df) result(x)
 ! Chi-square quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: df
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: df   ! degrees of freedom (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm, shape
@@ -4244,8 +4628,9 @@ end function qchisq
 
 pure function qf(p, df1, df2) result(x)
 ! F quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: df1, df2
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: df1   ! numerator degrees of freedom
+real(kind=dp), intent(in) :: df2   ! denominator degrees of freedom
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm, a, b, z
@@ -4287,8 +4672,9 @@ end function qf
 
 pure function qbeta(p, a, b) result(x)
 ! Beta quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: a   ! first shape parameter (> 0)
+real(kind=dp), intent(in) :: b   ! second shape parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: lo, hi, mid, pm
@@ -4320,8 +4706,9 @@ end function qbeta
 
 pure function qlogis(p, loc, scale) result(x)
 ! Logistic quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (scale <= 0.0_dp) then
@@ -4341,8 +4728,9 @@ end function qlogis
 
 pure function qlaplace(p, loc, scale) result(x)
 ! Laplace quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (scale <= 0.0_dp) then
@@ -4364,8 +4752,9 @@ end function qlaplace
 
 pure function qcauchy(p, loc, scale) result(x)
 ! Cauchy quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: loc, scale
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (scale <= 0.0_dp) then
@@ -4385,8 +4774,10 @@ end function qcauchy
 
 pure function qged(p, loc, scale, beta) result(x)
 ! Generalized error quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: beta   ! GED shape parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: a, u, lo, hi, mid, g
@@ -4431,8 +4822,10 @@ end function qged
 
 pure function qhyperb(p, loc, scale, alpha) result(x)
 ! Symmetric hyperbolic quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: loc, scale, alpha
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i, it
 real(kind=dp) :: u, lo, hi, mid, area
@@ -4476,7 +4869,7 @@ end function qhyperb
 
 pure function qsech(p) result(x)
 ! Hyperbolic secant quantile.
-real(kind=dp), intent(in) :: p(:)
+real(kind=dp), intent(in) :: p(:)   ! probabilities
 real(kind=dp) :: x(size(p))
 integer :: i
 do i = 1, size(p)
@@ -4492,8 +4885,9 @@ end function qsech
 
 pure function qnorm(p, mean, sd) result(x)
 ! Normal quantile.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: mean, sd
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: mean   ! location parameter
+real(kind=dp), intent(in) :: sd   ! scale parameter (> 0)
 real(kind=dp) :: x(size(p))
 integer :: i
 if (sd <= 0.0_dp) then
@@ -4507,8 +4901,10 @@ end function qnorm
 
 pure function qmixnorm(p, wgt, mu, sig) result(x)
 ! Finite normal mixture quantile by bisection on pmixnorm.
-real(kind=dp), intent(in) :: p(:)
-real(kind=dp), intent(in) :: wgt(:), mu(:), sig(:)
+real(kind=dp), intent(in) :: p(:)   ! probabilities
+real(kind=dp), intent(in) :: wgt(:)   ! mixture component weights
+real(kind=dp), intent(in) :: mu(:)   ! component means
+real(kind=dp), intent(in) :: sig(:)   ! component standard deviations
 real(kind=dp) :: x(size(p))
 real(kind=dp), allocatable :: wn(:), cdfv(:)
 real(kind=dp) :: sw, lo, hi, mid, mu_mix, sd_mix, mom4(4)
@@ -4563,8 +4959,10 @@ end function qmixnorm
 
 function rhyperb(n, loc, scale, alpha) result(r)
 ! Symmetric hyperbolic random variates via rejection sampling.
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: loc, scale, alpha
+integer, intent(in) :: n   ! number of random draws
+real(kind=dp), intent(in) :: loc   ! location parameter
+real(kind=dp), intent(in) :: scale   ! scale parameter (> 0)
+real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter (> 0)
 real(kind=dp), allocatable :: r(:)
 integer :: i
 real(kind=dp) :: u, v, b, x, d, acc
@@ -4601,7 +4999,7 @@ end function rhyperb
 
 elemental function besseli0(x) result(y)
 ! Modified Bessel function I0.
-real(kind=dp), intent(in) :: x
+real(kind=dp), intent(in) :: x   ! evaluation point
 real(kind=dp) :: y, ax, y2
 ax = abs(x)
 if (ax < 3.75_dp) then
@@ -4618,7 +5016,7 @@ end function besseli0
 
 elemental function besseli1(x) result(y)
 ! Modified Bessel function I1.
-real(kind=dp), intent(in) :: x
+real(kind=dp), intent(in) :: x   ! evaluation point
 real(kind=dp) :: y, ax, y2
 ax = abs(x)
 if (ax < 3.75_dp) then
@@ -4636,7 +5034,7 @@ end function besseli1
 
 elemental function besselk0(x) result(y)
 ! Modified Bessel function K0.
-real(kind=dp), intent(in) :: x
+real(kind=dp), intent(in) :: x   ! positive evaluation point
 real(kind=dp) :: y, y2
 if (x <= 0.0_dp) then
    y = huge(1.0_dp)
@@ -4657,7 +5055,7 @@ end function besselk0
 
 elemental function besselk1(x) result(y)
 ! Modified Bessel function K1.
-real(kind=dp), intent(in) :: x
+real(kind=dp), intent(in) :: x   ! positive evaluation point
 real(kind=dp) :: y, y2
 if (x <= 0.0_dp) then
    y = huge(1.0_dp)
@@ -4678,7 +5076,7 @@ end function besselk1
 
 elemental function log1pexp(t) result(y)
 ! Stable log(1+exp(t)).
-real(kind=dp), intent(in) :: t
+real(kind=dp), intent(in) :: t   ! input value
 real(kind=dp) :: y
 if (t > 0.0_dp) then
    y = t + log(1.0_dp + exp(-t))
@@ -4689,14 +5087,15 @@ end function log1pexp
 
 elemental function log_beta(a, b) result(y)
 ! Log beta function.
-real(kind=dp), intent(in) :: a, b
+real(kind=dp), intent(in) :: a   ! first shape parameter
+real(kind=dp), intent(in) :: b   ! second shape parameter
 real(kind=dp) :: y
 y = log_gamma(a) + log_gamma(b) - log_gamma(a + b)
 end function log_beta
 
 function fit_norm(x) result(pars)
 ! Method-of-moments then MLE for normal distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: mu0, sd0
 real(kind=dp) :: u0(2), ubest(2)
@@ -4717,7 +5116,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [mu, log(sd)]
       real(kind=dp) :: f, mu, sd
       mu = u(1)
       sd = exp(u(2))
@@ -4728,9 +5127,10 @@ contains
       end if
    end function loglik
 end function fit_norm
+
 function fit_exp(x) result(pars)
 ! Method-of-moments then MLE for exponential distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(1)
 real(kind=dp) :: rate0, u0(1), ubest(1)
 real(kind=dp) :: tol
@@ -4749,7 +5149,7 @@ pars(1) = exp(ubest(1))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameter [log(rate)]
       real(kind=dp) :: f, rate
       rate = exp(u(1))
       if (rate <= 0.0_dp) then
@@ -4761,7 +5161,7 @@ contains
 end function fit_exp
 function fit_gamma(x) result(pars)
 ! Method-of-moments then MLE for gamma distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: m, v, shape0, scale0
 real(kind=dp) :: u0(2), ubest(2)
@@ -4785,7 +5185,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [log(shape), log(scale)]
       real(kind=dp) :: f, shape, scale
       shape = exp(u(1))
       scale = exp(u(2))
@@ -4799,7 +5199,7 @@ end function fit_gamma
 
 pure function fit_lnorm(x) result(pars)
 ! Method-of-moments then MLE for lognormal distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp), allocatable :: lx(:)
 real(kind=dp) :: mu0, sd0
@@ -4819,9 +5219,9 @@ end function fit_lnorm
 function fit_t(x, df, verbose) result(pars)
 ! MLE for location-scale Student t distribution.
 ! Returns [mu, sigma, df].
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: df(:)
-logical, intent(in), optional :: verbose
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+real(kind=dp), intent(in), optional :: df(:)   ! optional candidate df grid
+logical, intent(in), optional :: verbose   ! print candidate/fit diagnostics
 real(kind=dp) :: pars(3)
 real(kind=dp) :: kex, df0, sd0, mu0, best_ll, ll
 real(kind=dp) :: u0(3), ubest(3), u0fix(2), ubest_fix(2), best_u_fix(2), best_df
@@ -4916,7 +5316,7 @@ end if
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [z_mu, log_sigma, log_dfm2]
       real(kind=dp) :: f, mu, sigma, df
       mu = mu0 + sd0 * u(1)
       sigma = sd0 * exp(u(2))
@@ -4929,7 +5329,7 @@ contains
       end if
    end function loglik
    pure function loglik_fixed(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [z_mu, log_sigma]
       real(kind=dp) :: f, mu, sigma
       mu = mu0 + sd0 * u(1)
       sigma = sd0 * exp(u(2))
@@ -4945,9 +5345,10 @@ end function fit_t
 function fit_nct(x, df, verbose, full) result(pars)
 ! MLE for noncentral Student t distribution.
 ! Returns [mu, sigma, df, ncp].
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in), optional :: df(:)
-logical, intent(in), optional :: verbose, full
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+real(kind=dp), intent(in), optional :: df(:)   ! optional candidate df grid
+logical, intent(in), optional :: verbose   ! print candidate/fit diagnostics
+logical, intent(in), optional :: full   ! fit location/scale jointly if true
 real(kind=dp) :: pars(4)
 real(kind=dp) :: mu0, sd0, kex, df0, u0(2), ubest(2), tol
 real(kind=dp) :: u0fix(1), ubest_fix(1), best_ll, ll, best_df, best_ncp
@@ -5164,7 +5565,7 @@ deallocate (z)
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [ncp, log(df)]
       real(kind=dp) :: f, df, ncp
       real(kind=dp), allocatable :: fx(:)
       df = exp(u(2))
@@ -5181,7 +5582,7 @@ contains
       end if
    end function loglik
    pure function loglik_fixed(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameter [ncp]
       real(kind=dp) :: f, ncp
       real(kind=dp), allocatable :: fx(:)
       ncp = u(1)
@@ -5197,7 +5598,7 @@ contains
       end if
    end function loglik_fixed
    pure function loglik_full(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [mu, log(sigma), log(df), ncp]
       real(kind=dp) :: f, mu, sigma, df, ncp
       real(kind=dp), allocatable :: fx(:), zz(:)
       mu = u(1)
@@ -5217,7 +5618,7 @@ contains
       end if
    end function loglik_full
    pure function loglik_full_fixed(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [mu, log(sigma), ncp]
       real(kind=dp) :: f, mu, sigma, ncp
       real(kind=dp), allocatable :: fx(:), zz(:)
       mu = u(1)
@@ -5243,9 +5644,9 @@ end function fit_nct
 function fit_mixnorm(x, k, verbose) result(pars)
 ! EM fit for k-component finite normal mixture.
 ! Returns concatenated [wgt(1:k), mean(1:k), sd(1:k)].
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k
-logical, intent(in), optional :: verbose
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+integer, intent(in) :: k   ! number of mixture components
+logical, intent(in), optional :: verbose   ! print fitted component table
 real(kind=dp), allocatable :: pars(:)
 real(kind=dp), allocatable :: w(:), mu(:), sig(:), nk(:), sumwx(:), varj(:)
 real(kind=dp), allocatable :: resp(:,:), log_r(:), x_sorted(:)
@@ -5358,7 +5759,7 @@ deallocate (w, mu, sig, nk, sumwx, varj, resp, log_r, x_sorted)
 
 contains
    subroutine sort_in_place(a)
-      real(kind=dp), intent(inout) :: a(:)
+      real(kind=dp), intent(inout) :: a(:)   ! vector to sort ascending
       integer :: ii, jj
       real(kind=dp) :: tmp
       do ii = 2, size(a)
@@ -5374,7 +5775,8 @@ contains
    end subroutine sort_in_place
 
    subroutine swap_vals(a, b)
-      real(kind=dp), intent(inout) :: a, b
+      real(kind=dp), intent(inout) :: a   ! first value
+      real(kind=dp), intent(inout) :: b   ! second value
       real(kind=dp) :: t
       t = a
       a = b
@@ -5386,10 +5788,12 @@ function fit_mixnorm_aic(x, kmin, kmax, nstart, verbose, plot) result(best_pars)
 ! AIC-based selection over k for finite normal mixture.
 ! Returns best concatenated [wgt(1:k), mean(1:k), sd(1:k)].
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: kmin, kmax
-integer, intent(in), optional :: nstart
-logical, intent(in), optional :: verbose, plot
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+integer, intent(in) :: kmin   ! minimum number of components to test
+integer, intent(in) :: kmax   ! maximum number of components to test
+integer, intent(in), optional :: nstart   ! random restart count per k
+logical, intent(in), optional :: verbose   ! print model-selection table
+logical, intent(in), optional :: plot   ! draw fitted density plot
 real(kind=dp), allocatable :: best_pars(:)
 real(kind=dp), allocatable :: pars(:), pars_k(:), fx(:), w(:), mu(:), sig(:), gx(:), gy(:)
 real(kind=dp) :: ll, aic, best_aic, sdx, xmin, xmax
@@ -5489,17 +5893,19 @@ end function fit_mixnorm_aic
 
 function fix_mixnorm_aic(x, kmin, kmax, nstart, verbose, plot) result(best_pars)
 ! Backward-compatible alias.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: kmin, kmax
-integer, intent(in), optional :: nstart
-logical, intent(in), optional :: verbose, plot
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+integer, intent(in) :: kmin   ! minimum number of components to test
+integer, intent(in) :: kmax   ! maximum number of components to test
+integer, intent(in), optional :: nstart   ! random restart count per k
+logical, intent(in), optional :: verbose   ! print model-selection table
+logical, intent(in), optional :: plot   ! draw fitted density plot
 real(kind=dp), allocatable :: best_pars(:)
 best_pars = fit_mixnorm_aic(x, kmin, kmax, nstart=nstart, verbose=verbose, plot=plot)
 end function fix_mixnorm_aic
 
 function fit_chisq(x) result(pars)
 ! Method-of-moments then MLE for chi-square distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(1)
 real(kind=dp) :: df0, u0(1), ubest(1)
 real(kind=dp) :: tol
@@ -5518,7 +5924,7 @@ pars(1) = exp(ubest(1))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameter [log_df]
       real(kind=dp) :: f, df
       df = exp(u(1))
       if (df <= 0.0_dp) then
@@ -5531,7 +5937,7 @@ contains
 end function fit_chisq
 function fit_f(x) result(pars)
 ! Method-of-moments then MLE for F distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: m, v, df2, df1, K, tmp
 real(kind=dp) :: u0(2), ubest(2)
@@ -5561,7 +5967,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [log_df1, log_df2]
       real(kind=dp) :: f, df1, df2, a, b
       df1 = exp(u(1))
       df2 = exp(u(2))
@@ -5577,7 +5983,7 @@ contains
 end function fit_f
 function fit_beta(x) result(pars)
 ! Method-of-moments then MLE for beta distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: m, v, t, a0, b0
 real(kind=dp) :: u0(2), ubest(2)
@@ -5602,7 +6008,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [log_a, log_b]
       real(kind=dp) :: f, a, b
       a = exp(u(1)); b = exp(u(2))
       if (a <= 0.0_dp .or. b <= 0.0_dp) then
@@ -5615,7 +6021,7 @@ contains
 end function fit_beta
 function fit_logis(x) result(pars)
 ! Method-of-moments then MLE for logistic distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: mu0, s0
 real(kind=dp) :: u0(2), ubest(2)
@@ -5634,7 +6040,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [loc, log_scale]
       real(kind=dp) :: f, loc, scale
       integer :: i
       loc = u(1)
@@ -5652,7 +6058,7 @@ end function fit_logis
 
 pure function fit_laplace(x) result(pars)
 ! Method-of-moments fit for Laplace distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: loc0, scale0
 
@@ -5667,7 +6073,7 @@ end function fit_laplace
 
 function fit_cauchy(x) result(pars)
 ! MLE for Cauchy distribution (location, scale).
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: loc0, scale0
 real(kind=dp) :: u0(2), ubest(2)
@@ -5686,7 +6092,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [loc, log_scale]
       real(kind=dp) :: f, loc, scale, z
       integer :: i
       loc = u(1)
@@ -5705,7 +6111,7 @@ end function fit_cauchy
 
 function fit_ged(x) result(pars)
 ! MLE for generalized error distribution (location, scale, beta).
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(3)
 real(kind=dp) :: loc0, scale0, beta0
 real(kind=dp) :: u0(3), ubest(3)
@@ -5726,7 +6132,7 @@ pars(3) = exp(ubest(3))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [loc, log_scale, log_beta]
       real(kind=dp) :: f, loc, scale, beta
       loc = u(1)
       scale = exp(u(2))
@@ -5742,7 +6148,7 @@ end function fit_ged
 
 function fit_hyperb(x) result(pars)
 ! MLE for symmetric hyperbolic distribution (location, scale, alpha).
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(3)
 real(kind=dp) :: loc0, scale0, alpha0
 real(kind=dp) :: sd0, mad
@@ -5779,7 +6185,8 @@ pars(3) = exp(ubest(3))
 
 contains
    elemental function hyperb_scale_from_sd(alpha, sd) result(scale)
-      real(kind=dp), intent(in) :: alpha, sd
+      real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter
+      real(kind=dp), intent(in) :: sd   ! target standard deviation
       real(kind=dp) :: scale, lo, hi, mid, v
       integer :: it
       if (sd <= 0.0_dp) then
@@ -5801,7 +6208,8 @@ contains
    end function hyperb_scale_from_sd
 
    elemental function hyperb_var(scale, alpha) result(v)
-      real(kind=dp), intent(in) :: scale, alpha
+      real(kind=dp), intent(in) :: scale   ! scale parameter
+      real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter
       real(kind=dp) :: v, k0, k1, k2, x
       if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
          v = huge(1.0_dp)
@@ -5819,7 +6227,7 @@ contains
    end function hyperb_var
 
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [loc, log_scale, log_alpha]
       real(kind=dp) :: f, loc, scale, alpha, k1
       loc = u(1)
       scale = exp(u(2))
@@ -5842,7 +6250,7 @@ end function fit_hyperb
 
 function fit_sech(x) result(pars)
 ! Method-of-moments then MLE for hyperbolic secant distribution.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: pars(2)
 real(kind=dp) :: mu0, s0
 real(kind=dp) :: u0(2), ubest(2)
@@ -5861,7 +6269,7 @@ pars(2) = exp(ubest(2))
 
 contains
    pure function loglik(u) result(f)
-      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp), intent(in) :: u(:)   ! unconstrained parameters [loc, log_scale]
       real(kind=dp) :: f, loc, scale
       integer :: i
       loc = u(1)
@@ -5879,10 +6287,10 @@ end function fit_sech
 
 pure subroutine arma_resid(x, phi, theta, resid)
 ! compute ARMA residuals for given coefficients
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in) :: theta(:)
-real(kind=dp), intent(out) :: resid(:)
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+real(kind=dp), intent(out) :: resid(:)   ! output residual series
 integer :: n, p, q, t, j, m
 
 n = size(x)
@@ -5908,11 +6316,16 @@ end subroutine arma_resid
 
 pure subroutine armafit_metrics(x, p, q, n_iter, rmse, aic, bic, phi, theta, ok)
 ! ARMA fit metrics.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p, q, n_iter
-real(kind=dp), intent(out) :: rmse, aic, bic
-real(kind=dp), intent(out) :: phi(:), theta(:)
-logical, intent(out) :: ok
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p   ! AR order
+integer, intent(in) :: q   ! MA order
+integer, intent(in) :: n_iter   ! number of ARMA refinement iterations
+real(kind=dp), intent(out) :: rmse   ! fitted-model RMSE
+real(kind=dp), intent(out) :: aic   ! Akaike information criterion
+real(kind=dp), intent(out) :: bic   ! Bayesian information criterion
+real(kind=dp), intent(out) :: phi(:)   ! estimated AR coefficients
+real(kind=dp), intent(out) :: theta(:)   ! estimated MA coefficients
+logical, intent(out) :: ok   ! fit success flag
 integer :: n, n_eff, t, j, maxpq, k_params
 real(kind=dp), allocatable :: y(:), xmat(:,:), beta(:), xtx(:,:), xty(:), resid(:)
 real(kind=dp) :: sse, sigma2, ridge
@@ -5989,11 +6402,13 @@ end subroutine armafit_metrics
 
 subroutine armafit(x, p, q, niter, header, true_ar, true_ma)
 ! fit ARMA(p,q) and report RMSE/loglik/AIC/BIC and coefficients
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p, q
-integer, intent(in), optional :: niter
-logical, intent(in), optional :: header
-real(kind=dp), intent(in), optional :: true_ar(:), true_ma(:)
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p   ! AR order
+integer, intent(in) :: q   ! MA order
+integer, intent(in), optional :: niter   ! number of ARMA refinement iterations
+logical, intent(in), optional :: header   ! print method/#obs header if true
+real(kind=dp), intent(in), optional :: true_ar(:)   ! optional true AR coefficients for comparison
+real(kind=dp), intent(in), optional :: true_ma(:)   ! optional true MA coefficients for comparison
 real(kind=dp), allocatable :: phi(:), theta(:), resid(:), xmat(:,:), xtx(:,:), v(:)
 real(kind=dp), allocatable :: se(:), pval(:)
 real(kind=dp) :: rmse, aic, bic, loglik, sigma2, mse, tval
@@ -6185,9 +6600,12 @@ end subroutine armafit
 
 subroutine armafitgrid(x, p1, p2, q1, q2, niter)
 ! fit ARMA over a grid of orders
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: p1, p2, q1, q2
-integer, intent(in), optional :: niter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in) :: p1   ! minimum AR order
+integer, intent(in) :: p2   ! maximum AR order
+integer, intent(in) :: q1   ! minimum MA order
+integer, intent(in) :: q2   ! maximum MA order
+integer, intent(in), optional :: niter   ! number of ARMA refinement iterations
 integer :: p, q, it, best_aic_p, best_aic_q, best_bic_p, best_bic_q
 real(kind=dp) :: rmse, aic, bic, best_aic, best_bic
 real(kind=dp), allocatable :: phi(:), theta(:)
@@ -6238,9 +6656,10 @@ end subroutine armafitgrid
 
 subroutine armafitaic(x, nar_max, nma_max, niter)
 ! fit ARMA models up to max orders with early-stop by AIC
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nar_max, nma_max
-integer, intent(in), optional :: niter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nar_max   ! maximum AR order to scan
+integer, intent(in), optional :: nma_max   ! maximum MA order to scan
+integer, intent(in), optional :: niter   ! number of ARMA refinement iterations
 integer :: pmax, qmax, r, p, q, no_improve, it
 real(kind=dp) :: best_aic_prev
 integer :: best_aic_p, best_aic_q, best_bic_p, best_bic_q
@@ -6342,9 +6761,9 @@ end subroutine armafitaic
 
 subroutine araic(x, nar_max, niter)
 ! fit AR(p) models up to max order and report AIC/BIC best order
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nar_max
-integer, intent(in), optional :: niter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nar_max   ! maximum AR order to scan
+integer, intent(in), optional :: niter   ! number of ARMA refinement iterations
 integer :: pmax, p, j, no_improve, it
 real(kind=dp) :: best_aic_prev
 integer :: best_aic_p, best_bic_p
@@ -6424,9 +6843,9 @@ end subroutine araic
 
 subroutine maaic(x, nma_max, niter)
 ! fit MA(q) models up to max order and report AIC/BIC best order
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: nma_max
-integer, intent(in), optional :: niter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+integer, intent(in), optional :: nma_max   ! maximum MA order to scan
+integer, intent(in), optional :: niter   ! number of ARMA refinement iterations
 integer :: qmax, q, j, no_improve, it
 real(kind=dp) :: best_aic_prev
 integer :: best_aic_q, best_bic_q
@@ -6506,8 +6925,8 @@ end subroutine maaic
 
 pure function aracf(phi, k) result(r)
 ! theoretical ACF for AR(p) up to lag k via Yule-Walker
-real(kind=dp), intent(in) :: phi(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 integer :: p, i, j, n_lag
 real(kind=dp), allocatable :: A(:,:), b(:), gamma(:), gamma_sol(:)
@@ -6557,8 +6976,8 @@ end function aracf
 
 pure function maacf(theta, k) result(r)
 ! theoretical ACF for MA(q) up to lag k
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 integer :: q, h, j, n_lag
 real(kind=dp) :: gamma0, gammah
@@ -6597,9 +7016,9 @@ end function maacf
 
 pure function armaacf(phi, theta, k) result(r)
 ! theoretical ACF for ARMA(p,q) up to lag k via psi-weights
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 integer :: p, q, h, j, m, L
 real(kind=dp), allocatable :: psi(:)
@@ -6649,10 +7068,10 @@ end function armaacf
 
 pure function arfimaacf(phi, theta, d, k) result(r)
 ! theoretical ACF for ARFIMA(p,d,q) up to lag k via spectral integration
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in) :: theta(:)
-real(kind=dp), intent(in) :: d
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+real(kind=dp), intent(in) :: d   ! fractional differencing parameter
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: r(:)
 integer :: p, q, h, j, m, kk
 real(kind=dp) :: lam, frac_term, num_re, num_im, den_re, den_im, den2, f_lam, g0, gh
@@ -6739,9 +7158,9 @@ end function arfimaacf
 
 pure function armapacf(phi, theta, k) result(pacf)
 ! theoretical PACF for ARMA(p,q) up to lag k using Durbin-Levinson
-real(kind=dp), intent(in) :: phi(:)
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: pacf(:)
 real(kind=dp), allocatable :: r(:), phi_dl(:,:), v(:)
 integer :: j, m
@@ -6783,7 +7202,8 @@ end function armapacf
 function armastab(ar, ma) result(out)
 ! check ARMA stationarity/invertibility from characteristic roots
 ! out = [is_stationary, is_invertible, min_mod_ar, min_mod_ma]
-real(kind=dp), intent(in), optional :: ar(:), ma(:)
+real(kind=dp), intent(in), optional :: ar(:)   ! optional AR coefficients
+real(kind=dp), intent(in), optional :: ma(:)   ! optional MA coefficients
 real(kind=dp), allocatable :: out(:)
 real(kind=dp), allocatable :: ar_poly(:), ma_poly(:), ar_roots(:), ma_roots(:)
 real(kind=dp), allocatable :: ar_loc(:), ma_loc(:)
@@ -6853,8 +7273,8 @@ end function armastab
 
 pure function arpacf(phi, k) result(pacf)
 ! theoretical PACF for AR(p) up to lag k using Durbin-Levinson
-real(kind=dp), intent(in) :: phi(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: phi(:)   ! AR coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: pacf(:)
 real(kind=dp), allocatable :: r(:), phi_dl(:,:), v(:)
 integer :: j, m
@@ -6890,8 +7310,8 @@ end function arpacf
 
 pure function mapacf(theta, k) result(pacf)
 ! theoretical PACF for MA(q) up to lag k using Durbin-Levinson
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in) :: k
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+integer, intent(in) :: k   ! maximum lag
 real(kind=dp), allocatable :: pacf(:)
 real(kind=dp), allocatable :: r(:), phi_dl(:,:), v(:)
 integer :: j, m
@@ -6927,9 +7347,9 @@ end function mapacf
 
 pure subroutine ma_resid(x, theta, resid)
 ! compute MA residuals for given coefficients
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: theta(:)
-real(kind=dp), intent(out) :: resid(:)
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(in) :: theta(:)   ! MA coefficients
+real(kind=dp), intent(out) :: resid(:)   ! output residual series
 integer :: n, k, t, j
 
 n = size(x)
@@ -6949,9 +7369,9 @@ end subroutine ma_resid
 
 pure subroutine ma_refine(x, theta, n_iter)
 ! simple gradient descent refinement using MA residual recursion
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(inout) :: theta(:)
-integer, intent(in), optional :: n_iter
+real(kind=dp), intent(in) :: x(:)   ! input time series
+real(kind=dp), intent(inout) :: theta(:)   ! MA coefficients (updated in-place)
+integer, intent(in), optional :: n_iter   ! number of refinement iterations
 integer :: n, k, iter, j, max_iter
 real(kind=dp), parameter :: delta = 1.0e-6_dp
 real(kind=dp) :: step, sse0, sse1
@@ -6993,9 +7413,9 @@ end subroutine ma_refine
 
 function resample(x, n, replace) result(y)
 ! resample elements of x with (default) or without replacement
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: n
-logical, intent(in), optional :: replace
+real(kind=dp), intent(in) :: x(:)   ! source sample values
+integer, intent(in), optional :: n   ! number of draws
+logical, intent(in), optional :: replace   ! sample with replacement if true
 real(kind=dp), allocatable :: y(:)
 integer, allocatable :: idx(:)
 integer :: n0, ny, i, j, tmp
@@ -7053,7 +7473,7 @@ end function resample
 
 pure function jb_test(x) result(v)
 ! Jarque-Bera normality test, returns [JB, p].
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
 real(kind=dp) :: v(2)
 real(kind=dp) :: n, s, k, jb
 if (size(x) < 3) then
@@ -7069,8 +7489,8 @@ end function jb_test
 
 pure function ttest1(x, mu0) result(v)
 ! One-sample t-test for mean(x)=mu0, returns [t, df, p].
-real(kind=dp), intent(in) :: x(:)
-real(kind=dp), intent(in) :: mu0
+real(kind=dp), intent(in) :: x(:)   ! input sample vector
+real(kind=dp), intent(in) :: mu0   ! null-hypothesis mean
 real(kind=dp) :: v(3)
 real(kind=dp) :: sx, t
 integer :: n, df
@@ -7092,8 +7512,9 @@ end function ttest1
 pure function ttest2(x, y, pooled) result(v)
 ! Two-sample t-test for mean(x)=mean(y), returns [t, df, p].
 ! pooled=.true. gives equal-variance test; default is Welch.
-real(kind=dp), intent(in) :: x(:), y(:)
-logical, intent(in), optional :: pooled
+real(kind=dp), intent(in) :: x(:)   ! first sample vector
+real(kind=dp), intent(in) :: y(:)   ! second sample vector
+logical, intent(in), optional :: pooled   ! use equal-variance test if true
 real(kind=dp) :: v(3)
 real(kind=dp) :: mx, my, sx2, sy2, se, t, dfw
 integer :: nx, ny, df
@@ -7136,7 +7557,8 @@ end function ttest2
 
 pure function ks2_test(x, y) result(v)
 ! Two-sample Kolmogorov-Smirnov test, returns [D, p_approx].
-real(kind=dp), intent(in) :: x(:), y(:)
+real(kind=dp), intent(in) :: x(:)   ! first sample vector
+real(kind=dp), intent(in) :: y(:)   ! second sample vector
 real(kind=dp) :: v(2)
 real(kind=dp), allocatable :: xs(:), ys(:)
 real(kind=dp) :: d, fx, fy, ne, lam, p
@@ -7183,10 +7605,11 @@ end function ks2_test
 function kernelreg_scalar(y, x, bw, order, points) result(yhat)
 ! Nadaraya-Watson Gaussian-kernel regression evaluated at x.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-real(kind=dp), intent(in), optional :: bw
-integer, intent(in), optional :: order
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in), optional :: bw   ! kernel bandwidth
+integer, intent(in), optional :: order   ! local polynomial degree (0=Nadaraya-Watson)
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: h, sx
 integer :: n, ord
@@ -7217,10 +7640,11 @@ end function kernelreg_scalar
 function kernelreg_vec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with multiple bandwidths; plots all estimates.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-real(kind=dp), intent(in) :: bw(:)
-integer, intent(in), optional :: order
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: bw(:)   ! bandwidth values to evaluate
+integer, intent(in), optional :: order   ! local polynomial degree (0=Nadaraya-Watson)
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
@@ -7256,10 +7680,11 @@ end function kernelreg_vec
 function kernelreg_scalar_ordvec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with one bandwidth and multiple orders; plots all estimates.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-real(kind=dp), intent(in) :: bw
-integer, intent(in) :: order(:)
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: bw   ! kernel bandwidth
+integer, intent(in) :: order(:)   ! local polynomial degrees to evaluate
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
@@ -7293,10 +7718,11 @@ end function kernelreg_scalar_ordvec
 function kernelreg_vec_ordvec(y, x, bw, order, points) result(yhat)
 ! Kernel regression with multiple bandwidths and orders; plots tensor-product curves.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-real(kind=dp), intent(in) :: bw(:)
-integer, intent(in) :: order(:)
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: bw(:)   ! bandwidth values to evaluate
+integer, intent(in) :: order(:)   ! local polynomial degrees to evaluate
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=24), allocatable :: legends(:)
@@ -7334,8 +7760,10 @@ end function kernelreg_vec_ordvec
 
 pure function kernelreg_core(y, x, h, order) result(yhat)
 ! Local polynomial kernel regression at design points x for scalar h and order>=0.
-real(kind=dp), intent(in) :: y(:), x(:), h
-integer, intent(in) :: order
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: h   ! kernel bandwidth
+integer, intent(in) :: order   ! local polynomial degree
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: z, w, num, den, d
 real(kind=dp), allocatable :: xtwx(:,:), xtwy(:), beta(:), powd(:)
@@ -7404,10 +7832,12 @@ end function kernelreg_core
 function lowess_scalar(y, x, span, it, plot, points) result(yhat)
 ! LOWESS smoother with tricube neighborhood weights and optional robust iterations.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-real(kind=dp), intent(in), optional :: span
-integer, intent(in), optional :: it
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in), optional :: span   ! neighborhood fraction in (0,1]
+integer, intent(in), optional :: it   ! number of robust reweighting iterations
+logical, intent(in), optional :: plot   ! draw fitted curve
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: frac
 integer :: n, nit
@@ -7442,9 +7872,12 @@ end function lowess_scalar
 function lowess_vec(y, x, span, it, plot, points) result(yhat)
 ! LOWESS with multiple spans; plots all fitted curves.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:), span(:)
-integer, intent(in), optional :: it
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span(:)   ! neighborhood fractions in (0,1]
+integer, intent(in), optional :: it   ! number of robust reweighting iterations
+logical, intent(in), optional :: plot   ! draw fitted curves
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
@@ -7482,8 +7915,10 @@ deallocate (y2, legends)
 end function lowess_vec
 
 function lowess_core(y, x, span, it) result(yhat)
-real(kind=dp), intent(in) :: y(:), x(:), span
-integer, intent(in) :: it
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span   ! neighborhood fraction in (0,1]
+integer, intent(in) :: it   ! number of robust reweighting iterations
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: rw(:), dabs(:), ds(:), ww(:), d(:), r(:)
 real(kind=dp) :: frac, h, u, w, s0, s1, s2, t0, t1, den, eps, smad, ur
@@ -7558,9 +7993,11 @@ end function lowess_core
 function lowesscv_default(y, x, it, plot, points) result(yhat)
 ! LOWESS with span selected by leave-one-out CV over a default span grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in), optional :: it
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in), optional :: it   ! number of robust reweighting iterations
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), dimension(8) :: span_grid
 real(kind=dp) :: best_span
@@ -7594,9 +8031,12 @@ end function lowesscv_default
 function lowesscv_scalar(y, x, span, it, plot, points) result(yhat)
 ! LOWESS with span selected by leave-one-out CV over [0.05, span].
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:), span
-integer, intent(in), optional :: it
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span   ! upper bound for CV span grid in (0,1]
+integer, intent(in), optional :: it   ! number of robust reweighting iterations
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: span_grid(:)
 real(kind=dp) :: best_span
@@ -7636,9 +8076,12 @@ end function lowesscv_scalar
 function lowesscv_vec(y, x, span, it, plot, points) result(yhat)
 ! LOWESS with span selected by leave-one-out CV over supplied span grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:), span(:)
-integer, intent(in), optional :: it
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span(:)   ! candidate span grid in (0,1]
+integer, intent(in), optional :: it   ! number of robust reweighting iterations
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: best_span
 integer :: nit, n
@@ -7672,9 +8115,11 @@ end if
 end function lowesscv_vec
 
 function lowesscv_choose(y, x, span_grid, it, best_span) result(yhat)
-real(kind=dp), intent(in) :: y(:), x(:), span_grid(:)
-integer, intent(in) :: it
-real(kind=dp), intent(out) :: best_span
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span_grid(:)   ! candidate span grid for CV
+integer, intent(in) :: it   ! number of robust reweighting iterations
+real(kind=dp), intent(out) :: best_span   ! span selected by CV
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: mse, best_mse
 integer :: j, best_j
@@ -7694,8 +8139,10 @@ yhat = lowess_core(y, x, best_span, it)
 end function lowesscv_choose
 
 function lowess_loo_mse(y, x, span, it) result(mse)
-real(kind=dp), intent(in) :: y(:), x(:), span
-integer, intent(in) :: it
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: span   ! LOWESS span used in each fold
+integer, intent(in) :: it   ! number of robust reweighting iterations
 real(kind=dp) :: mse
 real(kind=dp), allocatable :: ysub(:), xsub(:), yhat_sub(:)
 integer :: n, i, k
@@ -7726,7 +8173,9 @@ deallocate (ysub, xsub)
 end function lowess_loo_mse
 
 pure function lowess_predict_at(x0, x, yhat) result(v)
-real(kind=dp), intent(in) :: x0, x(:), yhat(:)
+real(kind=dp), intent(in) :: x0   ! target predictor location
+real(kind=dp), intent(in) :: x(:)   ! predictor grid for fitted values
+real(kind=dp), intent(in) :: yhat(:)   ! fitted values aligned with x
 real(kind=dp) :: v, dmin
 integer :: i, idx
 
@@ -7744,9 +8193,12 @@ end function lowess_predict_at
 function knnreg_scalar(y, x, k, order, plot, points) result(yhat)
 ! k-nearest-neighbors local polynomial regression at observed x.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in), optional :: k, order
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in), optional :: k   ! number of nearest neighbors
+integer, intent(in), optional :: order   ! local polynomial degree
+logical, intent(in), optional :: plot   ! draw fitted curve
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 integer :: n, kk, ord
 logical :: do_plot, do_points
@@ -7780,10 +8232,12 @@ end function knnreg_scalar
 function knnreg_vec(y, x, k, order, plot, points) result(yhat)
 ! k-nearest-neighbors regression for multiple k values; plots all curves.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k(:)
-integer, intent(in), optional :: order
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: k(:)   ! neighbor counts to evaluate
+integer, intent(in), optional :: order   ! local polynomial degree
+logical, intent(in), optional :: plot   ! draw fitted curves
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
@@ -7822,8 +8276,10 @@ deallocate (y2, legends)
 end function knnreg_vec
 
 function knnreg_core(y, x, k, order) result(yhat)
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k, order
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: k   ! number of nearest neighbors
+integer, intent(in) :: order   ! local polynomial degree
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: dabs(:), ds(:), d(:), xtwx(:,:), xtwy(:), beta(:)
 logical, allocatable :: use_j(:)
@@ -7889,9 +8345,11 @@ end function knnreg_core
 function knnregcv_default(y, x, plot, points, order) result(yhat)
 ! kNN regression with k selected by leave-one-out CV over a default k grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-logical, intent(in), optional :: plot, points
-integer, intent(in), optional :: order
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
+integer, intent(in), optional :: order   ! local polynomial degree
 real(kind=dp), allocatable :: yhat(:)
 integer, allocatable :: kgrid(:)
 integer :: n, ord, best_k
@@ -7924,10 +8382,12 @@ end function knnregcv_default
 function knnregcv_scalar(y, x, k, order, plot, points) result(yhat)
 ! kNN regression with k selected by leave-one-out CV over k=2..k.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k
-integer, intent(in), optional :: order
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: k   ! upper bound for CV search over neighbor count
+integer, intent(in), optional :: order   ! local polynomial degree
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 integer, allocatable :: kgrid(:)
 integer :: n, ord, best_k, j, kmax
@@ -7965,10 +8425,12 @@ end function knnregcv_scalar
 function knnregcv_vec(y, x, k, order, plot, points) result(yhat)
 ! kNN regression with k selected by leave-one-out CV over supplied k grid.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k(:)
-integer, intent(in), optional :: order
-logical, intent(in), optional :: plot, points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: k(:)   ! candidate neighbor counts for CV
+integer, intent(in), optional :: order   ! local polynomial degree
+logical, intent(in), optional :: plot   ! draw selected fit
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 integer, allocatable :: kgrid(:)
 integer :: n, ord, best_k
@@ -8001,9 +8463,11 @@ deallocate (kgrid)
 end function knnregcv_vec
 
 function knnregcv_choose(y, x, kgrid, order, best_k) result(yhat)
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: kgrid(:), order
-integer, intent(out) :: best_k
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: kgrid(:)   ! candidate neighbor counts for CV
+integer, intent(in) :: order   ! local polynomial degree
+integer, intent(out) :: best_k   ! neighbor count selected by CV
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp) :: mse, best_mse
 integer :: j, best_j
@@ -8023,8 +8487,10 @@ yhat = knnreg_core(y, x, best_k, order)
 end function knnregcv_choose
 
 function knnreg_loo_mse(y, x, k, order) result(mse)
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k, order
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+integer, intent(in) :: k   ! neighbor count evaluated in CV fold
+integer, intent(in) :: order   ! local polynomial degree
 real(kind=dp) :: mse
 real(kind=dp), allocatable :: ysub(:), xsub(:), yhat_sub(:)
 integer :: n, i, kk, nsub
@@ -8055,7 +8521,7 @@ deallocate (ysub, xsub)
 end function knnreg_loo_mse
 
 function knn_default_grid(n) result(kgrid)
-integer, intent(in) :: n
+integer, intent(in) :: n   ! sample size used to bound k grid
 integer, allocatable :: kgrid(:)
 integer :: vals(8), j, m
 
@@ -8081,8 +8547,9 @@ end function knn_default_grid
 
 subroutine regress(y, x, intcp)
 ! simple linear regression y = a*x + b with diagnostics
-real(kind=dp), intent(in) :: y(:), x(:)
-logical, intent(in), optional :: intcp
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+logical, intent(in), optional :: intcp   ! include intercept term when true
 real(kind=dp) :: a, b
 real(kind=dp) :: x_mean, y_mean, sxx, sxy, sst, sse, mse, r2, se_a, se_b
 real(kind=dp) :: t_a, t_b, p_a, p_b, f_stat, adj_r2, aic, bic
@@ -8191,10 +8658,10 @@ end subroutine regress
 
 subroutine regress_multi(y, x, labels, intcp)
 ! multiple linear regression y = b0 + b1*x1 + ...
-real(kind=dp), intent(in) :: y(:)
-real(kind=dp), intent(in) :: x(:,:)
-character(len=*), intent(in) :: labels(:)
-logical, intent(in), optional :: intcp
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:,:)   ! predictor matrix (rows=observations)
+character(len=*), intent(in) :: labels(:)   ! coefficient labels for predictors
+logical, intent(in), optional :: intcp   ! include intercept term when true
 real(kind=dp), allocatable :: z(:,:), xtx(:,:), xty(:), beta(:), yhat(:), v(:)
 real(kind=dp) :: sst, sse, mse, r2, f_stat, adj_r2, aic, bic
 real(kind=dp), allocatable :: se(:), tval(:), pval(:)
@@ -8339,9 +8806,10 @@ end subroutine regress_multi
 
 subroutine poly1reg(y, x, deg, intcp)
 ! Polynomial regression in one predictor: y ~ 1 + x + x^2 + ... + x^deg.
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: deg
-integer, intent(in), optional :: intcp
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in) :: deg   ! highest polynomial degree
+integer, intent(in), optional :: intcp   ! include intercept when nonzero
 real(kind=dp), allocatable :: xmat(:,:)
 character(len=16), allocatable :: labels(:)
 character(len=16) :: nm
@@ -8372,10 +8840,13 @@ function splinereg_scalar(y, x, k, degree, intcp, plot, points) result(yhat)
 ! Truncated-power spline regression with one predictor.
 ! Basis: [x, x^2, ..., x^degree, (x-knot_j)_+^degree].
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k
-integer, intent(in), optional :: degree, intcp, plot
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in) :: k   ! number of interior knots
+integer, intent(in), optional :: degree   ! spline polynomial degree
+integer, intent(in), optional :: intcp   ! include intercept when nonzero
+integer, intent(in), optional :: plot   ! draw fit when nonzero
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 integer :: deg
 logical :: use_intcp, do_plot, do_points
@@ -8404,11 +8875,13 @@ end function splinereg_scalar
 function splinereg_degvec(y, x, k, degree, intcp, plot, points) result(yhat)
 ! Spline regression with multiple degrees; plots all estimates.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k
-integer, intent(in) :: degree(:)
-integer, intent(in), optional :: intcp, plot
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in) :: k   ! number of interior knots
+integer, intent(in) :: degree(:)   ! spline degrees to evaluate
+integer, intent(in), optional :: intcp   ! include intercept when nonzero
+integer, intent(in), optional :: plot   ! draw fits when nonzero
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: y2(:,:)
 character(len=16), allocatable :: legends(:)
@@ -8447,9 +8920,11 @@ end function splinereg_degvec
 
 function splinereg_core(y, x, k, degree, use_intcp) result(yhat)
 ! Core spline fit for a single degree, optionally with intercept.
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k, degree
-logical, intent(in) :: use_intcp
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in) :: k   ! number of interior knots
+integer, intent(in) :: degree   ! spline polynomial degree
+logical, intent(in) :: use_intcp   ! include intercept term when true
 real(kind=dp), allocatable :: yhat(:)
 real(kind=dp), allocatable :: xmat(:,:), xtx(:,:), xty(:), beta(:), q(:), knots(:)
 integer :: n, deg, j, ncol, kk
@@ -8535,23 +9010,29 @@ deallocate (xmat, xtx, xty, beta)
 end function splinereg_core
 
 pure function ns_dplus3(xv, knot) result(v)
-real(kind=dp), intent(in) :: xv(:), knot
+real(kind=dp), intent(in) :: xv(:)   ! predictor locations
+real(kind=dp), intent(in) :: knot   ! knot location
 real(kind=dp) :: v(size(xv))
 v = max(xv - knot, 0.0_dp)**3
 end function ns_dplus3
 
 pure function ns_hfun(xv, kj, k1, k2) result(v)
-real(kind=dp), intent(in) :: xv(:), kj, k1, k2
+real(kind=dp), intent(in) :: xv(:)   ! predictor locations
+real(kind=dp), intent(in) :: kj   ! interior knot for basis function j
+real(kind=dp), intent(in) :: k1   ! first boundary reference knot
+real(kind=dp), intent(in) :: k2   ! second boundary reference knot
 real(kind=dp) :: v(size(xv))
 v = ns_dplus3(xv, kj) - ns_dplus3(xv, k1)*(k2 - kj)/(k2 - k1) + ns_dplus3(xv, k2)*(k1 - kj)/(k2 - k1)
 end function ns_hfun
 
 function naturalspline_predict(y_train, x_train, k, x_out, use_intcp, ok) result(yhat_out)
 ! Fit natural spline on training data and predict at x_out.
-real(kind=dp), intent(in) :: y_train(:), x_train(:), x_out(:)
-integer, intent(in) :: k
-logical, intent(in) :: use_intcp
-logical, intent(out) :: ok
+real(kind=dp), intent(in) :: y_train(:)   ! training response values
+real(kind=dp), intent(in) :: x_train(:)   ! training predictor values
+real(kind=dp), intent(in) :: x_out(:)   ! predictor locations for prediction
+integer, intent(in) :: k   ! number of interior knots
+logical, intent(in) :: use_intcp   ! include intercept term when true
+logical, intent(out) :: ok   ! true when fit and prediction succeed
 real(kind=dp), allocatable :: yhat_out(:)
 real(kind=dp), allocatable :: xmat(:,:), xout_mat(:,:), xtx(:,:), xty(:), beta(:)
 real(kind=dp), allocatable :: q(:), iknots(:), knots(:)
@@ -8645,10 +9126,12 @@ end function naturalspline_predict
 
 function naturalspline_scalar(y, x, k, intcp, plot, points) result(yhat)
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in), optional :: k
-integer, intent(in), optional :: intcp, plot
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in), optional :: k   ! number of interior knots (CV-selected when omitted)
+integer, intent(in), optional :: intcp   ! include intercept when nonzero
+integer, intent(in), optional :: plot   ! draw fit when nonzero
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:), ytr(:), xtr(:), yva(:), xva(:), ypred(:)
 real(kind=dp) :: cv, best_cv
 integer :: n, i, f, folds, ntr, nva, ktry, best_k, kmax
@@ -8743,10 +9226,12 @@ end function naturalspline_scalar
 function naturalspline_kvec(y, x, k, intcp, plot, points) result(yhat)
 ! Natural cubic spline regression with multiple knot counts; plots all estimates.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: y(:), x(:)
-integer, intent(in) :: k(:)
-integer, intent(in), optional :: intcp, plot
-logical, intent(in), optional :: points
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+integer, intent(in) :: k(:)   ! interior-knot counts to evaluate
+integer, intent(in), optional :: intcp   ! include intercept when nonzero
+integer, intent(in), optional :: plot   ! draw fits when nonzero
+logical, intent(in), optional :: points   ! overlay observed points in plot
 real(kind=dp), allocatable :: yhat(:), tmp(:), y2(:,:)
 character(len=12), allocatable :: legends(:)
 integer :: n, j, intcp_i
@@ -8798,12 +9283,14 @@ function cpsim(n, cp, mu, sd, seed, plot, verbose, noise) result(x)
 ! cp has length m and defines m+1 segments.
 ! mu/sd may be absent (defaults 0/1), scalar (broadcast), or length m+1.
 use plot_mod, only: gplot => plot
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: cp(:)
-real(kind=dp), intent(in), optional :: mu(:), sd(:)
-integer, intent(in), optional :: seed
-integer, intent(in), optional :: plot, verbose
-real(kind=dp), intent(in), optional :: noise(:)
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: cp(:)   ! changepoint indices separating segments
+real(kind=dp), intent(in), optional :: mu(:)   ! segment means (scalar or length m+1)
+real(kind=dp), intent(in), optional :: sd(:)   ! segment standard deviations (scalar or length m+1)
+integer, intent(in), optional :: seed   ! RNG seed for reproducibility
+integer, intent(in), optional :: plot   ! draw simulated series when nonzero
+integer, intent(in), optional :: verbose   ! print segment parameter table when nonzero
+real(kind=dp), intent(in), optional :: noise(:)   ! external standard-normal innovations
 real(kind=dp), allocatable :: x(:), z(:), mu_seg(:), sd_seg(:), ytrue(:), tt(:)
 integer, allocatable :: cpi(:)
 integer :: m, i, j, lo, hi
@@ -8946,9 +9433,12 @@ function cpfit(x, mode, max_cp, minseg, plot, verbose) result(out)
 ! mode="sd":   variance shifts, common mean.
 ! mode="both": mean and variance shifts.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-character(len=*), intent(in), optional :: mode
-integer, intent(in), optional :: max_cp, minseg, plot, verbose
+real(kind=dp), intent(in) :: x(:)   ! observed time series
+character(len=*), intent(in), optional :: mode   ! changepoint model: mean, sd, or both
+integer, intent(in), optional :: max_cp   ! maximum number of changepoints
+integer, intent(in), optional :: minseg   ! minimum segment length
+integer, intent(in), optional :: plot   ! draw fitted piecewise mean when nonzero
+integer, intent(in), optional :: verbose   ! print fitted segment table when nonzero
 real(kind=dp), allocatable :: out(:)
 real(kind=dp), allocatable :: s1(:), s2(:), mu_seg(:), sd_seg(:), yhat(:), tt(:)
 integer, allocatable :: lseg(:), rseg(:), cps(:)
@@ -9123,7 +9613,8 @@ end if
 contains
 
    pure function sse_int(l, r) result(v)
-      integer, intent(in) :: l, r
+      integer, intent(in) :: l   ! segment start index (inclusive)
+      integer, intent(in) :: r   ! segment end index (inclusive)
       real(kind=dp) :: v, sx, sx2
       integer :: len
       len = r - l + 1
@@ -9137,14 +9628,16 @@ contains
    end function sse_int
 
    pure function seg_mean(l, r) result(v)
-      integer, intent(in) :: l, r
+      integer, intent(in) :: l   ! segment start index (inclusive)
+      integer, intent(in) :: r   ! segment end index (inclusive)
       real(kind=dp) :: v
       v = (s1(r) - s1(l - 1))/real(r - l + 1, dp)
    end function seg_mean
 
    pure function rss_fixedmu(l, r, mu) result(v)
-      integer, intent(in) :: l, r
-      real(kind=dp), intent(in) :: mu
+      integer, intent(in) :: l   ! segment start index (inclusive)
+      integer, intent(in) :: r   ! segment end index (inclusive)
+      real(kind=dp), intent(in) :: mu   ! fixed segment mean under sd-only mode
       real(kind=dp) :: v, sx, sx2
       integer :: len
       len = r - l + 1
@@ -9154,7 +9647,8 @@ contains
    end function rss_fixedmu
 
    pure function seg_cost(l, r) result(v)
-      integer, intent(in) :: l, r
+      integer, intent(in) :: l   ! segment start index (inclusive)
+      integer, intent(in) :: r   ! segment end index (inclusive)
       real(kind=dp) :: v, rss
       integer :: len
       len = r - l + 1
@@ -9176,9 +9670,14 @@ function cpfitaic(x, mode, max_cp, minseg, criterion, plot, plot_ic, verbose) re
 ! Select changepoint model over max_cp=0..max_cp using AIC/BIC.
 ! Returns cpfit() output for the selected model.
 use plot_mod, only: gplot => plot
-real(kind=dp), intent(in) :: x(:)
-character(len=*), intent(in), optional :: mode, criterion
-integer, intent(in), optional :: max_cp, minseg, plot, plot_ic, verbose
+real(kind=dp), intent(in) :: x(:)   ! observed time series
+character(len=*), intent(in), optional :: mode   ! changepoint model: mean, sd, or both
+character(len=*), intent(in), optional :: criterion   ! selection criterion: aic or bic
+integer, intent(in), optional :: max_cp   ! largest max_cp value to scan
+integer, intent(in), optional :: minseg   ! minimum segment length for each fit
+integer, intent(in), optional :: plot   ! draw fitted means for scanned models when nonzero
+integer, intent(in), optional :: plot_ic   ! draw AIC/BIC-vs-max_cp plot when nonzero
+integer, intent(in), optional :: verbose   ! print model scan tables when nonzero
 real(kind=dp), allocatable :: best_out(:)
 type fit_holder
    real(kind=dp), allocatable :: v(:)
@@ -9303,9 +9802,9 @@ end if
 contains
 
    subroutine fitted_means_from_cpfit(v, mode_s, yhat)
-      real(kind=dp), intent(in) :: v(:)
-      character(len=*), intent(in) :: mode_s
-      real(kind=dp), intent(out) :: yhat(:)
+      real(kind=dp), intent(in) :: v(:)   ! packed cpfit output vector
+      character(len=*), intent(in) :: mode_s   ! changepoint mode used to decode v
+      real(kind=dp), intent(out) :: yhat(:)   ! reconstructed fitted segment means
       integer :: nseg, ncp_l, j
       integer, allocatable :: cps_l(:)
       real(kind=dp), allocatable :: mu_l(:)
@@ -9335,9 +9834,9 @@ contains
    end subroutine fitted_means_from_cpfit
 
    subroutine print_model_table(maxcp_s, v, mode_s)
-      integer, intent(in) :: maxcp_s
-      real(kind=dp), intent(in) :: v(:)
-      character(len=*), intent(in) :: mode_s
+      integer, intent(in) :: maxcp_s   ! scanned max_cp setting for this row
+      real(kind=dp), intent(in) :: v(:)   ! packed cpfit output vector
+      character(len=*), intent(in) :: mode_s   ! changepoint mode used to decode v
       integer :: ncp_l, nseg, j, lo_l, hi_l
       integer, allocatable :: cps_l(:)
       real(kind=dp), allocatable :: mu_l(:), sd_l(:)
@@ -9392,18 +9891,23 @@ end function cpfitaic
 
 function cpfit_aic(x, mode, max_cp, minseg, criterion, plot, plot_ic, verbose) result(best_out)
 ! Backward-compatible alias.
-real(kind=dp), intent(in) :: x(:)
-character(len=*), intent(in), optional :: mode, criterion
-integer, intent(in), optional :: max_cp, minseg, plot, plot_ic, verbose
+real(kind=dp), intent(in) :: x(:)   ! observed time series
+character(len=*), intent(in), optional :: mode   ! changepoint model: mean, sd, or both
+character(len=*), intent(in), optional :: criterion   ! selection criterion: aic or bic
+integer, intent(in), optional :: max_cp   ! largest max_cp value to scan
+integer, intent(in), optional :: minseg   ! minimum segment length for each fit
+integer, intent(in), optional :: plot   ! draw fitted means for scanned models when nonzero
+integer, intent(in), optional :: plot_ic   ! draw AIC/BIC-vs-max_cp plot when nonzero
+integer, intent(in), optional :: verbose   ! print model scan tables when nonzero
 real(kind=dp), allocatable :: best_out(:)
 best_out = cpfitaic(x, mode=mode, max_cp=max_cp, minseg=minseg, criterion=criterion, plot=plot, plot_ic=plot_ic, verbose=verbose)
 end function cpfit_aic
 
 subroutine distaicscan(x, verbose, nct)
 ! Fit sensible distributions to x and print AIC ranking table.
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in), optional :: verbose
-logical, intent(in), optional :: nct
+real(kind=dp), intent(in) :: x(:)   ! sample used for distribution fitting
+integer, intent(in), optional :: verbose   ! print full ranking table when nonzero
+logical, intent(in), optional :: nct   ! include noncentral-t fit when true
 integer, parameter :: mmax = 20
 character(len=16) :: names(mmax), tmpn
 real(kind=dp) :: aicv(mmax), llv(mmax), tsv(mmax), ts
@@ -9562,11 +10066,14 @@ end if
 
 contains
    subroutine add_fit(nm, pars, dens, sec, m1, m2, m3, m4)
-      character(len=*), intent(in) :: nm
-      real(kind=dp), intent(in) :: pars(:)
-      real(kind=dp), intent(in) :: dens(:)
-      real(kind=dp), intent(in) :: sec
-      real(kind=dp), intent(in) :: m1, m2, m3, m4
+      character(len=*), intent(in) :: nm   ! distribution short name
+      real(kind=dp), intent(in) :: pars(:)   ! fitted parameter vector
+      real(kind=dp), intent(in) :: dens(:)   ! fitted density values at x
+      real(kind=dp), intent(in) :: sec   ! elapsed fit time in seconds
+      real(kind=dp), intent(in) :: m1   ! fitted distribution mean
+      real(kind=dp), intent(in) :: m2   ! fitted distribution standard deviation
+      real(kind=dp), intent(in) :: m3   ! fitted distribution skewness
+      real(kind=dp), intent(in) :: m4   ! fitted distribution excess kurtosis
       real(kind=dp) :: ll, aic
       integer :: k
       if (size(dens) /= size(x)) return
@@ -9593,8 +10100,13 @@ contains
    end subroutine add_fit
 
    subroutine hyperb_moments(loc, scale, alpha, m1, m2, m3, m4)
-      real(kind=dp), intent(in) :: loc, scale, alpha
-      real(kind=dp), intent(out) :: m1, m2, m3, m4
+      real(kind=dp), intent(in) :: loc   ! hyperbolic location parameter
+      real(kind=dp), intent(in) :: scale   ! hyperbolic scale parameter
+      real(kind=dp), intent(in) :: alpha   ! hyperbolic shape parameter
+      real(kind=dp), intent(out) :: m1   ! mean
+      real(kind=dp), intent(out) :: m2   ! standard deviation
+      real(kind=dp), intent(out) :: m3   ! skewness
+      real(kind=dp), intent(out) :: m4   ! excess kurtosis
       integer, parameter :: ngrid = 4096
       real(kind=dp) :: tmax, h, s2, s4, t, f
       integer :: i
@@ -9632,14 +10144,14 @@ end subroutine distaicscan
 
 subroutine arfit(x, k1, k2, nacf, nlb, method, header, true_phi)
 ! fit AR models and report RMSE/AIC/BIC and coefficients
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k1
-integer, intent(in), optional :: k2
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-character(len=*), intent(in), optional :: method
-logical, intent(in), optional :: header
-real(kind=dp), intent(in), optional :: true_phi(:)
+real(kind=dp), intent(in) :: x(:)   ! observed time series
+integer, intent(in) :: k1   ! minimum AR order (or single order when k2 omitted)
+integer, intent(in), optional :: k2   ! maximum AR order for scan
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+character(len=*), intent(in), optional :: method   ! AR fit method: ls, yw, or burg
+logical, intent(in), optional :: header   ! print method/#obs header when true
+real(kind=dp), intent(in), optional :: true_phi(:)   ! true AR coefficients for comparison row
 integer :: n, k, k_start, k_end, n_eff, j, best_aic_k, best_bic_k, k_params
 real(kind=dp) :: aic, bic, best_aic, best_bic, sse, sigma2, loglik
 real(kind=dp), allocatable :: y(:), beta(:)
@@ -9957,13 +10469,13 @@ end subroutine arfit
 
 subroutine arsimfit_scalar(n, phi, k1, k2, nacf, nlb, method)
 ! simulate AR process and fit AR models (show true coeffs above estimates)
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: phi(:)
-integer, intent(in), optional :: k1
-integer, intent(in), optional :: k2
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-character(len=*), intent(in), optional :: method
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: phi(:)   ! true AR coefficients used for simulation
+integer, intent(in), optional :: k1   ! minimum fitted AR order
+integer, intent(in), optional :: k2   ! maximum fitted AR order
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+character(len=*), intent(in), optional :: method   ! AR fit method: ls, yw, or burg
 real(kind=dp), allocatable :: x(:)
 logical :: have_method
 character(len=16) :: mth
@@ -10050,12 +10562,12 @@ end subroutine arsimfit_scalar
 
 subroutine arsimfit_vec(n, phi, kvec, nacf, nlb, method)
 ! simulate AR process and fit AR models for vector orders
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: phi(:)
-integer, intent(in) :: kvec(:)
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-character(len=*), intent(in), optional :: method
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: phi(:)   ! true AR coefficients used for simulation
+integer, intent(in) :: kvec(:)   ! AR orders to fit
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+character(len=*), intent(in), optional :: method   ! AR fit method: ls, yw, or burg
 real(kind=dp), allocatable :: x(:)
 integer :: j
 logical :: have_method
@@ -10117,13 +10629,13 @@ end subroutine arsimfit_vec
 
 subroutine masimfit_scalar(n, theta, k1, k2, nacf, nlb, niter)
 ! simulate MA process and fit MA models
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in), optional :: k1
-integer, intent(in), optional :: k2
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-integer, intent(in), optional :: niter
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: theta(:)   ! true MA coefficients used for simulation
+integer, intent(in), optional :: k1   ! minimum fitted MA order
+integer, intent(in), optional :: k2   ! maximum fitted MA order
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+integer, intent(in), optional :: niter   ! iteration count for MA fitting
 real(kind=dp), allocatable :: x(:)
 integer :: k1_use
 
@@ -10187,12 +10699,12 @@ end subroutine masimfit_scalar
 
 subroutine masimfit_vec(n, theta, kvec, nacf, nlb, niter)
 ! simulate MA process and fit MA models for vector orders
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: theta(:)
-integer, intent(in) :: kvec(:)
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-integer, intent(in), optional :: niter
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: theta(:)   ! true MA coefficients used for simulation
+integer, intent(in) :: kvec(:)   ! MA orders to fit
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+integer, intent(in), optional :: niter   ! iteration count for MA fitting
 real(kind=dp), allocatable :: x(:)
 integer :: j
 
@@ -10237,10 +10749,12 @@ end subroutine masimfit_vec
 
 subroutine armasimfit(n, ar, ma, pvec, qvec, niter)
 ! simulate ARMA process and fit ARMA models over tensor-product order grid
-integer, intent(in) :: n
-real(kind=dp), intent(in) :: ar(:), ma(:)
-real(kind=dp), intent(in), optional :: pvec(:), qvec(:)
-integer, intent(in), optional :: niter
+integer, intent(in) :: n   ! number of observations to simulate
+real(kind=dp), intent(in) :: ar(:)   ! true AR coefficients used for simulation
+real(kind=dp), intent(in) :: ma(:)   ! true MA coefficients used for simulation
+real(kind=dp), intent(in), optional :: pvec(:)   ! AR orders to fit (defaults to size(ar))
+real(kind=dp), intent(in), optional :: qvec(:)   ! MA orders to fit (defaults to size(ma))
+integer, intent(in), optional :: niter   ! optimizer iteration count for each ARMA fit
 real(kind=dp), allocatable :: x(:)
 integer, allocatable :: p_orders(:), q_orders(:)
 integer :: i, j, it
@@ -10307,14 +10821,14 @@ end subroutine armasimfit
 
 subroutine mafit(x, k1, k2, nacf, nlb, niter, header, true_theta)
 ! fit MA models and report RMSE/AIC/BIC and coefficients
-real(kind=dp), intent(in) :: x(:)
-integer, intent(in) :: k1
-integer, intent(in), optional :: k2
-integer, intent(in), optional :: nacf
-integer, intent(in), optional :: nlb
-integer, intent(in), optional :: niter
-logical, intent(in), optional :: header
-real(kind=dp), intent(in), optional :: true_theta(:)
+real(kind=dp), intent(in) :: x(:)   ! observed time series
+integer, intent(in) :: k1   ! minimum MA order (or single order when k2 omitted)
+integer, intent(in), optional :: k2   ! maximum MA order for scan
+integer, intent(in), optional :: nacf   ! number of residual ACF lags to print
+integer, intent(in), optional :: nlb   ! number of residual Ljung-Box lags
+integer, intent(in), optional :: niter   ! iteration count for MA parameter refinement
+logical, intent(in), optional :: header   ! print method/#obs header when true
+real(kind=dp), intent(in), optional :: true_theta(:)   ! true MA coefficients for comparison row
 integer :: n, k, k_start, k_end, n_eff, j, best_aic_k, best_bic_k, k_params
 integer :: iter, n_iter, df_lb, df
 integer :: acf_lags, lb_lags
@@ -10640,8 +11154,8 @@ end subroutine mafit
 
 elemental function tcdf(t, df) result(p)
 ! Student t CDF using incomplete beta
-real(kind=dp), intent(in) :: t
-integer, intent(in) :: df
+real(kind=dp), intent(in) :: t   ! t-statistic value
+integer, intent(in) :: df   ! degrees of freedom
 real(kind=dp) :: p
 real(kind=dp) :: x, a, b
 
@@ -10665,7 +11179,9 @@ end function tcdf
 
 elemental function betai(a, b, x) result(bt)
 ! Regularized incomplete beta function.
-real(kind=dp), intent(in) :: a, b, x
+real(kind=dp), intent(in) :: a   ! first beta-shape parameter
+real(kind=dp), intent(in) :: b   ! second beta-shape parameter
+real(kind=dp), intent(in) :: x   ! evaluation point in [0,1]
 real(kind=dp) :: bt, front
 if (x <= 0.0_dp) then
    bt = 0.0_dp
@@ -10684,8 +11200,8 @@ end function betai
 
 elemental function chisq_cdf(x, df) result(p)
 ! Chi-square CDF.
-real(kind=dp), intent(in) :: x
-integer, intent(in) :: df
+real(kind=dp), intent(in) :: x   ! chi-square quantile
+integer, intent(in) :: df   ! chi-square degrees of freedom
 real(kind=dp) :: p
 if (x <= 0.0_dp) then
    p = 0.0_dp
@@ -10696,7 +11212,8 @@ end function chisq_cdf
 
 elemental function gammp(a, x) result(gp)
 ! Regularized lower incomplete gamma.
-real(kind=dp), intent(in) :: a, x
+real(kind=dp), intent(in) :: a   ! gamma shape parameter
+real(kind=dp), intent(in) :: x   ! upper integration limit
 real(kind=dp) :: gp
 real(kind=dp) :: gln
 if (x < 0.0_dp .or. a <= 0.0_dp) then
@@ -10713,7 +11230,9 @@ end function gammp
 
 elemental function gser(a, x, gln) result(gser_out)
 ! Series for incomplete gamma.
-real(kind=dp), intent(in) :: a, x, gln
+real(kind=dp), intent(in) :: a   ! gamma shape parameter
+real(kind=dp), intent(in) :: x   ! upper integration limit
+real(kind=dp), intent(in) :: gln   ! precomputed log-gamma(a)
 real(kind=dp) :: gser_out
 integer, parameter :: itmax = 1000
 real(kind=dp), parameter :: eps = 1.0e-12_dp
@@ -10738,7 +11257,9 @@ end function gser
 
 elemental function gcf(a, x, gln) result(gcf_out)
 ! Continued fraction for incomplete gamma.
-real(kind=dp), intent(in) :: a, x, gln
+real(kind=dp), intent(in) :: a   ! gamma shape parameter
+real(kind=dp), intent(in) :: x   ! upper integration limit
+real(kind=dp), intent(in) :: gln   ! precomputed log-gamma(a)
 real(kind=dp) :: gcf_out
 integer, parameter :: itmax = 1000
 real(kind=dp), parameter :: eps = 1.0e-12_dp
@@ -10767,7 +11288,9 @@ end function gcf
 
 elemental function betacf(a, b, x) result(cf)
 ! Continued fraction for incomplete beta.
-real(kind=dp), intent(in) :: a, b, x
+real(kind=dp), intent(in) :: a   ! first beta-shape parameter
+real(kind=dp), intent(in) :: b   ! second beta-shape parameter
+real(kind=dp), intent(in) :: x   ! evaluation point in [0,1]
 real(kind=dp) :: cf
 integer, parameter :: maxit = 200
 real(kind=dp), parameter :: eps = 3.0e-12_dp, fpmin = 1.0e-30_dp
@@ -10806,9 +11329,10 @@ end function betacf
 
 pure subroutine solve_linear(a_in, b_in, x, ok)
 ! Compute solve linear.
-real(kind=dp), intent(in) :: a_in(:,:), b_in(:)
-real(kind=dp), allocatable, intent(out) :: x(:)
-logical, intent(out) :: ok
+real(kind=dp), intent(in) :: a_in(:,:)   ! coefficient matrix
+real(kind=dp), intent(in) :: b_in(:)   ! right-hand-side vector
+real(kind=dp), allocatable, intent(out) :: x(:)   ! solution vector
+logical, intent(out) :: ok   ! true when system is nonsingular
 real(kind=dp), allocatable :: a(:,:), b(:)
 real(kind=dp) :: piv, tmp, factor, maxv
 integer :: n, i, j, k, pivrow
@@ -10861,7 +11385,8 @@ end subroutine solve_linear
 
 pure function unit_vec(n, idx) result(v)
 ! Compute unit vec.
-integer, intent(in) :: n, idx
+integer, intent(in) :: n   ! vector length
+integer, intent(in) :: idx   ! 1-based index set to one
 real(kind=dp) :: v(n)
 v = 0.0_dp
 if (idx >= 1 .and. idx <= n) v(idx) = 1.0_dp
@@ -10869,7 +11394,7 @@ end function unit_vec
 
 pure function cumsum(x) result(y)
 ! return the cumulative sum of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp), allocatable :: y(:)
 integer :: i, n, ierr
 n = size(x)
@@ -10883,7 +11408,7 @@ end function cumsum
 
 pure function cummean(x) result(y)
 ! return the cumulative mean of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp), allocatable :: y(:)
 integer :: i, n, ierr
 n = size(x)
@@ -10897,7 +11422,7 @@ end function cummean
 
 pure function cummin(x) result(y)
 ! return the cumulative minimum of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp), allocatable :: y(:)
 integer :: i, n, ierr
 n = size(x)
@@ -10911,7 +11436,7 @@ end function cummin
 
 pure function cummax(x) result(y)
 ! return the cumulative maximum of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp), allocatable :: y(:)
 integer :: i, n, ierr
 n = size(x)
@@ -10925,7 +11450,7 @@ end function cummax
 
 pure function cumprod(x) result(y)
 ! return the cumulative sum of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp), allocatable :: y(:)
 integer :: i, n, ierr
 n = size(x)
@@ -10939,7 +11464,7 @@ end function cumprod
 
 pure function diff(x) result(y)
 ! return the consecutive differences of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp) :: y(size(x)-1)
 integer :: n
 n = size(x)
@@ -10949,7 +11474,7 @@ end function diff
 
 subroutine print_stats(x)
 ! Print summary statistics for array.
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! vector to summarize
 integer :: n, ierr
 n = size(x)
 print "(*(a10))", "size", "mean", "sd", "skew", "kurt", "min", "max", "first", "last"
@@ -10963,7 +11488,7 @@ end subroutine print_stats
 
 pure function skew(x) result(skew_val)
 ! return the skewness of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp) :: skew_val
 real(kind=dp) :: mean_x, sd_x
 integer :: n
@@ -10975,7 +11500,7 @@ end function skew
 
 pure function kurtosis(x) result(kurtosis_val)
 ! return the kurtosis of x
-real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in) :: x(:)   ! input vector
 real(kind=dp) :: kurtosis_val
 real(kind=dp) :: mean_x, sd_x
 integer :: n
@@ -10984,20 +11509,5 @@ mean_x = mean(x)
 sd_x = sd(x)
 kurtosis_val = sum(((x - mean_x) / sd_x)**4) / n - 3.0_dp
 end function kurtosis
-
-pure function lowercase(s) result(out)
-! convert ASCII letters to lowercase
-character(len=*), intent(in) :: s
-character(len=len(s)) :: out
-integer :: i, c
-do i = 1, len(s)
-   c = iachar(s(i:i))
-   if (c >= iachar('A') .and. c <= iachar('Z')) then
-      out(i:i) = achar(c + 32)
-   else
-      out(i:i) = s(i:i)
-   end if
-end do
-end function lowercase
 
 end module stats_mod

@@ -5,7 +5,7 @@ private
 public :: matched_parentheses, matched_brackets, arange, irange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
    is_alphanumeric, zeros, ones, windows, rep, matrix, read_vec, &
-   reverse, runif1, polyroots
+   reverse, runif1, polyroots, lowercase
 
 interface rep
    module procedure rep_vec
@@ -541,5 +541,20 @@ pure function reverse(arr) result(res)
     allocate(res(n))
     if (n > 0) res = arr(n:1:-1)
 end function reverse
+
+pure function lowercase(s) result(out)
+! convert ASCII letters to lowercase
+character(len=*), intent(in) :: s
+character(len=len(s)) :: out
+integer :: i, c
+do i = 1, len(s)
+   c = iachar(s(i:i))
+   if (c >= iachar('A') .and. c <= iachar('Z')) then
+      out(i:i) = achar(c + 32)
+   else
+      out(i:i) = s(i:i)
+   end if
+end do
+end function lowercase
 
 end module util_mod

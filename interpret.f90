@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-  use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, armastab, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_hyperb, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+  use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, armastab, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, skew_gamma, skew_lnorm, skew_nct, skew_chisq, skew_f, skew_beta, kurt_gamma, kurt_lnorm, kurt_t, kurt_nct, kurt_chisq, kurt_f, kurt_beta, kurt_ged, kurt_hyperb, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
   use util_mod, only: matched_brackets, matched_parentheses, arange, irange, &
@@ -2626,6 +2626,28 @@ contains
                   end if
 !=================================================================
 
+                  ! Canonicalize common mssk aliases.
+                  select case (trim(id))
+                  case ("mssk_normal", "mssk_gaussian")
+                     id = "mssk_norm"
+                  case ("mssk_uniform")
+                     id = "mssk_unif"
+                  case ("mssk_exponential")
+                     id = "mssk_exp"
+                  case ("mssk_lognormal")
+                     id = "mssk_lnorm"
+                  case ("mssk_logistic")
+                     id = "mssk_logis"
+                  case ("mssk_chi2", "mssk_chisquare")
+                     id = "mssk_chisq"
+                  case ("mssk_hyperbolic")
+                     id = "mssk_hyperb"
+                  case ("mssk_student_t")
+                     id = "mssk_t"
+                  case ("mssk_noncentral_t")
+                     id = "mssk_nct"
+                  end select
+
                   !============ ZERO-ARGUMENT SPECIAL CASE ======================
                   if (curr_char == ")") then         !  e.g. runif()
                      call next_char()                !  consume ")"
@@ -2636,6 +2658,10 @@ contains
                         f = random_normal(1)
                      case ("mssk_exp")
                         f = mssk_exp(1.0_dp)
+                     case ("mssk_unif")
+                        f = mssk_unif(0.0_dp, 1.0_dp)
+                     case ("mssk_norm")
+                        f = mssk_norm(0.0_dp, 1.0_dp)
                      case ("mssk_lnorm")
                         f = mssk_lnorm(0.0_dp, 1.0_dp)
                      case ("mssk_logis")
@@ -2644,6 +2670,8 @@ contains
                         f = mssk_sech()
                      case ("mssk_laplace")
                         f = mssk_laplace(0.0_dp, 1.0_dp)
+                     case ("mssk_cauchy")
+                        f = mssk_cauchy(0.0_dp, 1.0_dp)
                      case default
                         if (user_func_index(trim(id)) > 0) then
                            f = call_user_function(trim(id), "")
@@ -2785,6 +2813,11 @@ contains
                      skip_positional = .true.
                   end if
                   if (trim(id) == "armastab") then
+                     skip_positional = .true.
+                  end if
+                  if (trim(id) == "mssk_unif" .or. trim(id) == "mssk_norm" .or. trim(id) == "mssk_exp" .or. &
+                      trim(id) == "mssk_lnorm" .or. trim(id) == "mssk_logis" .or. trim(id) == "mssk_laplace" .or. &
+                      trim(id) == "mssk_cauchy") then
                      skip_positional = .true.
                   end if
 
@@ -5786,7 +5819,127 @@ contains
                         end if
                      end if
 
-                  case ("mssk_exp", "mssk_t", "mssk_chisq")
+                  case ("mssk_unif", "mssk_norm", "mssk_exp", "mssk_lnorm", "mssk_logis", "mssk_laplace", "mssk_cauchy")
+                     block
+                        integer :: n_args_local
+                        real(kind=dp), allocatable :: t1(:), t2(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local == 1 .and. len_trim(adjustl(labels(1))) == 0) n_args_local = 0
+
+                        select case (trim(id))
+                        case ("mssk_unif")
+                           if (n_args_local == 0) then
+                              f = mssk_unif(0.0_dp, 1.0_dp)
+                           else if (n_args_local == 2) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: first argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 t2 = evaluate(labels(2))
+                                 if (eval_error .or. size(t2) /= 1) then
+                                    print *, "Error: second argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = mssk_unif(t1(1), t2(1))
+                                 end if
+                              end if
+                           else
+                              print *, "Error: mssk_unif() takes zero or two arguments"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        case ("mssk_exp")
+                           if (n_args_local == 0) then
+                              f = mssk_exp(1.0_dp)
+                           else if (n_args_local == 1) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = mssk_exp(t1(1))
+                              end if
+                           else
+                              print *, "Error: mssk_exp() takes zero or one argument"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        case ("mssk_lnorm")
+                           if (n_args_local == 0) then
+                              f = mssk_lnorm(0.0_dp, 1.0_dp)
+                           else if (n_args_local == 1) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: first argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = mssk_lnorm(t1(1), 1.0_dp)
+                              end if
+                           else if (n_args_local == 2) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: first argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 t2 = evaluate(labels(2))
+                                 if (eval_error .or. size(t2) /= 1) then
+                                    print *, "Error: second argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = mssk_lnorm(t1(1), t2(1))
+                                 end if
+                              end if
+                           else
+                              print *, "Error: mssk_lnorm() takes zero, one, or two arguments"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        case default
+                           if (n_args_local == 0) then
+                              select case (trim(id))
+                              case ("mssk_norm"); f = mssk_norm(0.0_dp, 1.0_dp)
+                              case ("mssk_logis"); f = mssk_logis(0.0_dp, 1.0_dp)
+                              case ("mssk_laplace"); f = mssk_laplace(0.0_dp, 1.0_dp)
+                              case ("mssk_cauchy"); f = mssk_cauchy(0.0_dp, 1.0_dp)
+                              end select
+                           else if (n_args_local == 1) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: first argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 select case (trim(id))
+                                 case ("mssk_norm"); f = mssk_norm(t1(1), 1.0_dp)
+                                 case ("mssk_logis"); f = mssk_logis(t1(1), 1.0_dp)
+                                 case ("mssk_laplace"); f = mssk_laplace(t1(1), 1.0_dp)
+                                 case ("mssk_cauchy"); f = mssk_cauchy(t1(1), 1.0_dp)
+                                 end select
+                              end if
+                           else if (n_args_local == 2) then
+                              t1 = evaluate(labels(1))
+                              if (eval_error .or. size(t1) /= 1) then
+                                 print *, "Error: first argument must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 t2 = evaluate(labels(2))
+                                 if (eval_error .or. size(t2) /= 1) then
+                                    print *, "Error: second argument must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    select case (trim(id))
+                                    case ("mssk_norm"); f = mssk_norm(t1(1), t2(1))
+                                    case ("mssk_logis"); f = mssk_logis(t1(1), t2(1))
+                                    case ("mssk_laplace"); f = mssk_laplace(t1(1), t2(1))
+                                    case ("mssk_cauchy"); f = mssk_cauchy(t1(1), t2(1))
+                                    end select
+                                 end if
+                              end if
+                           else
+                              print *, "Error: function takes zero, one, or two arguments"
+                              eval_error = .true.; f = [bad_value]
+                           end if
+                        end select
+                     end block
+
+                  case ("mssk_t", "mssk_chisq")
                      if (have_second) then
                         print *, "Error: function ", trim(id), " takes one argument"
                         eval_error = .true.; f = [bad_value]
@@ -5795,13 +5948,12 @@ contains
                         eval_error = .true.; f = [bad_value]
                      else
                         select case (trim(id))
-                        case ("mssk_exp"); f = mssk_exp(arg1(1))
                         case ("mssk_t"); f = mssk_t(arg1(1))
                         case ("mssk_chisq"); f = mssk_chisq(arg1(1))
                         end select
                      end if
 
-                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace", "mssk_nct", "mssk_norm", "mssk_cauchy")
+                  case ("mssk_gamma", "mssk_f", "mssk_beta", "mssk_nct")
                      if (.not. have_second) then
                         if (size(arg1) /= 1) then
                            print *, "Error: first argument must be scalar"
@@ -5809,12 +5961,7 @@ contains
                         else
                            select case (trim(id))
                            case ("mssk_gamma"); f = mssk_gamma(arg1(1), 1.0_dp)
-                           case ("mssk_lnorm"); f = mssk_lnorm(arg1(1), 1.0_dp)
-                           case ("mssk_logis"); f = mssk_logis(arg1(1), 1.0_dp)
-                           case ("mssk_laplace"); f = mssk_laplace(arg1(1), 1.0_dp)
                            case ("mssk_nct"); f = mssk_nct(arg1(1), 0.0_dp)
-                           case ("mssk_norm"); f = mssk_norm(arg1(1), 1.0_dp)
-                           case ("mssk_cauchy"); f = mssk_cauchy(arg1(1), 1.0_dp)
                            case default
                               print *, "Error: function needs two arguments"
                               eval_error = .true.; f = [bad_value]
@@ -5826,26 +5973,10 @@ contains
                      else
                         select case (trim(id))
                         case ("mssk_gamma"); f = mssk_gamma(arg1(1), arg2(1))
-                        case ("mssk_lnorm"); f = mssk_lnorm(arg1(1), arg2(1))
                         case ("mssk_f"); f = mssk_f(arg1(1), arg2(1))
                         case ("mssk_beta"); f = mssk_beta(arg1(1), arg2(1))
-                        case ("mssk_logis"); f = mssk_logis(arg1(1), arg2(1))
-                        case ("mssk_laplace"); f = mssk_laplace(arg1(1), arg2(1))
                         case ("mssk_nct"); f = mssk_nct(arg1(1), arg2(1))
-                        case ("mssk_norm"); f = mssk_norm(arg1(1), arg2(1))
-                        case ("mssk_cauchy"); f = mssk_cauchy(arg1(1), arg2(1))
                         end select
-                     end if
-
-                  case ("mssk_unif")
-                     if (.not. have_second) then
-                        print *, "Error: function needs two arguments"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) /= 1 .or. size(arg2) /= 1) then
-                        print *, "Error: arguments must be scalar"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        f = mssk_unif(arg1(1), arg2(1))
                      end if
 
                   case ("mssk_hyperb")
@@ -5874,6 +6005,146 @@ contains
                               call skip_spaces()
                               if (curr_char == ")") call next_char()
                            end if
+                        end if
+                     end if
+
+                  case ("mssk_ged")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1 .or. size(arg2) /= 1) then
+                        print *, "Error: first two arguments must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = mssk_ged(arg1(1), arg2(1), arg3(1))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
+                     end if
+
+                  case ("kurt_gamma", "kurt_lnorm", "kurt_t", "kurt_chisq", "kurt_ged", "kurt_hyperb")
+                     if (have_second) then
+                        print *, "Error: function ", trim(id), " takes one argument"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("kurt_gamma"); f = kurt_gamma(arg1)
+                        case ("kurt_lnorm"); f = kurt_lnorm(arg1)
+                        case ("kurt_t"); f = kurt_t(arg1)
+                        case ("kurt_chisq"); f = kurt_chisq(arg1)
+                        case ("kurt_ged"); f = kurt_ged(arg1)
+                        case ("kurt_hyperb"); f = kurt_hyperb(arg1)
+                        end select
+                     end if
+
+                  case ("skew_gamma", "skew_lnorm", "skew_chisq")
+                     if (have_second) then
+                        print *, "Error: function ", trim(id), " takes one argument"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        select case (trim(id))
+                        case ("skew_gamma"); f = skew_gamma(arg1)
+                        case ("skew_lnorm"); f = skew_lnorm(arg1)
+                        case ("skew_chisq"); f = skew_chisq(arg1)
+                        end select
+                     end if
+
+                  case ("skew_f", "skew_beta", "skew_nct")
+                     if (.not. have_second) then
+                        if (trim(id) == "skew_nct") then
+                           f = skew_nct(arg1)
+                        else
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        end if
+                     else
+                        if (size(arg1) /= size(arg2) .and. size(arg1) /= 1 .and. size(arg2) /= 1) then
+                           print *, "Error: arguments must have same length or one must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           select case (trim(id))
+                           case ("skew_f")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = skew_f(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = skew_f(arg1, arg2(1))
+                              else
+                                 f = skew_f(arg1, arg2)
+                              end if
+                           case ("skew_beta")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = skew_beta(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = skew_beta(arg1, arg2(1))
+                              else
+                                 f = skew_beta(arg1, arg2)
+                              end if
+                           case ("skew_nct")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = skew_nct(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = skew_nct(arg1, arg2(1))
+                              else
+                                 f = skew_nct(arg1, arg2)
+                              end if
+                           end select
+                        end if
+                     end if
+
+                  case ("kurt_f", "kurt_beta", "kurt_nct")
+                     if (.not. have_second) then
+                        if (trim(id) == "kurt_nct") then
+                           f = kurt_nct(arg1)
+                        else
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        end if
+                     else
+                        if (size(arg1) /= size(arg2) .and. size(arg1) /= 1 .and. size(arg2) /= 1) then
+                           print *, "Error: arguments must have same length or one must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           select case (trim(id))
+                           case ("kurt_f")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = kurt_f(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = kurt_f(arg1, arg2(1))
+                              else
+                                 f = kurt_f(arg1, arg2)
+                              end if
+                           case ("kurt_beta")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = kurt_beta(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = kurt_beta(arg1, arg2(1))
+                              else
+                                 f = kurt_beta(arg1, arg2)
+                              end if
+                           case ("kurt_nct")
+                              if (size(arg1) == 1 .and. size(arg2) > 1) then
+                                 f = kurt_nct(arg1(1), arg2)
+                              else if (size(arg2) == 1 .and. size(arg1) > 1) then
+                                 f = kurt_nct(arg1, arg2(1))
+                              else
+                                 f = kurt_nct(arg1, arg2)
+                              end if
+                           end select
                         end if
                      end if
 
