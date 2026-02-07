@@ -5,6 +5,7 @@ from pathlib import Path
 
 ARRAY_FUNCS = {
     "arange",
+    "irange",
     "grid",
     "runif",
     "rnorm",
@@ -15,6 +16,7 @@ ARRAY_FUNCS = {
     "rt",
     "rnct",
     "rmixnorm",
+    "mixnoise",
     "rchisq",
     "rf",
     "rbeta",
@@ -45,6 +47,16 @@ ARRAY_FUNCS = {
     "reverse",
     "acf",
     "pacf",
+    "arspec",
+    "arspecaic",
+    "armaspec",
+    "armaspecaic",
+    "arma_mt_spec",
+    "armaaic_mt_spec",
+    "welchspec",
+    "pgramspec",
+    "acfspec",
+    "mtspec",
     "fiacf",
     "fracdiff",
     "aracf",
@@ -54,6 +66,7 @@ ARRAY_FUNCS = {
     "armaacf",
     "arfimaacf",
     "armapacf",
+    "armastab",
     "arsim",
     "masim",
     "armasim",
@@ -80,6 +93,8 @@ ARRAY_FUNCS = {
     "splinereg",
     "naturalspline",
     "mssk",
+    "mssk_unif",
+    "mssk_norm",
     "mssk_exp",
     "mssk_gamma",
     "mssk_lnorm",
@@ -92,6 +107,8 @@ ARRAY_FUNCS = {
     "mssk_logis",
     "mssk_sech",
     "mssk_laplace",
+    "mssk_cauchy",
+    "mssk_hyperb",
     "fit_norm",
     "fit_exp",
     "fit_gamma",
@@ -162,6 +179,7 @@ ARRAY_FUNCS = {
     "qged",
     "qhyperb",
     "read",
+    "polyroots",
 }
 SCALAR_FUNCS = {
     "sum",
@@ -191,17 +209,23 @@ CALL_ONLY = {
     "print_stats",
     "regress",
     "regress_multi",
+    "arsimfit",
+    "masimfit",
     "arfit",
     "mafit",
     "armafit",
+    "armasimfit",
     "armafitgrid",
     "armafitaic",
+    "araic",
+    "maaic",
     "arfimafit",
     "acfpacf",
     "acfpacfar",
     "poly1reg",
     "splinereg",
     "distaicscan",
+    "seed",
 }
 REWRITE_FUNCS = {
     "rnorm": "random_normal",
@@ -218,6 +242,7 @@ NO_PLOT = False
 MODULE_EXPORTS = {
     "util_mod": {
         "arange",
+        "irange",
         "grid",
         "zeros",
         "ones",
@@ -226,6 +251,7 @@ MODULE_EXPORTS = {
         "reverse",
         "head",
         "tail",
+        "polyroots",
     },
     "stats_mod": {
         "mean",
@@ -246,6 +272,16 @@ MODULE_EXPORTS = {
         "harmean",
         "acf",
         "pacf",
+        "arspec",
+        "arspecaic",
+        "armaspec",
+        "armaspecaic",
+        "arma_mt_spec",
+        "armaaic_mt_spec",
+        "welchspec",
+        "pgramspec",
+        "acfspec",
+        "mtspec",
         "acfpacf",
         "acfpacfar",
         "fiacf",
@@ -257,9 +293,13 @@ MODULE_EXPORTS = {
         "armaacf",
         "arfimaacf",
         "armapacf",
+        "armastab",
         "arsim",
+        "arsimfit",
+        "masimfit",
         "masim",
         "armasim",
+        "armasimfit",
         "arfimasim",
         "cpsim",
         "cpfit",
@@ -290,8 +330,12 @@ MODULE_EXPORTS = {
         "armafit",
         "armafitgrid",
         "armafitaic",
+        "araic",
+        "maaic",
         "arfimafit",
         "mssk",
+        "mssk_unif",
+        "mssk_norm",
         "mssk_exp",
         "mssk_gamma",
         "mssk_lnorm",
@@ -304,6 +348,8 @@ MODULE_EXPORTS = {
         "mssk_logis",
         "mssk_sech",
         "mssk_laplace",
+        "mssk_cauchy",
+        "mssk_hyperb",
         "fit_norm",
         "fit_exp",
         "fit_gamma",
@@ -385,6 +431,7 @@ MODULE_EXPORTS = {
         "rt",
         "rnct",
         "rmixnorm",
+        "mixnoise",
         "rchisq",
         "rf",
         "rbeta",
@@ -393,6 +440,7 @@ MODULE_EXPORTS = {
         "rlaplace",
         "rcauchy",
         "rged",
+        "random_seed_init",
     },
     "qsort_mod": {
         "sorted",
@@ -1029,7 +1077,74 @@ def find_named_call_spans(expr, fname):
     return spans
 
 
+def rewrite_arange_args(expr):
+    def to_real_arg(a):
+        t = a.strip()
+        if not t:
+            return t
+        if re.search(r"_dp\b", t, re.IGNORECASE):
+            return t
+        if is_real_literal(t):
+            return t
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return f"{t}.0"
+        if t.startswith("real("):
+            return t
+        if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
+            return f"real({t}, kind=dp)"
+        return t
+
+    out = []
+    i = 0
+    pat = re.compile(r"\barange\s*\(", re.IGNORECASE)
+    while i < len(expr):
+        m = pat.search(expr, i)
+        if not m:
+            out.append(expr[i:])
+            break
+        out.append(expr[i:m.start()])
+        lpar = m.end() - 1
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            c = expr[j]
+            if c == '"':
+                in_str = not in_str
+            elif not in_str:
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+            j += 1
+        if depth != 0:
+            out.append(expr[m.start():])
+            break
+        inner = expr[lpar + 1 : j - 1]
+        parts = split_top_level(inner, ",")
+        if len(parts) >= 2:
+            new_parts = [to_real_arg(p) for p in parts]
+            out.append(expr[m.start():lpar + 1] + ", ".join(new_parts) + ")")
+        else:
+            out.append(expr[m.start():j])
+        i = j
+    return "".join(out)
+
+
 def rewrite_int_args(expr):
+    def is_int_expr_with_vars(s):
+        t = re.sub(r"\s+", "", s)
+        if not t:
+            return False
+        # Only allow identifiers that are known integer vars.
+        ids = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", t)
+        if any(i not in INT_VARS for i in ids):
+            return False
+        # Remove identifiers, digits, and operators; if nothing left, ok.
+        t2 = re.sub(r"[A-Za-z_][A-Za-z0-9_]*", "", t)
+        t2 = re.sub(r"[0-9()+\-*^/]", "", t2)
+        return t2 == ""
+
     def wrap_int_arg(match):
         name = match.group(1)
         arg = match.group(2).strip()
@@ -1037,7 +1152,7 @@ def rewrite_int_args(expr):
             return f"{name}({arg})"
         if re.fullmatch(r"[0-9]+", arg):
             return f"{name}({arg})"
-        if is_int_expr(arg):
+        if is_int_expr(arg) or is_int_expr_with_vars(arg):
             return f"{name}({arg})"
         if arg in INT_VARS:
             return f"{name}({arg})"
@@ -1045,13 +1160,25 @@ def rewrite_int_args(expr):
             return f"{name}({arg})"
         return f"{name}(nint({arg}))"
 
-    expr = re.sub(r"\b(random_normal|runif|arange)\s*\(\s*([^)]+?)\s*\)", wrap_int_arg, expr)
+    expr = re.sub(r"\b(random_normal|runif)\s*\(\s*([^)]+?)\s*\)", wrap_int_arg, expr)
     return expr
 
 
 def rewrite_rt_rnct_args(expr):
     def to_real_arg(a):
         t = a.strip()
+        if t.startswith("[") and t.endswith("]"):
+            inner = t[1:-1].strip()
+            if not inner:
+                return t
+            parts = [p.strip() for p in split_top_level(inner, ",")]
+            out = []
+            for p in parts:
+                if re.fullmatch(r"[+-]?[0-9]+", p):
+                    out.append(f"{p}.0")
+                else:
+                    out.append(p)
+            return "[" + ", ".join(out) + "]"
         if re.search(r"_dp\b", t, re.IGNORECASE):
             return t
         if re.fullmatch(r"[+-]?[0-9]+", t):
@@ -1113,6 +1240,191 @@ def rewrite_rt_rnct_args(expr):
     return expr
 
 
+def rewrite_fit_t_args(expr):
+    def to_real_arg(a):
+        t = a.strip()
+        if t.startswith("[") and t.endswith("]"):
+            inner = t[1:-1].strip()
+            if not inner:
+                return t
+            parts = [p.strip() for p in split_top_level(inner, ",")]
+            out = []
+            for p in parts:
+                if re.fullmatch(r"[+-]?[0-9]+", p):
+                    out.append(f"{p}.0")
+                else:
+                    out.append(p)
+            return "[" + ", ".join(out) + "]"
+        if re.search(r"_dp\b", t, re.IGNORECASE):
+            return t
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return f"{t}.0"
+        if is_real_literal(t):
+            return t
+        if t.startswith(("real(",)):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f"real({t}, kind=dp)"
+        if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
+            return f"real({t}, kind=dp)"
+        return t
+
+    def to_df_vec_arg(a):
+        t = a.strip()
+        tr = to_real_arg(t)
+        if tr.startswith("[") and tr.endswith("]"):
+            return tr
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return tr
+        if ":" in t:
+            return tr
+        return "[" + tr + "]"
+
+    out = []
+    i = 0
+    pat = re.compile(r"\bfit_t\s*\(", re.IGNORECASE)
+    while i < len(expr):
+        m = pat.search(expr, i)
+        if not m:
+            out.append(expr[i:])
+            break
+        out.append(expr[i : m.start()])
+        lpar = m.end() - 1
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[m.start():])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        if len(args) > 1:
+            eq = find_top_level_assign(args[1])
+            if eq != -1:
+                k = args[1][:eq].strip()
+                v = args[1][eq + 1 :].strip()
+                if k.lower() == "df":
+                    args[1] = f"{k}={to_df_vec_arg(v)}"
+                else:
+                    args[1] = f"{k}={v}"
+            else:
+                args[1] = to_df_vec_arg(args[1])
+        out.append("fit_t(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_fit_nct_args(expr):
+    def to_real_arg(a):
+        t = a.strip()
+        if t.startswith("[") and t.endswith("]"):
+            inner = t[1:-1].strip()
+            if not inner:
+                return t
+            parts = [p.strip() for p in split_top_level(inner, ",")]
+            out = []
+            for p in parts:
+                if re.fullmatch(r"[+-]?[0-9]+", p):
+                    out.append(f"{p}.0")
+                else:
+                    out.append(p)
+            return "[" + ", ".join(out) + "]"
+        if re.search(r"_dp\b", t, re.IGNORECASE):
+            return t
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return f"{t}.0"
+        if is_real_literal(t):
+            return t
+        if t.startswith(("real(",)):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f"real({t}, kind=dp)"
+        if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
+            return f"real({t}, kind=dp)"
+        return t
+
+    def to_df_vec_arg(a):
+        t = a.strip()
+        tr = to_real_arg(t)
+        if tr.startswith("[") and tr.endswith("]"):
+            return tr
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return tr
+        if ":" in t:
+            return tr
+        return "[" + tr + "]"
+
+    def to_logical_arg(a):
+        t = a.strip()
+        tl = t.lower()
+        if tl in {".true.", "true", "t"}:
+            return ".true."
+        if tl in {".false.", "false", "f"}:
+            return ".false."
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return ".false." if int(t) == 0 else ".true."
+        return t
+
+    out = []
+    i = 0
+    pat = re.compile(r"\bfit_nct\s*\(", re.IGNORECASE)
+    while i < len(expr):
+        m = pat.search(expr, i)
+        if not m:
+            out.append(expr[i:])
+            break
+        out.append(expr[i : m.start()])
+        lpar = m.end() - 1
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[m.start():])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(1, len(args)):
+            eq = find_top_level_assign(args[idx])
+            if eq != -1:
+                k = args[idx][:eq].strip()
+                v = args[idx][eq + 1 :].strip()
+                kl = k.lower()
+                if kl == "df":
+                    args[idx] = f"{k}={to_df_vec_arg(v)}"
+                elif kl in {"verbose", "full"}:
+                    args[idx] = f"{k}={to_logical_arg(v)}"
+                else:
+                    args[idx] = f"{k}={v}"
+            else:
+                if idx == 1:
+                    args[idx] = to_df_vec_arg(args[idx])
+        out.append("fit_nct(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
 def rewrite_ttest_args(expr):
     def to_logical_arg(a):
         t = a.strip()
@@ -1123,7 +1435,7 @@ def rewrite_ttest_args(expr):
             return ".false."
         if re.fullmatch(r"[+-]?[0-9]+", t):
             return ".false." if int(t) == 0 else ".true."
-        return f"({t} /= 0)"
+        return t
 
     out = []
     i = 0
@@ -1162,6 +1474,79 @@ def rewrite_ttest_args(expr):
             elif eq == -1:
                 args[2] = f"pooled={to_logical_arg(args[2])}"
         out.append("ttest2(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_mssk_real_args(expr):
+    def to_real_arg(a):
+        t = a.strip()
+        if not t:
+            return t
+        if t.startswith("[") and t.endswith("]"):
+            inner = t[1:-1].strip()
+            if not inner:
+                return t
+            parts = [p.strip() for p in split_top_level(inner, ",")]
+            out = []
+            all_simple = True
+            for p in parts:
+                if re.fullmatch(r"[+-]?[0-9]+", p):
+                    out.append(f"{p}.0")
+                else:
+                    all_simple = False
+                    break
+            if all_simple:
+                return "[" + ", ".join(out) + "]"
+            return t
+        if re.search(r"_dp\b", t, re.IGNORECASE):
+            return t
+        if re.fullmatch(r"[+-]?[0-9]+", t):
+            return f"{t}.0"
+        if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
+            return f"real({t}, kind=dp)"
+        return t
+
+    out = []
+    i = 0
+    pat = re.compile(r"\b(mssk_[A-Za-z0-9_]+)\s*\(", re.IGNORECASE)
+    while i < len(expr):
+        m = pat.search(expr, i)
+        if not m:
+            out.append(expr[i:])
+            break
+        fname = m.group(1)
+        out.append(expr[i : m.start()])
+        lpar = m.end() - 1
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[m.start() :])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                k = a[:eq].strip()
+                v = a[eq + 1 :].strip()
+                args[idx] = f"{k}={to_real_arg(v)}"
+            else:
+                args[idx] = to_real_arg(a)
+        out.append(f"{fname}(" + ", ".join(args) + ")")
         i = j + 1
     return "".join(out)
 
@@ -1509,13 +1894,15 @@ def rewrite_cpsim_args(expr):
             args[5] = to_int_arg(args[5])
         if len(args) >= 7 and "=" not in args[6]:
             args[6] = to_int_arg(args[6])
+        if len(args) >= 8 and "=" not in args[7]:
+            args[7] = wrap_vec(args[7])
         for idx in range(2, len(args)):
             a = args[idx]
             eq = find_top_level_assign(a)
             if eq != -1:
                 key = a[:eq].strip().lower()
                 rhs = a[eq + 1 :].strip()
-                if key in {"cp", "mu", "sd"}:
+                if key in {"cp", "mu", "sd", "noise"}:
                     args[idx] = f"{a[:eq].strip()}={wrap_vec(rhs)}"
                 elif key == "seed":
                     args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
@@ -1710,6 +2097,600 @@ def rewrite_cpfit_aic_args(expr):
     return "".join(out)
 
 
+def rewrite_distaicscan_args(expr):
+    def to_int_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return "1"
+        if low in {".false.", "false", "f"}:
+            return "0"
+        if low.startswith(("nint(", "int(")):
+            return s
+        return f"nint(1.0*({s}))"
+
+    def to_logical_arg(a):
+        s = a.strip()
+        low = s.lower()
+        if low in {".true.", "true", "t"}:
+            return ".true."
+        if low in {".false.", "false", "f"}:
+            return ".false."
+        return s
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bdistaicscan\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        if len(args) >= 2 and "=" not in args[1]:
+            args[1] = to_int_arg(args[1])
+        if len(args) >= 3 and "=" not in args[2]:
+            args[2] = to_logical_arg(args[2])
+        for idx in range(1, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key == "verbose":
+                    args[idx] = f"{a[:eq].strip()}={to_int_arg(rhs)}"
+                elif key == "nct":
+                    args[idx] = f"{a[:eq].strip()}={to_logical_arg(rhs)}"
+        out.append("distaicscan(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_welchspec_args(expr):
+    def maybe_quote_word(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("'", '"')):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f'"{t}"'
+        return t
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bwelchspec\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(1, len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"window", "detrend"}:
+                    args[idx] = f"{a[:eq].strip()}={maybe_quote_word(rhs)}"
+            else:
+                # Positional optional args:
+                # 1: seglen, 2: overlap, 3: window, 4: nfreq, 5: detrend, 6: plot
+                if idx in {3, 5}:
+                    args[idx] = maybe_quote_word(a)
+        out.append("welchspec(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_ar_method_args(expr):
+    def maybe_quote_word(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("'", '"')):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f'"{t}"'
+        return t
+
+    for fname in ("arspec", "arspecaic", "arfit", "arsimfit"):
+        out = []
+        i = 0
+        pat = re.compile(rf"\b{fname}\s*\(", re.IGNORECASE)
+        while i < len(expr):
+            m = pat.search(expr, i)
+            if not m:
+                out.append(expr[i:])
+                break
+            out.append(expr[i : m.start()])
+            lpar = m.end() - 1
+            depth = 1
+            j = lpar + 1
+            in_str = False
+            while j < len(expr) and depth > 0:
+                ch = expr[j]
+                if ch == '"':
+                    in_str = not in_str
+                elif not in_str:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(expr):
+                out.append(expr[m.start() :])
+                break
+            args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+            for idx in range(1, len(args)):
+                a = args[idx]
+                eq = find_top_level_assign(a)
+                if eq != -1:
+                    key = a[:eq].strip().lower()
+                    rhs = a[eq + 1 :].strip()
+                    if key == "method":
+                        args[idx] = f"{a[:eq].strip()}={maybe_quote_word(rhs)}"
+            out.append(f"{fname}(" + ", ".join(args) + ")")
+            i = j + 1
+        expr = "".join(out)
+    return expr
+
+
+def rewrite_mtspec_args(expr):
+    def to_logical(s):
+        t = s.strip().lower()
+        if t in {".true.", "true", "t", "1", "1.0", "1.0_dp", "1.0d0"}:
+            return ".true."
+        if t in {".false.", "false", "f", "0", "0.0", "0.0_dp", "0.0d0"}:
+            return ".false."
+        return s
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bmtspec\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key in {"demean", "plot"}:
+                    args[idx] = f"{a[:eq].strip()}={to_logical(rhs)}"
+            else:
+                # positional: x, nfreq, nw, k, demean, plot
+                if idx in {4, 5}:
+                    args[idx] = to_logical(a)
+        out.append("mtspec(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_pgramspec_args(expr):
+    def is_int_list(s):
+        t = s.strip()
+        if not (t.startswith("[") and t.endswith("]")):
+            return False
+        inner = t[1:-1].strip()
+        if not inner:
+            return False
+        parts = [p.strip() for p in split_top_level(inner, ",")]
+        return all(re.fullmatch(r"[+-]?[0-9]+", p) for p in parts)
+
+    def wrap_smooth(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("nint(", "int(")):
+            return t
+        if is_int_list(t) or re.fullmatch(r"[+-]?[0-9]+", t):
+            return t
+        return f"nint(1.0*({t}))"
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bpgramspec\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key == "smooth":
+                    args[idx] = f"{a[:eq].strip()}={wrap_smooth(rhs)}"
+            else:
+                # positional smooth is 5th arg (index 4)
+                if idx == 4:
+                    args[idx] = wrap_smooth(a)
+        out.append("pgramspec(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_acfspec_args(expr):
+    def is_int_list(s):
+        t = s.strip()
+        if not (t.startswith("[") and t.endswith("]")):
+            return False
+        inner = t[1:-1].strip()
+        if not inner:
+            return False
+        parts = [p.strip() for p in split_top_level(inner, ",")]
+        return all(re.fullmatch(r"[+-]?[0-9]+", p) for p in parts)
+
+    def wrap_m(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("nint(", "int(")):
+            return t
+        if is_int_list(t) or re.fullmatch(r"[+-]?[0-9]+", t):
+            return t
+        return f"nint(1.0*({t}))"
+
+    def maybe_quote_word(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("'", '"')):
+            return t
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f'"{t}"'
+        return t
+
+    def to_logical(s):
+        t = s.strip().lower()
+        if t in {".true.", "true", "t", "1", "1.0", "1.0_dp", "1.0d0"}:
+            return ".true."
+        if t in {".false.", "false", "f", "0", "0.0", "0.0_dp", "0.0d0"}:
+            return ".false."
+        return s
+
+    out = []
+    i = 0
+    while i < len(expr):
+        m = re.search(r"\bacfspec\s*\(", expr[i:], re.IGNORECASE)
+        if not m:
+            out.append(expr[i:])
+            break
+        start = i + m.start()
+        out.append(expr[i:start])
+        lpar = start + m.group(0).rfind("(")
+        depth = 1
+        j = lpar + 1
+        in_str = False
+        while j < len(expr) and depth > 0:
+            ch = expr[j]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        if j >= len(expr):
+            out.append(expr[start:])
+            break
+        args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+        for idx in range(len(args)):
+            a = args[idx]
+            eq = find_top_level_assign(a)
+            if eq != -1:
+                key = a[:eq].strip().lower()
+                rhs = a[eq + 1 :].strip()
+                if key == "m":
+                    args[idx] = f"{a[:eq].strip()}={wrap_m(rhs)}"
+                elif key == "window":
+                    args[idx] = f"{a[:eq].strip()}={maybe_quote_word(rhs)}"
+                elif key == "plot":
+                    args[idx] = f"{a[:eq].strip()}={to_logical(rhs)}"
+            else:
+                if idx == 1:
+                    args[idx] = wrap_m(a)
+                elif idx == 3:
+                    args[idx] = maybe_quote_word(a)
+                elif idx == 4:
+                    args[idx] = to_logical(a)
+        out.append("acfspec(" + ", ".join(args) + ")")
+        i = j + 1
+    return "".join(out)
+
+
+def rewrite_iter_arg(expr):
+    def rewrite_one(fname):
+        out = []
+        i = 0
+        pat = re.compile(rf"\b{fname}\s*\(", re.IGNORECASE)
+        while i < len(expr):
+            m = pat.search(expr, i)
+            if not m:
+                out.append(expr[i:])
+                break
+            out.append(expr[i : m.start()])
+            lpar = m.end() - 1
+            depth = 1
+            j = lpar + 1
+            in_str = False
+            while j < len(expr) and depth > 0:
+                ch = expr[j]
+                if ch == '"':
+                    in_str = not in_str
+                elif not in_str:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(expr):
+                out.append(expr[m.start() :])
+                break
+            args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+            for idx in range(len(args)):
+                a = args[idx]
+                eq = find_top_level_assign(a)
+                if eq != -1:
+                    key = a[:eq].strip().lower()
+                    if key == "iter":
+                        args[idx] = "niter" + a[eq:]
+            out.append(f"{fname}(" + ", ".join(args) + ")")
+            i = j + 1
+        return "".join(out)
+
+    for fname in ("arspecaic", "arspec", "armaspec", "welchspec", "pgramspec", "mtspec", "masimfit", "armasimfit"):
+        expr = rewrite_one(fname)
+    return expr
+
+
+def rewrite_ar_order_args(expr):
+    def is_vector_expr(t):
+        return ("[" in t and "]" in t) or re.search(r"\b(arange|irange)\s*\(", t, re.IGNORECASE)
+
+    def int_vector_to_real_vector(t):
+        tt = t.strip()
+        if tt.startswith("[") and tt.endswith("]"):
+            inner = tt[1:-1].strip()
+            if not inner:
+                return tt
+            parts = [p.strip() for p in split_top_level(inner, ",")]
+            if all(re.fullmatch(r"[+-]?[0-9]+", p) for p in parts):
+                return "[" + ", ".join(f"{p}.0" for p in parts) + "]"
+        return tt
+
+    def to_real_order_vec(t):
+        tt = t.strip()
+        if not tt:
+            return tt
+        if re.fullmatch(r"[+-]?[0-9]+", tt):
+            return f"[{tt}.0]"
+        if is_int_expr(tt) or tt in INT_VARS:
+            return f"[1.0*({tt})]"
+        if re.search(r"\birange\s*\(", tt, re.IGNORECASE):
+            return f"1.0*({tt})"
+        return int_vector_to_real_vector(tt)
+
+    def wrap_if_needed(s):
+        t = s.strip()
+        if not t:
+            return t
+        if t.startswith(("nint(", "int(", "size(")):
+            return t
+        if re.fullmatch(r"[0-9]+", t):
+            return t
+        if is_int_expr(t):
+            return t
+        if t in INT_VARS:
+            return t
+        return f"nint(1.0*({t}))"
+
+    def maxval_int(t):
+        tt = t.strip()
+        if "arange(" in tt.lower() or tt.startswith(("nint(", "int(")) or re.search(r"\bnint\s*\(", tt):
+            return f"maxval({tt})"
+        return f"nint(maxval({tt}))"
+
+    def rewrite_one(fname, pos_keys):
+        out = []
+        i = 0
+        pat = re.compile(rf"\b{fname}\s*\(", re.IGNORECASE)
+        while i < len(expr):
+            m = pat.search(expr, i)
+            if not m:
+                out.append(expr[i:])
+                break
+            out.append(expr[i : m.start()])
+            lpar = m.end() - 1
+            depth = 1
+            j = lpar + 1
+            in_str = False
+            while j < len(expr) and depth > 0:
+                ch = expr[j]
+                if ch == '\"':
+                    in_str = not in_str
+                elif not in_str:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(expr):
+                out.append(expr[m.start() :])
+                break
+            args = [a.strip() for a in split_top_level(expr[lpar + 1 : j], ",")]
+            for idx in range(len(args)):
+                a = args[idx]
+                eq = find_top_level_assign(a)
+                if eq != -1:
+                    key = a[:eq].strip().lower()
+                    rhs = a[eq + 1 :].strip()
+                    if key in pos_keys:
+                        args[idx] = f"{a[:eq].strip()}={wrap_if_needed(rhs)}"
+                    elif fname == "armasimfit" and key in {"pvec", "qvec"}:
+                        rr = rhs
+                        if re.match(r"\s*arange\s*\(", rr, re.IGNORECASE):
+                            rr = "irange(" + rr[rr.find("(") + 1 : rr.rfind(")")] + ")"
+                        args[idx] = f"{a[:eq].strip()}={to_real_order_vec(rr)}"
+                else:
+                    if idx == 1:
+                        if fname in {"arsimfit", "masimfit", "armasimfit"}:
+                            args[idx] = a
+                        else:
+                            args[idx] = wrap_if_needed(a)
+                    if fname == "armasimfit" and idx in {3, 4}:
+                        rr = a
+                        if re.match(r"\s*arange\s*\(", rr, re.IGNORECASE):
+                            rr = "irange(" + rr[rr.find("(") + 1 : rr.rfind(")")] + ")"
+                        args[idx] = to_real_order_vec(rr)
+
+            # Special handling: allow vector order for arfit/arspec by
+            # reducing to a scalar or a range.
+            if len(args) >= 2:
+                arg1 = args[1]
+                if fname == "arfit" and is_vector_expr(arg1):
+                    # arfit(x, arange(n)) -> arfit(x, 1, maxval(arange(n)))
+                    if len(args) == 2:
+                        args = [args[0], "1", maxval_int(arg1)]
+                if fname == "arspec" and is_vector_expr(arg1):
+                    args[1] = maxval_int(arg1)
+            if fname == "arsimfit" and len(args) >= 3:
+                arg2 = args[2]
+                m2 = re.match(r"\s*arange\s*\((.*)\)\s*$", arg2, re.IGNORECASE)
+                if m2:
+                    inner = m2.group(1)
+                    parts = [p.strip() for p in split_top_level(inner, ",") if p.strip()]
+                    out_parts = []
+                    for p in parts:
+                        if re.fullmatch(r"[+-]?[0-9]+", p) or is_int_expr(p) or p in INT_VARS:
+                            out_parts.append(p)
+                        else:
+                            out_parts.append(f"nint({p})")
+                    args[2] = "irange(" + ", ".join(out_parts) + ")"
+            if fname == "masimfit" and len(args) >= 3:
+                arg2 = args[2]
+                m2 = re.match(r"\s*arange\s*\((.*)\)\s*$", arg2, re.IGNORECASE)
+                if m2:
+                    inner = m2.group(1)
+                    parts = [p.strip() for p in split_top_level(inner, ",") if p.strip()]
+                    out_parts = []
+                    for p in parts:
+                        if re.fullmatch(r"[+-]?[0-9]+", p) or is_int_expr(p) or p in INT_VARS:
+                            out_parts.append(p)
+                        else:
+                            out_parts.append(f"nint({p})")
+                    args[2] = "irange(" + ", ".join(out_parts) + ")"
+            out.append(f"{fname}(" + ", ".join(args) + ")")
+            i = j + 1
+        return "".join(out)
+
+    expr = rewrite_one("arfit", {"p", "order", "k1"})
+    expr = rewrite_one("arspec", {"p", "order"})
+    expr = rewrite_one("arspecaic", {"pmax", "p"})
+    expr = rewrite_one("arsimfit", {"k1", "order"})
+    expr = rewrite_one("masimfit", {"k1", "order", "kvec"})
+    expr = rewrite_one("armasimfit", set())
+    return expr
+
+
 def transpile_expr(expr):
     expr = normalize_proc_calls_in_expr(expr)
     expr = rewrite_arfimasim_calls(expr)
@@ -1725,8 +2706,20 @@ def transpile_expr(expr):
     expr = rewrite_cpsim_args(expr)
     expr = rewrite_cpfit_args(expr)
     expr = rewrite_cpfit_aic_args(expr)
+    expr = rewrite_distaicscan_args(expr)
+    expr = rewrite_welchspec_args(expr)
+    expr = rewrite_ar_method_args(expr)
+    expr = rewrite_mtspec_args(expr)
+    expr = rewrite_pgramspec_args(expr)
+    expr = rewrite_acfspec_args(expr)
+    expr = rewrite_iter_arg(expr)
+    expr = rewrite_ar_order_args(expr)
     expr = rewrite_rt_rnct_args(expr)
+    expr = rewrite_fit_t_args(expr)
+    expr = rewrite_fit_nct_args(expr)
     expr = rewrite_ttest_args(expr)
+    expr = rewrite_mssk_real_args(expr)
+    expr = rewrite_arange_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
     expr = replace_ops(expr)
@@ -1761,7 +2754,13 @@ def infer_rank(rhs, known_arrays):
             return "array"
     for name in extract_identifiers(rhs):
         if name in known_arrays:
-            return "array"
+            # If the name appears without indexing, treat as array.
+            if re.search(rf"\b{name}\b(?!\s*\()", rhs):
+                return "array"
+            # If any slice is used, treat as array.
+            if re.search(rf"\b{name}\s*\([^)]*:\s*[^)]*\)", rhs):
+                return "array"
+            # Otherwise, only scalar element indexing is present; ignore.
     return "scalar"
 
 
@@ -1895,6 +2894,34 @@ def infer_from_lines(lines, seed_arrays=None):
                 else:
                     ranks[name] = "scalar"
             else:
+                m_fn = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*$", stmt)
+                if m_fn:
+                    fname = m_fn.group(1)
+                    args_raw = m_fn.group(2)
+                    args_list = [a.strip() for a in split_top_level(args_raw, ",")]
+                    if fname.lower() == "armaspec" and args_list:
+                        nm0, rhs0 = parse_call_actual(args_list[0])
+                        if nm0 is None and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rhs0):
+                            ranks[rhs0] = "array"
+                    for idx_arg, a in enumerate(args_list):
+                        nm, rhs = parse_call_actual(a.strip())
+                        if nm is not None:
+                            key = nm.strip().lower()
+                            if key in {"method", "mode", "window", "detrend", "criterion", "plot"}:
+                                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rhs):
+                                    continue
+                            expr = rhs
+                        else:
+                            expr = a.strip()
+                            if fname.lower() == "welchspec" and idx_arg in {3, 5}:
+                                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+                                    continue
+                        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+                            ranks.setdefault(expr, "scalar")
+                        elif re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*:\s*[^)]*\)", expr):
+                            name = re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", expr)[0]
+                            ranks[name] = "array"
+                    continue
                 for name in extract_identifiers(stmt):
                     if name in ranks:
                         continue
@@ -2238,6 +3265,13 @@ def transpile_statement(stmt):
         return [f"! {s}"]
     if low.startswith("set plotout"):
         return [f"! {s}"]
+    if low.startswith("seed("):
+        inner = s[s.find("(") + 1 : s.rfind(")")]
+        args = [a.strip() for a in split_top_level(inner, ",") if a.strip()]
+        args = [transpile_expr(a) for a in args]
+        return [f"call random_seed_init(" + ", ".join(args) + ")"]
+    if re.fullmatch(r"run\s*\(.*\)\s*", s, re.IGNORECASE):
+        return [f"! {s}"]
     if low.startswith("call "):
         return [transpile_expr(s)]
     m_reg = re.match(r"regress\s*\((.*)\)\s*$", s, re.IGNORECASE)
@@ -2322,7 +3356,11 @@ def transpile_statement(stmt):
             if args:
                 call_args = [transpile_expr(args[0]), lhs]
                 for extra in args[1:]:
-                    call_args.append(transpile_expr(extra))
+                    eq = find_top_level_assign(extra)
+                    if eq != -1 and extra[:eq].strip().lower() == "col":
+                        call_args.append("icol=" + transpile_expr(extra[eq + 1 :].strip()))
+                    else:
+                        call_args.append("icol=" + transpile_expr(extra))
                 rhs_repl = (rhs[:start] + lhs + rhs[end + 1 :]).strip()
                 out_lines = [f"call read_vec({', '.join(call_args)})"]
                 if rhs_repl == lhs:
@@ -2337,6 +3375,30 @@ def transpile_statement(stmt):
         if has_top_level_relational(rhs_norm):
             return [f"{lhs} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs)})"]
         return [f"{lhs} = {transpile_expr(rhs)}"]
+    read_calls_stmt = find_named_call_spans(s, "read")
+    if len(read_calls_stmt) == 1:
+        start, end, args_raw = read_calls_stmt[0]
+        args = [a.strip() for a in split_top_level(args_raw, ",") if a.strip()]
+        if args:
+            call_args = [transpile_expr(args[0]), "read_tmp"]
+            for extra in args[1:]:
+                eq = find_top_level_assign(extra)
+                if eq != -1 and extra[:eq].strip().lower() == "col":
+                    call_args.append("icol=" + transpile_expr(extra[eq + 1 :].strip()))
+                else:
+                    call_args.append("icol=" + transpile_expr(extra))
+            expr_repl = (s[:start] + "read_tmp" + s[end + 1 :]).strip()
+            out_lines = [
+                "block",
+                "real(kind=dp), allocatable :: read_tmp(:)",
+                f"call read_vec({', '.join(call_args)})",
+            ]
+            if expr_repl == "read_tmp":
+                out_lines.append("print *, read_tmp")
+            else:
+                out_lines.append(f"print *, {transpile_expr(expr_repl)}")
+            out_lines.append("end block")
+            return out_lines
     return [f"print *, {transpile_expr(s)}"]
 
 
