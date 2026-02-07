@@ -3,8 +3,9 @@ module plot_mod
   use util_mod, only: arange
   implicit none
   private
-  public :: plot, use_windows, plot_to_label, set_plotout, get_plotout
-  logical, parameter :: noplot = .false.
+  public :: plot, use_windows, plot_to_label, set_plotout, get_plotout, set_noplot
+  logical, save :: noplot = .false.
+  logical, parameter :: neverplot = .false.
 
   !── Named executables for each platform
   character(len=*), parameter :: gnuplot_cmd_win  = "wgnuplot"
@@ -105,6 +106,11 @@ contains
     mode = plotout_mode
   end function get_plotout
 
+  subroutine set_noplot(flag)
+    logical, intent(in) :: flag
+    noplot = flag
+  end subroutine set_noplot
+
   subroutine plot_y(y, title, xlabel, ylabel, style, data_file, script_file)
     ! Plot a single series y(:) versus x(:)
     real(kind=dp), intent(in)                ::  y(:)
@@ -127,10 +133,7 @@ contains
     logical                       :: with_points
     character(len=*), parameter   :: fmt = "(F12.6,1x,F12.6)"
     character(len=*), parameter   :: fmtp = "(F12.6,1x,F12.6,1x,F12.6)"
-    if (noplot) then
-       print*,"in plot_1d, not plotting" ! debug
-       return
-    end if
+    if (noplot .or. neverplot) return
     n = size(x)
 
     !── defaults
@@ -233,10 +236,7 @@ contains
     character(len=*), parameter   :: fmty = "(1x,*(F12.6,1x))"
     character(len=*), parameter   :: fmtp = "(1x,*(F12.6,1x),F12.6)"
     logical                       :: with_points
-    if (noplot) then
-       print*,"in plot_2d, not plotting" ! debug
-       return
-    end if
+    if (noplot .or. neverplot) return
     n  = size(x)
     ns = size(y,2)
 

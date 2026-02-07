@@ -4,13 +4,14 @@ use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 use random_mod, only: random_normal, random_seed_init
 use qsort_mod, only: median, quantile, sorted
+use util_mod, only: polyroots
 implicit none
 private
 public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
           geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, kde, &
-          acf, pacf, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, aracf, maacf, arpacf, mapacf, &
-          armaacf, arfimaacf, armapacf, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, &
+          acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, aracf, maacf, arpacf, mapacf, &
+          armaacf, arfimaacf, armapacf, armastab, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, &
           dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, &
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
           qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
@@ -56,6 +57,38 @@ interface naturalspline
    module procedure naturalspline_kvec
 end interface naturalspline
 
+interface pgramspec
+   module procedure pgramspec_scalar
+   module procedure pgramspec_vec
+end interface pgramspec
+
+interface acfspec
+   module procedure acfspec_scalar
+   module procedure acfspec_vec
+end interface acfspec
+
+interface mtspec
+   module procedure mtspec_scalar
+   module procedure mtspec_nwvec
+   module procedure mtspec_kvec
+   module procedure mtspec_nwkvec
+end interface mtspec
+
+interface welchspec
+   module procedure welchspec_scalar
+   module procedure welchspec_vec
+end interface welchspec
+
+interface arsimfit
+   module procedure arsimfit_scalar
+   module procedure arsimfit_vec
+end interface arsimfit
+
+interface masimfit
+   module procedure masimfit_scalar
+   module procedure masimfit_vec
+end interface masimfit
+
 abstract interface
    function obj_fun(x) result(f)
       import dp
@@ -71,6 +104,18 @@ pure function nanv() result(x)
 real(kind=dp) :: x
 x = ieee_value(0.0_dp, ieee_quiet_nan)
 end function nanv
+
+pure function lower_ascii(s) result(t)
+! Lowercase ASCII helper for option parsing.
+character(len=*), intent(in) :: s
+character(len=len(s)) :: t
+integer :: i, c
+t = s
+do i = 1, len(s)
+   c = iachar(t(i:i))
+   if (c >= iachar("A") .and. c <= iachar("Z")) t(i:i) = achar(c + 32)
+end do
+end function lower_ascii
 
 pure logical function mixnorm_params_ok(wgt, mu, sig) result(ok)
 ! Validate finite normal-mixture parameters.
@@ -289,6 +334,1576 @@ do lag = 1, k_eff
    r(lag) = sum((x(1:n - lag) - mean_x) * (x(1 + lag:n) - mean_x)) / denom
 end do
 end function acf
+
+function arspec(x, p, nfreq, plot, method) result(s)
+! AR(p)-based spectral density estimate on a regular frequency grid.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: p
+integer, intent(in), optional :: nfreq
+logical, intent(in), optional :: plot
+character(len=*), intent(in), optional :: method
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: xd(:), phi(:), resid(:), freq(:)
+real(kind=dp) :: sigma2, w, re_part, im_part, denom
+logical :: do_plot
+integer :: n, nf, j, t, k_eff
+character(len=64) :: ttl
+character(len=16) :: mth
+
+n = size(x)
+if (n < 3) then
+   print *, "Error: arspec() needs size(x) >= 3"
+   allocate (s(0))
+   return
+end if
+if (p < 0) then
+   print *, "Error: arspec() order p must be >= 0"
+   allocate (s(0))
+   return
+end if
+if (p >= n - 1) then
+   print *, "Error: arspec() requires p <= size(x)-2"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+allocate (s(nf), freq(nf))
+xd = x - mean(x)
+k_eff = p
+mth = "ls"
+if (present(method)) mth = lower_ascii(trim(adjustl(method)))
+if (trim(mth) /= "ls" .and. trim(mth) /= "yw" .and. trim(mth) /= "burg") then
+   print *, "Error: arspec() method must be ls/yw/burg"
+   allocate (s(0))
+   return
+end if
+
+if (k_eff == 0) then
+   sigma2 = sum(xd**2) / real(max(1, n), dp)
+else
+   phi = arcoef_method(xd, k_eff, trim(mth))
+   if (size(phi) /= k_eff .or. all(phi == -3.0_dp)) then
+      print *, "Error: arspec() failed to estimate AR coefficients"
+      s = -3.0_dp
+      return
+   end if
+   allocate (resid(n - k_eff))
+   do t = k_eff + 1, n
+      resid(t - k_eff) = xd(t) - sum(phi * xd(t - 1:t - k_eff:-1))
+   end do
+   sigma2 = sum(resid**2) / real(max(1, size(resid)), dp)
+end if
+if (sigma2 <= 0.0_dp) sigma2 = tiny(1.0_dp)
+
+do j = 1, nf
+   if (nf > 1) then
+      w = pi * real(j - 1, dp) / real(nf - 1, dp)      ! [0, pi]
+      freq(j) = w / (2.0_dp * pi)                      ! [0, 0.5]
+   else
+      w = 0.0_dp
+      freq(j) = 0.0_dp
+   end if
+   if (k_eff == 0) then
+      denom = 1.0_dp
+   else
+      re_part = 1.0_dp
+      im_part = 0.0_dp
+      do t = 1, k_eff
+         re_part = re_part - phi(t) * cos(w * real(t, dp))
+         im_part = im_part + phi(t) * sin(w * real(t, dp))
+      end do
+      denom = re_part * re_part + im_part * im_part
+      if (denom <= tiny(1.0_dp)) denom = tiny(1.0_dp)
+   end if
+   s(j) = sigma2 / (2.0_dp * pi * denom)
+end do
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   write (ttl, "(a,i0,a,a,a)") "arspec(p=", k_eff, ",", trim(mth), ")"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function arspec
+
+function arspecaic(x, pmax, nfreq, plot, niter, method) result(s)
+! AR-spectrum using AR order selected by AIC over p=0..pmax.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: pmax, nfreq, niter
+logical, intent(in), optional :: plot
+character(len=*), intent(in), optional :: method
+real(kind=dp), allocatable :: s(:)
+integer :: pmax_i, nf, p, best_p, no_improve, n_eff, j
+real(kind=dp) :: aic, best_aic, best_aic_prev, sse, sigma2
+real(kind=dp), allocatable :: phi(:), freq(:), xd(:), resid(:)
+logical :: ok, do_plot
+character(len=96) :: ttl
+character(len=16) :: mth
+
+if (size(x) < 3) then
+   print *, "Error: arspecaic() needs size(x) >= 3"
+   allocate (s(0))
+   return
+end if
+
+if (present(pmax)) then
+   pmax_i = pmax
+else
+   pmax_i = min(10, size(x) - 2)
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(niter)) then
+   if (niter < 1) then
+      print *, "Error: arspecaic() niter must be >= 1"
+      allocate (s(0))
+      return
+   end if
+end if
+if (pmax_i < 0) then
+   print *, "Error: arspecaic() pmax must be >= 0"
+   allocate (s(0))
+   return
+end if
+mth = "ls"
+if (present(method)) mth = lower_ascii(trim(adjustl(method)))
+if (trim(mth) /= "ls" .and. trim(mth) /= "yw" .and. trim(mth) /= "burg") then
+   print *, "Error: arspecaic() method must be ls/yw/burg"
+   allocate (s(0))
+   return
+end if
+pmax_i = min(pmax_i, size(x) - 2)
+xd = x - mean(x)
+
+best_aic = huge(1.0_dp)
+best_p = 0
+no_improve = 0
+do p = 0, pmax_i
+   best_aic_prev = best_aic
+   if (p == 0) then
+      n_eff = size(xd)
+      sse = sum(xd**2)
+      sigma2 = sse/real(max(1, n_eff), dp)
+      aic = real(n_eff, dp)*log(max(tiny(1.0_dp), sigma2)) + 2.0_dp
+      ok = .true.
+   else
+      phi = arcoef_method(xd, p, trim(mth))
+      ok = (size(phi) == p .and. .not. all(phi == -3.0_dp))
+      if (ok) then
+         n_eff = size(xd) - p
+         allocate (resid(n_eff))
+         do j = p + 1, size(xd)
+            resid(j - p) = xd(j) - sum(phi * xd(j - 1:j - p:-1))
+         end do
+         sse = sum(resid**2)
+         deallocate (resid)
+         sigma2 = sse/real(max(1, n_eff), dp)
+         aic = real(n_eff, dp)*log(max(tiny(1.0_dp), sigma2)) + 2.0_dp*real(p, dp)
+      end if
+   end if
+   if (ok .and. aic == aic .and. abs(aic) <= huge(1.0_dp)) then
+      if (aic < best_aic) then
+         best_aic = aic
+         best_p = p
+      end if
+   end if
+   if (best_aic == huge(1.0_dp)) cycle
+   if (best_aic < best_aic_prev) then
+      no_improve = 0
+   else
+      no_improve = no_improve + 1
+   end if
+   if (no_improve >= 2) exit
+end do
+
+if (best_aic == huge(1.0_dp)) then
+   print *, "Error: arspecaic() could not fit any AR model"
+   s = -3.0_dp
+   return
+end if
+
+s = arspec(x, best_p, nfreq=nf, plot=.false., method=trim(mth))
+print "(a,i0,a,f12.4,a,a)", "arspecaic() chose p=", best_p, " by AIC=", best_aic, " method=", trim(mth)
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot .and. size(s) > 0) then
+   allocate (freq(size(s)))
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do p = 1, size(s)
+         freq(p) = 0.5_dp*real(p - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   write (ttl, "(a,i0,a,a,a)") "arspecaic(p=", best_p, ",", trim(mth), ")"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function arspecaic
+
+function armaspec(x, p, q, ar, ma, sigma2, nfreq, plot, niter) result(s)
+! ARMA spectrum:
+! - fitted mode: armaspec(x,p,q,...)
+! - theoretical mode: armaspec(ar=phi, ma=theta, sigma2=..., ...)
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in), optional :: x(:), ar(:), ma(:), sigma2
+integer, intent(in), optional :: p, q
+integer, intent(in), optional :: nfreq, niter
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: phi(:), theta(:), freq(:)
+real(kind=dp) :: rmse, aic, bic, sig2, w, num_re, num_im, den_re, den_im, denom, numer
+logical :: ok, do_plot, fit_mode, theory_mode
+integer :: n, nf, it, j, k, maxpq, p_show, q_show
+character(len=256) :: ttl
+character(len=96) :: ar_txt, ma_txt
+
+fit_mode = present(x) .or. present(p) .or. present(q)
+theory_mode = present(ar) .or. present(ma)
+if (.not. fit_mode .and. .not. theory_mode) then
+   print *, "Error: armaspec() requires either (x,p,q) or named ar=/ma="
+   allocate (s(0))
+   return
+end if
+if (fit_mode .and. theory_mode) then
+   print *, "Error: armaspec() cannot mix fitted mode and theoretical mode arguments"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(niter)) then
+   it = max(1, niter)
+else
+   it = 5
+end if
+
+if (fit_mode) then
+   if (.not. present(x) .or. .not. present(p) .or. .not. present(q)) then
+      print *, "Error: armaspec() fitted mode requires x, p, q"
+      allocate (s(0))
+      return
+   end if
+   n = size(x)
+   if (n < 3) then
+      print *, "Error: armaspec() needs size(x) >= 3"
+      allocate (s(0))
+      return
+   end if
+   if (p < 0 .or. q < 0) then
+      print *, "Error: armaspec() orders p and q must be >= 0"
+      allocate (s(0))
+      return
+   end if
+   maxpq = max(p, q)
+   if (maxpq >= n - 1) then
+      print *, "Error: armaspec() requires max(p,q) <= size(x)-2"
+      allocate (s(0))
+      return
+   end if
+
+   allocate (phi(max(1, p)), theta(max(1, q)))
+   phi = 0.0_dp
+   theta = 0.0_dp
+   call armafit_metrics(x, p, q, it, rmse, aic, bic, phi, theta, ok)
+   if (.not. ok .or. rmse /= rmse .or. abs(rmse) > huge(1.0_dp)) then
+      print *, "Error: armaspec() failed to estimate ARMA parameters"
+      s = -3.0_dp
+      return
+   end if
+   sig2 = max(tiny(1.0_dp), rmse*rmse)
+   p_show = p
+   q_show = q
+else
+   if (present(ar)) then
+      allocate (phi(max(1, size(ar))))
+      if (size(ar) > 0) phi(1:size(ar)) = ar
+      if (size(ar) == 0) phi(1) = 0.0_dp
+   else
+      allocate (phi(1))
+      phi = 0.0_dp
+   end if
+   if (present(ma)) then
+      allocate (theta(max(1, size(ma))))
+      if (size(ma) > 0) theta(1:size(ma)) = ma
+      if (size(ma) == 0) theta(1) = 0.0_dp
+   else
+      allocate (theta(1))
+      theta = 0.0_dp
+   end if
+   if (present(sigma2)) then
+      sig2 = max(tiny(1.0_dp), sigma2)
+   else
+      sig2 = 1.0_dp
+   end if
+   if (present(ar)) then
+      p_show = size(ar)
+   else
+      p_show = 0
+   end if
+   if (present(ma)) then
+      q_show = size(ma)
+   else
+      q_show = 0
+   end if
+end if
+
+allocate (s(nf), freq(nf))
+do j = 1, nf
+   if (nf > 1) then
+      w = pi*real(j - 1, dp)/real(nf - 1, dp)
+      freq(j) = w/(2.0_dp*pi)
+   else
+      w = 0.0_dp
+      freq(j) = 0.0_dp
+   end if
+
+   den_re = 1.0_dp
+   den_im = 0.0_dp
+   do k = 1, size(phi)
+      den_re = den_re - phi(k)*cos(w*real(k, dp))
+      den_im = den_im + phi(k)*sin(w*real(k, dp))
+   end do
+   denom = den_re*den_re + den_im*den_im
+   if (denom <= tiny(1.0_dp)) denom = tiny(1.0_dp)
+
+   num_re = 1.0_dp
+   num_im = 0.0_dp
+   do k = 1, size(theta)
+      num_re = num_re + theta(k)*cos(w*real(k, dp))
+      num_im = num_im - theta(k)*sin(w*real(k, dp))
+   end do
+   numer = num_re*num_re + num_im*num_im
+
+   s(j) = sig2*numer/(2.0_dp*pi*denom)
+end do
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   if (p_show <= 3 .and. q_show <= 3) then
+      ar_txt = coeff_vec_text(phi, p_show)
+      ma_txt = coeff_vec_text(theta, q_show)
+      ttl = "armaspec: ar="//trim(ar_txt)//", ma="//trim(ma_txt)
+   else if (fit_mode) then
+      write (ttl, "(a,i0,a,i0,a)") "armaspec(p=", p, ",q=", q, ")"
+   else
+      write (ttl, "(a,i0,a,i0,a)") "armaspec-theory(ar=", p_show, ",ma=", q_show, ")"
+   end if
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function armaspec
+
+pure function coeff_vec_text(v, nshow) result(txt)
+real(kind=dp), intent(in) :: v(:)
+integer, intent(in) :: nshow
+character(len=96) :: txt
+character(len=24) :: num
+integer :: i
+
+txt = "[]"
+if (nshow <= 0) return
+txt = "["
+do i = 1, nshow
+   write (num, "(f0.3)") v(i)
+   if (i > 1) txt = trim(txt)//","
+   txt = trim(txt)//trim(adjustl(num))
+end do
+txt = trim(txt)//"]"
+end function coeff_vec_text
+
+function armaspecaic(x, pmax, qmax, nfreq, plot, iter) result(s)
+! ARMA-spectrum with (p,q) selected by AIC on a bounded grid.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: pmax, qmax, nfreq, iter
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+integer :: pmax_i, qmax_i, nf, it, p, q, best_p, best_q, n
+real(kind=dp) :: rmse, aic, bic, best_aic
+real(kind=dp), allocatable :: phi(:), theta(:)
+logical :: ok, do_plot
+
+n = size(x)
+if (n < 3) then
+   print *, "Error: armaspecaic() needs size(x) >= 3"
+   allocate (s(0))
+   return
+end if
+
+if (present(pmax)) then
+   pmax_i = pmax
+else
+   pmax_i = 5
+end if
+if (present(qmax)) then
+   qmax_i = qmax
+else
+   qmax_i = 5
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(iter)) then
+   it = max(1, iter)
+else
+   it = 5
+end if
+do_plot = .true.
+if (present(plot)) do_plot = plot
+
+if (pmax_i < 0 .or. qmax_i < 0) then
+   print *, "Error: armaspecaic() pmax and qmax must be >= 0"
+   allocate (s(0))
+   return
+end if
+pmax_i = min(pmax_i, n - 2)
+qmax_i = min(qmax_i, n - 2)
+
+best_aic = huge(1.0_dp)
+best_p = 0
+best_q = 0
+do p = 0, pmax_i
+   do q = 0, qmax_i
+      if (max(p, q) > n - 2) cycle
+      allocate (phi(max(1, p)), theta(max(1, q)))
+      phi = 0.0_dp
+      theta = 0.0_dp
+      call armafit_metrics(x, p, q, it, rmse, aic, bic, phi, theta, ok)
+      if (ok .and. aic == aic .and. abs(aic) <= huge(1.0_dp)) then
+         if (aic < best_aic) then
+            best_aic = aic
+            best_p = p
+            best_q = q
+         end if
+      end if
+      deallocate (phi, theta)
+   end do
+end do
+
+if (best_aic == huge(1.0_dp)) then
+   print *, "Error: armaspecaic() could not fit any ARMA model"
+   s = -3.0_dp
+   return
+end if
+
+print "(a,i0,a,i0,a,f12.4)", "armaspecaic() chose p=", best_p, " q=", best_q, " by AIC=", best_aic
+s = armaspec(x, best_p, best_q, nfreq=nf, plot=do_plot, niter=it)
+end function armaspecaic
+
+function arma_mt_spec(x, p, q, nfreq, iter, nw, k, plot) result(s)
+! Compare ARMA and multitaper spectra on one plot; return ARMA spectrum.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: p, q
+integer, intent(in), optional :: nfreq, iter, k
+real(kind=dp), intent(in), optional :: nw
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: smt(:), y2(:,:), freq(:)
+character(len=4) :: legends(2)
+character(len=96) :: ttl
+integer :: nf, it, k_i, j
+real(kind=dp) :: nw_i
+logical :: do_plot
+
+if (size(x) < 3) then
+   print *, "Error: arma_mt_spec() needs size(x) >= 3"
+   allocate (s(0))
+   return
+end if
+if (p < 0 .or. q < 0) then
+   print *, "Error: arma_mt_spec() orders p and q must be >= 0"
+   allocate (s(0))
+   return
+end if
+if (max(p, q) > size(x) - 2) then
+   print *, "Error: arma_mt_spec() requires max(p,q) <= size(x)-2"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(iter)) then
+   it = max(1, iter)
+else
+   it = 5
+end if
+if (present(nw)) then
+   nw_i = nw
+else
+   nw_i = 3.5_dp
+end if
+if (nw_i <= 0.0_dp) then
+   print *, "Error: arma_mt_spec() nw must be > 0"
+   allocate (s(0))
+   return
+end if
+if (present(k)) then
+   k_i = k
+else
+   k_i = max(1, nint(2.0_dp*nw_i - 1.0_dp))
+end if
+if (k_i < 1) then
+   print *, "Error: arma_mt_spec() k must be >= 1"
+   allocate (s(0))
+   return
+end if
+
+s = armaspec(x, p, q, nfreq=nf, plot=.false., niter=it)
+if (size(s) <= 0) return
+smt = mtspec(x(1:min(size(x), 1200)), nfreq=nf, nw=nw_i, k=k_i, demean=.true., plot=.false.)
+if (size(x) > 1200) then
+   print *, "Note: arma_mt_spec() uses first 1200 observations for mtspec()."
+end if
+if (size(smt) /= size(s)) then
+   print *, "Error: arma_mt_spec() internal size mismatch between spectra"
+   return
+end if
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), 2), freq(size(s)))
+   y2(:, 1) = s
+   y2(:, 2) = smt
+   legends = [character(len=4) :: "ARMA", "MT"]
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   write (ttl, "(a,i0,a,i0,a,f5.2,a,i0,a)") "arma-mt-spec(p=", p, ",q=", q, ",nw=", nw_i, ",k=", k_i, ")"
+   call gplot(freq, y2, title=trim(ttl), xlabel="frequency", legend_labels=legends)
+end if
+end function arma_mt_spec
+
+function armaaic_mt_spec(x, pmax, qmax, nfreq, iter, nw, k, plot) result(s)
+! Choose ARMA(p,q) by AIC, then compare ARMA and MT spectra on one plot.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: pmax, qmax, nfreq, iter, k
+real(kind=dp), intent(in), optional :: nw
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+integer :: pmax_i, qmax_i, nf, it, kk, p, q, best_p, best_q, n
+real(kind=dp) :: nw_i, rmse, aic, bic, best_aic
+real(kind=dp), allocatable :: phi(:), theta(:)
+logical :: do_plot, ok
+
+n = size(x)
+if (n < 3) then
+   print *, "Error: armaaic_mt_spec() needs size(x) >= 3"
+   allocate (s(0))
+   return
+end if
+
+if (present(pmax)) then
+   pmax_i = pmax
+else
+   pmax_i = 5
+end if
+if (present(qmax)) then
+   qmax_i = qmax
+else
+   qmax_i = 5
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(iter)) then
+   it = max(1, iter)
+else
+   it = 5
+end if
+if (present(nw)) then
+   nw_i = nw
+else
+   nw_i = 3.5_dp
+end if
+if (present(k)) then
+   kk = k
+else
+   kk = max(1, nint(2.0_dp*nw_i - 1.0_dp))
+end if
+do_plot = .true.
+if (present(plot)) do_plot = plot
+
+if (pmax_i < 0 .or. qmax_i < 0) then
+   print *, "Error: armaaic_mt_spec() pmax and qmax must be >= 0"
+   allocate (s(0))
+   return
+end if
+if (nw_i <= 0.0_dp) then
+   print *, "Error: armaaic_mt_spec() nw must be > 0"
+   allocate (s(0))
+   return
+end if
+if (kk < 1) then
+   print *, "Error: armaaic_mt_spec() k must be >= 1"
+   allocate (s(0))
+   return
+end if
+pmax_i = min(pmax_i, n - 2)
+qmax_i = min(qmax_i, n - 2)
+
+best_aic = huge(1.0_dp)
+best_p = 0
+best_q = 0
+do p = 0, pmax_i
+   do q = 0, qmax_i
+      if (max(p, q) > n - 2) cycle
+      allocate (phi(max(1, p)), theta(max(1, q)))
+      phi = 0.0_dp
+      theta = 0.0_dp
+      call armafit_metrics(x, p, q, it, rmse, aic, bic, phi, theta, ok)
+      if (ok .and. aic == aic .and. abs(aic) <= huge(1.0_dp)) then
+         if (aic < best_aic) then
+            best_aic = aic
+            best_p = p
+            best_q = q
+         end if
+      end if
+      deallocate (phi, theta)
+   end do
+end do
+
+if (best_aic == huge(1.0_dp)) then
+   print *, "Error: armaaic_mt_spec() could not fit any ARMA model"
+   s = -3.0_dp
+   return
+end if
+print "(a,i0,a,i0,a,f12.4)", "armaaic_mt_spec() chose p=", best_p, " q=", best_q, " by AIC=", best_aic
+s = arma_mt_spec(x, best_p, best_q, nfreq=nf, iter=it, nw=nw_i, k=kk, plot=do_plot)
+end function armaaic_mt_spec
+
+function welchspec_scalar(x, seglen, overlap, window, nfreq, detrend, plot) result(s)
+! Welch averaged periodogram spectrum estimate.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: seglen, nfreq
+real(kind=dp), intent(in), optional :: overlap
+character(len=*), intent(in), optional :: window, detrend
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: seg(:), wv(:), freq(:), sone(:)
+real(kind=dp) :: ov, w, re_part, im_part, u, sw, sy, st, sty, st2, a0, b1
+logical :: do_plot
+integer :: n, l, nf, step, nseg, j, t, sidx
+character(len=16) :: wname, dname
+character(len=96) :: ttl
+
+n = size(x)
+if (n < 2) then
+   print *, "Error: welchspec() needs size(x) >= 2"
+   allocate (s(0))
+   return
+end if
+
+if (present(seglen)) then
+   l = seglen
+else
+   l = min(256, n)
+end if
+l = max(2, min(l, n))
+
+if (present(overlap)) then
+   ov = overlap
+else
+   ov = 0.5_dp
+end if
+if (ov < 0.0_dp .or. ov >= 1.0_dp) then
+   print *, "Error: welchspec() overlap must be in [0, 1)"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+
+wname = "hann"
+if (present(window)) wname = lower_ascii(trim(adjustl(window)))
+select case (trim(wname))
+case ("hann", "hanning", "hamm", "hamming", "bartlett", "rect", "rectangle")
+   continue
+case default
+   print *, "Error: welchspec() window must be hann/hamming/bartlett/rect"
+   allocate (s(0))
+   return
+end select
+
+dname = "mean"
+if (present(detrend)) dname = lower_ascii(trim(adjustl(detrend)))
+select case (trim(dname))
+case ("none", "mean", "linear")
+   continue
+case default
+   print *, "Error: welchspec() detrend must be none/mean/linear"
+   allocate (s(0))
+   return
+end select
+
+step = max(1, int(real(l, dp)*(1.0_dp - ov)))
+nseg = 1 + max(0, (n - l)/step)
+
+allocate (wv(l))
+do t = 1, l
+   select case (trim(wname))
+   case ("hann", "hanning")
+      if (l == 1) then
+         wv(t) = 1.0_dp
+      else
+         wv(t) = 0.5_dp*(1.0_dp - cos(2.0_dp*pi*real(t - 1, dp)/real(l - 1, dp)))
+      end if
+   case ("hamm", "hamming")
+      if (l == 1) then
+         wv(t) = 1.0_dp
+      else
+         wv(t) = 0.54_dp - 0.46_dp*cos(2.0_dp*pi*real(t - 1, dp)/real(l - 1, dp))
+      end if
+   case ("bartlett")
+      if (l == 1) then
+         wv(t) = 1.0_dp
+      else
+         wv(t) = 1.0_dp - abs((2.0_dp*real(t - 1, dp)/real(l - 1, dp)) - 1.0_dp)
+      end if
+   case default
+      wv(t) = 1.0_dp
+   end select
+end do
+u = sum(wv*wv)/real(l, dp)
+if (u <= tiny(1.0_dp)) u = tiny(1.0_dp)
+
+allocate (s(nf), sone(nf), seg(l), freq(nf))
+s = 0.0_dp
+
+do sidx = 1, n - l + 1, step
+   seg = x(sidx:sidx + l - 1)
+   select case (trim(dname))
+   case ("mean")
+      seg = seg - mean(seg)
+   case ("linear")
+      sy = sum(seg)
+      st = 0.5_dp*real(l, dp)*real(l + 1, dp)
+      st2 = real(l, dp)*real(l + 1, dp)*real(2*l + 1, dp)/6.0_dp
+      sty = 0.0_dp
+      do t = 1, l
+         sty = sty + real(t, dp)*seg(t)
+      end do
+      sw = real(l, dp)*st2 - st*st
+      if (abs(sw) <= tiny(1.0_dp)) then
+         b1 = 0.0_dp
+      else
+         b1 = (real(l, dp)*sty - st*sy)/sw
+      end if
+      a0 = (sy - b1*st)/real(l, dp)
+      do t = 1, l
+         seg(t) = seg(t) - (a0 + b1*real(t, dp))
+      end do
+   case default
+      continue
+   end select
+
+   seg = seg*wv
+   do j = 1, nf
+      if (nf == 1) then
+         w = 0.0_dp
+         freq(j) = 0.0_dp
+      else
+         w = pi*real(j - 1, dp)/real(nf - 1, dp)
+         freq(j) = w/(2.0_dp*pi)
+      end if
+      re_part = 0.0_dp
+      im_part = 0.0_dp
+      do t = 1, l
+         re_part = re_part + seg(t)*cos(w*real(t - 1, dp))
+         im_part = im_part - seg(t)*sin(w*real(t - 1, dp))
+      end do
+      sone(j) = (re_part*re_part + im_part*im_part)/(2.0_dp*pi*real(l, dp)*u)
+   end do
+   s = s + sone
+end do
+
+s = s/real(nseg, dp)
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   write (ttl, "(a,i0,a,f4.2,a)") "welchspec(seglen=", l, ",overlap=", ov, ")"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function welchspec_scalar
+
+function welchspec_vec(x, seglen, overlap, window, nfreq, detrend, plot) result(s)
+! Welch spectrum for multiple segment lengths (plots all curves if plot=.true.).
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: seglen(:)
+real(kind=dp), intent(in), optional :: overlap
+character(len=*), intent(in), optional :: window, detrend
+integer, intent(in), optional :: nfreq
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=16), allocatable :: legends(:)
+logical :: do_plot
+integer :: ns, j, nf
+
+ns = size(seglen)
+if (ns < 1) then
+   print *, "Error: welchspec() seglen vector must be non-empty"
+   allocate (s(0))
+   return
+end if
+if (any(seglen < 2)) then
+   print *, "Error: welchspec() all seglen values must be >= 2"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+
+s = welchspec_scalar(x, seglen=seglen(ns), overlap=overlap, window=window, nfreq=nf, &
+                     detrend=detrend, plot=.false.)
+if (size(s) <= 0) return
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), ns), legends(ns), freq(size(s)))
+   do j = 1, ns
+      sj = welchspec_scalar(x, seglen=seglen(j), overlap=overlap, window=window, nfreq=size(s), &
+                            detrend=detrend, plot=.false.)
+      if (size(sj) == size(s)) then
+         y2(:, j) = sj
+      else
+         y2(:, j) = -3.0_dp
+      end if
+      write (legends(j), "(a,i0)") "L=", max(2, seglen(j))
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   call gplot(freq, y2, title="welchspec", xlabel="frequency", legend_labels=legends)
+end if
+end function welchspec_vec
+
+function pgramspec_scalar(x, nfreq, demean, taper, smooth, plot) result(s)
+! Nonparametric periodogram spectrum estimate with optional taper/smoothing.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: nfreq, smooth
+logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in), optional :: taper
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y(:), sraw(:), freq(:)
+real(kind=dp) :: w, re_part, im_part, taper_frac, ww
+logical :: do_demean, do_plot
+integer :: n, nf, sm, j, t, m, k1, k2
+character(len=80) :: ttl
+
+n = size(x)
+if (n < 2) then
+   print *, "Error: pgramspec() needs size(x) >= 2"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(smooth)) then
+   sm = max(1, smooth)
+else
+   sm = 1
+end if
+if (mod(sm, 2) == 0) sm = sm + 1
+
+do_demean = .true.
+if (present(demean)) do_demean = demean
+do_plot = .true.
+if (present(plot)) do_plot = plot
+
+taper_frac = 0.0_dp
+if (present(taper)) taper_frac = taper
+if (taper_frac < 0.0_dp .or. taper_frac > 0.5_dp) then
+   print *, "Error: pgramspec() taper must be in [0, 0.5]"
+   allocate (s(0))
+   return
+end if
+
+allocate (y(n))
+y = x
+if (do_demean) y = y - mean(y)
+
+m = int(taper_frac*real(n, dp))
+if (m > 0) then
+   do t = 1, m
+      ww = 0.5_dp*(1.0_dp - cos(pi*real(t, dp)/real(m + 1, dp)))
+      y(t) = ww*y(t)
+      y(n - t + 1) = ww*y(n - t + 1)
+   end do
+end if
+
+allocate (sraw(nf), s(nf), freq(nf))
+do j = 1, nf
+   if (nf == 1) then
+      w = 0.0_dp
+      freq(j) = 0.0_dp
+   else
+      w = pi*real(j - 1, dp)/real(nf - 1, dp)
+      freq(j) = w/(2.0_dp*pi)
+   end if
+   re_part = 0.0_dp
+   im_part = 0.0_dp
+   do t = 1, n
+      re_part = re_part + y(t)*cos(w*real(t - 1, dp))
+      im_part = im_part - y(t)*sin(w*real(t - 1, dp))
+   end do
+   sraw(j) = (re_part*re_part + im_part*im_part)/(2.0_dp*pi*real(n, dp))
+end do
+
+if (sm <= 1) then
+   s = sraw
+else
+   do j = 1, nf
+      k1 = max(1, j - sm/2)
+      k2 = min(nf, j + sm/2)
+      s(j) = sum(sraw(k1:k2))/real(k2 - k1 + 1, dp)
+   end do
+end if
+
+if (do_plot) then
+   write (ttl, "(a)") "pgramspec"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function pgramspec_scalar
+
+function pgramspec_vec(x, nfreq, demean, taper, smooth, plot) result(s)
+! Periodogram spectrum with multiple smoothing widths; plots all curves.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: nfreq
+logical, intent(in), optional :: demean, plot
+real(kind=dp), intent(in), optional :: taper
+integer, intent(in) :: smooth(:)
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=16), allocatable :: legends(:)
+logical :: do_plot, do_demean
+integer :: nf, ns, j, sm_last
+real(kind=dp) :: taper_r
+
+if (size(smooth) < 1) then
+   print *, "Error: pgramspec() smooth vector must be non-empty"
+   allocate (s(0))
+   return
+end if
+ns = size(smooth)
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+
+do_demean = .true.
+if (present(demean)) do_demean = demean
+taper_r = 0.0_dp
+if (present(taper)) taper_r = taper
+
+sm_last = smooth(ns)
+s = pgramspec_scalar(x, nfreq=nf, demean=do_demean, taper=taper_r, smooth=sm_last, plot=.false.)
+if (size(s) <= 0) return
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), ns), legends(ns), freq(size(s)))
+   do j = 1, ns
+      sj = pgramspec_scalar(x, nfreq=size(s), demean=do_demean, taper=taper_r, smooth=smooth(j), plot=.false.)
+      if (size(sj) == size(s)) then
+         y2(:, j) = sj
+      else
+         y2(:, j) = -3.0_dp
+      end if
+      write (legends(j), "(a,i0)") "sm=", max(1, smooth(j))
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   call gplot(freq, y2, title="pgramspec", xlabel="frequency", legend_labels=legends)
+end if
+end function pgramspec_vec
+
+function acfspec_scalar(x, m, nfreq, window, plot) result(s)
+! Spectrum estimate via tapered autocovariance up to lag m.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: m
+integer, intent(in), optional :: nfreq
+character(len=*), intent(in), optional :: window
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: gamma(:), freq(:)
+real(kind=dp) :: mu, w, sumk, u
+logical :: do_plot
+integer :: n, nf, k, j, mk
+character(len=16) :: win
+character(len=80) :: ttl
+
+n = size(x)
+if (n < 2) then
+   print *, "Error: acfspec() needs size(x) >= 2"
+   allocate (s(0))
+   return
+end if
+if (m < 1) then
+   print *, "Error: acfspec() requires m >= 1"
+   allocate (s(0))
+   return
+end if
+mk = min(m, n - 1)
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+win = "bartlett"
+if (present(window)) win = adjustl(window)
+win = lowercase(win)
+
+allocate (gamma(0:mk))
+mu = sum(x)/real(n, dp)
+do k = 0, mk
+   sumk = 0.0_dp
+   do j = 1, n - k
+      sumk = sumk + (x(j) - mu)*(x(j + k) - mu)
+   end do
+   gamma(k) = sumk/real(n, dp)
+end do
+
+allocate (s(nf), freq(nf))
+do j = 1, nf
+   freq(j) = 0.5_dp*real(j - 1, dp)/real(nf - 1, dp)
+end do
+
+do j = 1, nf
+   s(j) = gamma(0)
+   do k = 1, mk
+      u = real(k, dp)/real(mk, dp)
+      select case (trim(win))
+      case ("bartlett")
+         w = 1.0_dp - real(k, dp)/real(mk + 1, dp)
+      case ("parzen")
+         if (u <= 0.5_dp) then
+            w = 1.0_dp - 6.0_dp*u*u + 6.0_dp*u*u*u
+         else if (u <= 1.0_dp) then
+            w = 2.0_dp*(1.0_dp - u)**3
+         else
+            w = 0.0_dp
+         end if
+      case ("none")
+         w = 1.0_dp
+      case default
+         print *, "Error: acfspec() unknown window: ", trim(win)
+         allocate (s(0))
+         return
+      end select
+      s(j) = s(j) + 2.0_dp*w*gamma(k)*cos(2.0_dp*pi*freq(j)*real(k, dp))
+   end do
+end do
+
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   write (ttl, "(a,i0,a,a)") "acfspec(m=", mk, ", window=", trim(win)//")"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function acfspec_scalar
+
+function acfspec_vec(x, m, nfreq, window, plot) result(s)
+! Spectrum estimate for multiple m values; plots all curves.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: m(:)
+integer, intent(in), optional :: nfreq
+character(len=*), intent(in), optional :: window
+logical, intent(in), optional :: plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=16), allocatable :: legends(:)
+logical :: do_plot
+integer :: nf, j
+
+if (size(m) < 1) then
+   print *, "Error: acfspec() m vector must be non-empty"
+   allocate (s(0))
+   return
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+
+s = acfspec_scalar(x, m(size(m)), nfreq=nf, window=window, plot=.false.)
+if (size(s) <= 0) return
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), size(m)), legends(size(m)), freq(size(s)))
+   do j = 1, size(m)
+      sj = acfspec_scalar(x, m(j), nfreq=size(s), window=window, plot=.false.)
+      if (size(sj) == size(s)) then
+         y2(:, j) = sj
+      else
+         y2(:, j) = -3.0_dp
+      end if
+      write (legends(j), "(a,i0)") "m=", m(j)
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   call gplot(freq, y2, title="acfspec", xlabel="frequency", legend_labels=legends)
+end if
+end function acfspec_vec
+
+function mtspec_scalar(x, nfreq, nw, k, demean, plot) result(s)
+! Multitaper spectrum using DPSS tapers from the exact concentration matrix.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: nfreq, k
+real(kind=dp), intent(in), optional :: nw
+logical, intent(in), optional :: demean, plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y(:), tapers(:,:), evals(:), freq(:)
+real(kind=dp) :: nw_i, w, re_part, im_part, tmpn
+logical :: do_demean, do_plot, ok
+integer :: n, nf, k_i, j, t, kk
+character(len=80) :: ttl
+
+n = size(x)
+if (n < 2) then
+   print *, "Error: mtspec() needs size(x) >= 2"
+   allocate (s(0))
+   return
+end if
+if (n > 1200) then
+   print *, "Error: mtspec() currently supports size(x) <= 1200"
+   allocate (s(0))
+   return
+end if
+
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(nw)) then
+   nw_i = nw
+else
+   nw_i = 3.5_dp
+end if
+if (nw_i <= 0.0_dp) then
+   print *, "Error: mtspec() nw must be > 0"
+   allocate (s(0))
+   return
+end if
+
+if (present(k)) then
+   k_i = k
+else
+   k_i = max(1, nint(2.0_dp*nw_i - 1.0_dp))
+end if
+if (k_i < 1) then
+   print *, "Error: mtspec() k must be >= 1"
+   allocate (s(0))
+   return
+end if
+k_i = min(k_i, n)
+
+do_demean = .true.
+if (present(demean)) do_demean = demean
+do_plot = .true.
+if (present(plot)) do_plot = plot
+
+allocate (tapers(n, k_i), evals(k_i))
+call dpss_tapers(n, nw_i, k_i, tapers, evals, ok)
+if (.not. ok) then
+   print *, "Error: mtspec() DPSS generation failed"
+   s = -3.0_dp
+   return
+end if
+
+allocate (y(n))
+y = x
+if (do_demean) y = y - mean(y)
+
+allocate (s(nf), freq(nf))
+s = 0.0_dp
+do kk = 1, k_i
+   do j = 1, nf
+      if (nf == 1) then
+         w = 0.0_dp
+         freq(j) = 0.0_dp
+      else
+         w = pi*real(j - 1, dp)/real(nf - 1, dp)
+         freq(j) = w/(2.0_dp*pi)
+      end if
+      re_part = 0.0_dp
+      im_part = 0.0_dp
+      do t = 1, n
+         tmpn = y(t)*tapers(t, kk)
+         re_part = re_part + tmpn*cos(w*real(t - 1, dp))
+         im_part = im_part - tmpn*sin(w*real(t - 1, dp))
+      end do
+      s(j) = s(j) + (re_part*re_part + im_part*im_part)/(2.0_dp*pi)
+   end do
+end do
+s = s/real(k_i, dp)
+
+if (do_plot) then
+   write (ttl, "(a,f4.1,a,i0,a)") "mtspec(nw=", nw_i, ",k=", k_i, ")"
+   call gplot(freq, s, title=trim(ttl), xlabel="frequency")
+end if
+end function mtspec_scalar
+
+function mtspec_nwvec(x, nfreq, nw, k, demean, plot) result(s)
+! Multitaper spectrum for multiple nw values (fixed k).
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:), nw(:)
+integer, intent(in), optional :: nfreq, k
+logical, intent(in), optional :: demean, plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=20), allocatable :: legends(:)
+integer :: nf, kv, j
+logical :: do_plot
+
+if (size(nw) < 1) then
+   print *, "Error: mtspec() nw vector must be non-empty"
+   allocate (s(0))
+   return
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(k)) then
+   kv = k
+else
+   kv = max(1, nint(2.0_dp*nw(size(nw)) - 1.0_dp))
+end if
+
+s = mtspec_scalar(x, nfreq=nf, nw=nw(size(nw)), k=kv, demean=demean, plot=.false.)
+if (size(s) <= 0) return
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), size(nw)), legends(size(nw)), freq(size(s)))
+   do j = 1, size(nw)
+      sj = mtspec_scalar(x, nfreq=size(s), nw=nw(j), k=kv, demean=demean, plot=.false.)
+      if (size(sj) == size(s)) then
+         y2(:, j) = sj
+      else
+         y2(:, j) = -3.0_dp
+      end if
+      write (legends(j), "(a,f5.2,a,i0)") "nw=", nw(j), ",k=", kv
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   call gplot(freq, y2, title="mtspec", xlabel="frequency", legend_labels=legends)
+end if
+end function mtspec_nwvec
+
+function mtspec_kvec(x, nfreq, nw, k, demean, plot) result(s)
+! Multitaper spectrum for multiple k values (fixed nw).
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k(:)
+integer, intent(in), optional :: nfreq
+real(kind=dp), intent(in), optional :: nw
+logical, intent(in), optional :: demean, plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=20), allocatable :: legends(:)
+integer :: nf, nwk, j
+real(kind=dp) :: nwv
+logical :: do_plot
+character(len=40) :: ttl
+
+if (size(k) < 1) then
+   print *, "Error: mtspec() k vector must be non-empty"
+   allocate (s(0))
+   return
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+if (present(nw)) then
+   nwv = nw
+else
+   nwv = 3.5_dp
+end if
+nwk = k(size(k))
+
+s = mtspec_scalar(x, nfreq=nf, nw=nwv, k=nwk, demean=demean, plot=.false.)
+if (size(s) <= 0) return
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   allocate (y2(size(s), size(k)), legends(size(k)), freq(size(s)))
+   do j = 1, size(k)
+      sj = mtspec_scalar(x, nfreq=size(s), nw=nwv, k=k(j), demean=demean, plot=.false.)
+      if (size(sj) == size(s)) then
+         y2(:, j) = sj
+      else
+         y2(:, j) = -3.0_dp
+      end if
+      write (legends(j), "(a,i0)") "k=", k(j)
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   write (ttl, "(a,f5.2,a)") "mtspec(nw=", nwv, ")"
+   call gplot(freq, y2, title=trim(ttl), xlabel="frequency", legend_labels=legends)
+end if
+end function mtspec_kvec
+
+function mtspec_nwkvec(x, nfreq, nw, k, demean, plot) result(s)
+! Multitaper spectrum for all (nw,k) combinations.
+use plot_mod, only: gplot => plot
+real(kind=dp), intent(in) :: x(:), nw(:)
+integer, intent(in) :: k(:)
+integer, intent(in), optional :: nfreq
+logical, intent(in), optional :: demean, plot
+real(kind=dp), allocatable :: s(:)
+real(kind=dp), allocatable :: y2(:,:), sj(:), freq(:)
+character(len=24), allocatable :: legends(:)
+integer :: nf, jn, jk, idx, ncurves, j
+logical :: do_plot
+
+if (size(nw) < 1 .or. size(k) < 1) then
+   print *, "Error: mtspec() nw and k vectors must be non-empty"
+   allocate (s(0))
+   return
+end if
+if (present(nfreq)) then
+   nf = max(16, nfreq)
+else
+   nf = 256
+end if
+
+s = mtspec_scalar(x, nfreq=nf, nw=nw(size(nw)), k=k(size(k)), demean=demean, plot=.false.)
+if (size(s) <= 0) return
+do_plot = .true.
+if (present(plot)) do_plot = plot
+if (do_plot) then
+   ncurves = size(nw)*size(k)
+   allocate (y2(size(s), ncurves), legends(ncurves), freq(size(s)))
+   idx = 0
+   do jn = 1, size(nw)
+      do jk = 1, size(k)
+         idx = idx + 1
+         sj = mtspec_scalar(x, nfreq=size(s), nw=nw(jn), k=k(jk), demean=demean, plot=.false.)
+         if (size(sj) == size(s)) then
+            y2(:, idx) = sj
+         else
+            y2(:, idx) = -3.0_dp
+         end if
+         write (legends(idx), "(a,f5.2,a,i0)") "nw=", nw(jn), ",k=", k(jk)
+      end do
+   end do
+   if (size(s) == 1) then
+      freq(1) = 0.0_dp
+   else
+      do j = 1, size(s)
+         freq(j) = 0.5_dp*real(j - 1, dp)/real(size(s) - 1, dp)
+      end do
+   end if
+   call gplot(freq, y2, title="mtspec", xlabel="frequency", legend_labels=legends)
+end if
+end function mtspec_nwkvec
+
+subroutine dpss_tapers(n, nw, k, tapers, evals, ok)
+! Compute first k DPSS tapers by eigendecomposition of concentration matrix.
+integer, intent(in) :: n, k
+real(kind=dp), intent(in) :: nw
+real(kind=dp), intent(out) :: tapers(n, k), evals(k)
+logical, intent(out) :: ok
+real(kind=dp), allocatable :: cmat(:,:), evec(:,:), all_eval(:), col(:)
+logical, allocatable :: used(:)
+real(kind=dp) :: w, x, best
+integer :: i, j, kk, best_i
+
+ok = .false.
+if (n < 1 .or. k < 1) return
+allocate (cmat(n, n), evec(n, n), all_eval(n), used(n), col(n))
+w = nw/real(n, dp)
+do i = 1, n
+   do j = 1, n
+      if (i == j) then
+         cmat(i, j) = 2.0_dp*w
+      else
+         x = 2.0_dp*pi*w*real(i - j, dp)
+         cmat(i, j) = sin(x)/(pi*real(i - j, dp))
+      end if
+   end do
+end do
+
+call symmetric_jacobi_eig(cmat, all_eval, evec, ok)
+if (.not. ok) return
+
+used = .false.
+do kk = 1, k
+   best = -huge(1.0_dp)
+   best_i = 1
+   do i = 1, n
+      if (.not. used(i)) then
+         if (all_eval(i) > best) then
+            best = all_eval(i)
+            best_i = i
+         end if
+      end if
+   end do
+   used(best_i) = .true.
+   col = evec(:, best_i)
+   x = sqrt(sum(col**2))
+   if (x > 0.0_dp) col = col/x
+   tapers(:, kk) = col
+   evals(kk) = all_eval(best_i)
+end do
+ok = .true.
+end subroutine dpss_tapers
+
+subroutine symmetric_jacobi_eig(a_in, evals, evecs, ok)
+! Jacobi eigensolver for real symmetric matrix.
+real(kind=dp), intent(in) :: a_in(:,:)
+real(kind=dp), intent(out) :: evals(:), evecs(:,:)
+logical, intent(out) :: ok
+real(kind=dp), allocatable :: a(:,:)
+real(kind=dp) :: app, aqq, apq, theta, tt, c, ss, tau, g, h, offmax
+integer :: n, p, q, i, j, it, max_iter
+
+n = size(a_in, 1)
+ok = .false.
+if (size(a_in, 2) /= n) return
+if (size(evals) /= n) return
+if (size(evecs, 1) /= n .or. size(evecs, 2) /= n) return
+
+allocate (a(n, n))
+a = a_in
+evecs = 0.0_dp
+do i = 1, n
+   evecs(i, i) = 1.0_dp
+end do
+
+max_iter = max(50, 20*n*n)
+do it = 1, max_iter
+   offmax = 0.0_dp
+   p = 1; q = 1
+   do i = 1, n - 1
+      do j = i + 1, n
+         if (abs(a(i, j)) > offmax) then
+            offmax = abs(a(i, j))
+            p = i; q = j
+         end if
+      end do
+   end do
+   if (offmax < 1.0e-12_dp) exit
+
+   app = a(p, p)
+   aqq = a(q, q)
+   apq = a(p, q)
+   if (apq == 0.0_dp) cycle
+   theta = (aqq - app)/(2.0_dp*apq)
+   tt = sign(1.0_dp, theta)/(abs(theta) + sqrt(1.0_dp + theta*theta))
+   c = 1.0_dp/sqrt(1.0_dp + tt*tt)
+   ss = tt*c
+   tau = ss/(1.0_dp + c)
+
+   a(p, q) = 0.0_dp
+   a(q, p) = 0.0_dp
+   a(p, p) = app - tt*apq
+   a(q, q) = aqq + tt*apq
+   do j = 1, n
+      if (j /= p .and. j /= q) then
+         g = a(j, p)
+         h = a(j, q)
+         a(j, p) = g - ss*(h + tau*g)
+         a(p, j) = a(j, p)
+         a(j, q) = h + ss*(g - tau*h)
+         a(q, j) = a(j, q)
+      end if
+   end do
+   do j = 1, n
+      g = evecs(j, p)
+      h = evecs(j, q)
+      evecs(j, p) = g - ss*(h + tau*g)
+      evecs(j, q) = h + ss*(g - tau*h)
+   end do
+end do
+
+do i = 1, n
+   evals(i) = a(i, i)
+end do
+ok = .true.
+end subroutine symmetric_jacobi_eig
 
 pure function pacf(x, k) result(p)
 ! return the first k partial autocorrelations (lags 1..k) of x
@@ -528,6 +2143,116 @@ if (.not. ok) phi = -3.0_dp
 deallocate (y, xmat)
 end function arcoef
 
+function arcoef_yw(x, k) result(phi)
+! Fit AR(k) coefficients by Yule-Walker equations.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k
+real(kind=dp), allocatable :: phi(:)
+real(kind=dp), allocatable :: r(:), rmat(:,:), rhs(:)
+real(kind=dp) :: xm
+logical :: ok
+integer :: n, i, j
+
+n = size(x)
+if (k < 1 .or. n < 2 .or. k > n - 1) then
+   allocate (phi(0))
+   return
+end if
+
+allocate (phi(k), r(0:k), rmat(k, k), rhs(k))
+xm = mean(x)
+do i = 0, k
+   r(i) = sum((x(1:n - i) - xm)*(x(1 + i:n) - xm))/real(max(1, n), dp)
+end do
+if (r(0) <= tiny(1.0_dp)) then
+   phi = -3.0_dp
+   return
+end if
+do i = 1, k
+   rhs(i) = r(i)
+   do j = 1, k
+      rmat(i, j) = r(abs(i - j))
+   end do
+end do
+call solve_linear(rmat, rhs, phi, ok)
+if (.not. ok) phi = -3.0_dp
+end function arcoef_yw
+
+function arcoef_burg(x, k) result(phi)
+! Fit AR(k) coefficients by Burg's algorithm.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k
+real(kind=dp), allocatable :: phi(:)
+real(kind=dp), allocatable :: ef(:), eb(:), a(:), a_old(:), y(:)
+real(kind=dp) :: num, den, km
+integer :: n, m, t
+
+n = size(x)
+if (k < 1 .or. n < 2 .or. k > n - 1) then
+   allocate (phi(0))
+   return
+end if
+
+allocate (phi(k), y(n))
+y = x - mean(x)
+allocate (ef(n), eb(n), a(k), a_old(k))
+ef = y
+eb = y
+a = 0.0_dp
+a_old = 0.0_dp
+
+do m = 1, k
+   num = 0.0_dp
+   den = 0.0_dp
+   do t = m + 1, n
+      num = num + ef(t)*eb(t - 1)
+      den = den + ef(t)*ef(t) + eb(t - 1)*eb(t - 1)
+   end do
+   if (den <= tiny(1.0_dp)) then
+      phi = -3.0_dp
+      return
+   end if
+   km = -2.0_dp*num/den
+
+   a_old = a
+   do t = 1, m - 1
+      a(t) = a_old(t) + km*a_old(m - t)
+   end do
+   a(m) = km
+
+   do t = n, m + 1, -1
+      num = ef(t)
+      ef(t) = ef(t) + km*eb(t - 1)
+      eb(t) = eb(t - 1) + km*num
+   end do
+end do
+
+do t = 1, k
+   phi(t) = -a(t)
+end do
+end function arcoef_burg
+
+function arcoef_method(x, k, method) result(phi)
+! Dispatch AR coefficient estimation by method.
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in) :: k
+character(len=*), intent(in) :: method
+real(kind=dp), allocatable :: phi(:)
+character(len=16) :: m
+
+m = lower_ascii(trim(adjustl(method)))
+select case (trim(m))
+case ("ls")
+   phi = arcoef(x, k)
+case ("yw")
+   phi = arcoef_yw(x, k)
+case ("burg")
+   phi = arcoef_burg(x, k)
+case default
+   allocate (phi(0))
+end select
+end function arcoef_method
+
 subroutine arfimafit(x, p, q, niter)
 ! fit ARFIMA(p,d,q) by approximate Whittle likelihood
 real(kind=dp), intent(in) :: x(:)
@@ -714,10 +2439,11 @@ contains
    end function loglik
 end subroutine arfimafit
 
-function arsim(n, phi) result(x)
+function arsim(n, phi, noise) result(x)
 ! simulate n observations from an AR(p) with coefficients phi(:)
 integer, intent(in) :: n
 real(kind=dp), intent(in) :: phi(:)
+real(kind=dp), intent(in), optional :: noise(:)
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: p, t, j, m
@@ -726,8 +2452,19 @@ if (n < 1 .or. p < 1) then
    allocate (x(0))
    return
 end if
+if (present(noise)) then
+   if (size(noise) < n) then
+      print *, "Error: arsim() noise must have size >= n"
+      allocate (x(0))
+      return
+   end if
+end if
 allocate (x(n))
-eps = random_normal(n)
+if (present(noise)) then
+   eps = noise(1:n)
+else
+   eps = random_normal(n)
+end if
 do t = 1, n
    x(t) = eps(t)
    m = min(p, t - 1)
@@ -739,10 +2476,11 @@ do t = 1, n
 end do
 end function arsim
 
-function masim(n, theta) result(x)
+function masim(n, theta, noise) result(x)
 ! simulate n observations from an MA(q) with coefficients theta(:)
 integer, intent(in) :: n
 real(kind=dp), intent(in) :: theta(:)
+real(kind=dp), intent(in), optional :: noise(:)
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: q, t, j, m
@@ -751,8 +2489,19 @@ if (n < 1 .or. q < 1) then
    allocate (x(0))
    return
 end if
+if (present(noise)) then
+   if (size(noise) < n) then
+      print *, "Error: masim() noise must have size >= n"
+      allocate (x(0))
+      return
+   end if
+end if
 allocate (x(n))
-eps = random_normal(n)
+if (present(noise)) then
+   eps = noise(1:n)
+else
+   eps = random_normal(n)
+end if
 do t = 1, n
    x(t) = eps(t)
    m = min(q, t - 1)
@@ -764,11 +2513,12 @@ do t = 1, n
 end do
 end function masim
 
-function armasim(n, phi, theta) result(x)
+function armasim(n, phi, theta, noise) result(x)
 ! simulate n observations from an ARMA(p,q)
 integer, intent(in) :: n
 real(kind=dp), intent(in) :: phi(:)
 real(kind=dp), intent(in) :: theta(:)
+real(kind=dp), intent(in), optional :: noise(:)
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: eps(:)
 integer :: p, q, t, j, m
@@ -779,8 +2529,19 @@ if (n < 1) then
    allocate (x(0))
    return
 end if
+if (present(noise)) then
+   if (size(noise) < n) then
+      print *, "Error: armasim() noise must have size >= n"
+      allocate (x(0))
+      return
+   end if
+end if
 allocate (x(n))
-eps = random_normal(n)
+if (present(noise)) then
+   eps = noise(1:n)
+else
+   eps = random_normal(n)
+end if
 do t = 1, n
    x(t) = eps(t)
    m = min(p, t - 1)
@@ -798,7 +2559,7 @@ do t = 1, n
 end do
 end function armasim
 
-function arfimasim(n, d, phi, theta, burn, m) result(x)
+function arfimasim(n, d, phi, theta, burn, m, noise) result(x)
 ! simulate n observations from ARFIMA(p,d,q)
 integer, intent(in) :: n
 real(kind=dp), intent(in) :: d
@@ -806,6 +2567,7 @@ real(kind=dp), intent(in), optional :: phi(:)
 real(kind=dp), intent(in), optional :: theta(:)
 integer, intent(in), optional :: burn
 integer, intent(in), optional :: m
+real(kind=dp), intent(in), optional :: noise(:)
 real(kind=dp), allocatable :: x(:)
 real(kind=dp), allocatable :: y(:), eps(:), xfd(:)
 integer :: p, q, t, j, ar_m, ma_m, burn_eff, n_all, m_eff
@@ -830,8 +2592,19 @@ else
    burn_eff = max(100, 10 * max(1, p + q))
 end if
 n_all = n + burn_eff
+if (present(noise)) then
+   if (size(noise) < n_all) then
+      print *, "Error: arfimasim() noise must have size >= n + burn"
+      allocate (x(0))
+      return
+   end if
+end if
 allocate (y(n_all), eps(n_all))
-eps = random_normal(n_all)
+if (present(noise)) then
+   eps = noise(1:n_all)
+else
+   eps = random_normal(n_all)
+end if
 y = 0.0_dp
 do t = 1, n_all
    y(t) = eps(t)
@@ -871,6 +2644,34 @@ else
    v(4) = 6.0_dp
 end if
 end function mssk_exp
+
+pure function mssk_unif(a, b) result(v)
+! Mean, standard deviation, skew and excess kurtosis of uniform(a,b).
+real(kind=dp), intent(in) :: a, b
+real(kind=dp) :: v(4)
+if (b <= a) then
+   v = nanv()
+else
+   v(1) = 0.5_dp * (a + b)
+   v(2) = (b - a) / sqrt(12.0_dp)
+   v(3) = 0.0_dp
+   v(4) = -6.0_dp / 5.0_dp
+end if
+end function mssk_unif
+
+pure function mssk_norm(loc, scale) result(v)
+! Mean, standard deviation, skew and excess kurtosis of normal(loc, scale).
+real(kind=dp), intent(in) :: loc, scale
+real(kind=dp) :: v(4)
+if (scale <= 0.0_dp) then
+   v = nanv()
+else
+   v(1) = loc
+   v(2) = scale
+   v(3) = 0.0_dp
+   v(4) = 0.0_dp
+end if
+end function mssk_norm
 
 pure function mssk_gamma(shape, scale) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of gamma distribution.
@@ -1136,6 +2937,70 @@ else
    v(4) = 3.0_dp
 end if
 end function mssk_laplace
+
+pure function mssk_cauchy(loc, scale) result(v)
+! Cauchy distribution has undefined mean, sd, skewness and kurtosis.
+real(kind=dp), intent(in) :: loc, scale
+real(kind=dp) :: v(4)
+v = nanv() + 0.0_dp*loc + 0.0_dp*scale
+end function mssk_cauchy
+
+pure function mssk_ged(loc, scale, beta) result(v)
+! Mean, standard deviation, skew and excess kurtosis of GED distribution.
+real(kind=dp), intent(in) :: loc, scale, beta
+real(kind=dp) :: v(4)
+real(kind=dp) :: g1, g3, g5
+if (scale <= 0.0_dp .or. beta <= 0.0_dp) then
+   v = nanv()
+else
+   g1 = exp(log_gamma(1.0_dp / beta))
+   g3 = exp(log_gamma(3.0_dp / beta))
+   g5 = exp(log_gamma(5.0_dp / beta))
+   v(1) = loc
+   v(2) = scale * sqrt(g3 / g1)
+   v(3) = 0.0_dp
+   v(4) = g5 * g1 / (g3 * g3) - 3.0_dp
+end if
+end function mssk_ged
+
+pure function mssk_hyperb(loc, scale, alpha) result(v)
+! Mean, standard deviation, skew and excess kurtosis of symmetric hyperbolic.
+real(kind=dp), intent(in) :: loc, scale, alpha
+real(kind=dp) :: v(4)
+integer, parameter :: ngrid = 4096
+real(kind=dp) :: tmax, h, s2, s4, t, f
+integer :: i
+if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
+   v = nanv()
+   return
+end if
+v(1) = loc
+v(3) = 0.0_dp
+tmax = max(10.0_dp * scale, 10.0_dp / alpha)
+h = tmax / real(ngrid - 1, dp)
+s2 = 0.0_dp
+s4 = 0.0_dp
+do i = 1, ngrid
+   t = h * real(i - 1, dp)
+   f = hyperb_pdf_scalar(loc + t, loc, scale, alpha)
+   if (i == 1 .or. i == ngrid) then
+      s2 = s2 + 0.5_dp * t * t * f
+      s4 = s4 + 0.5_dp * t**4 * f
+   else
+      s2 = s2 + t * t * f
+      s4 = s4 + t**4 * f
+   end if
+end do
+s2 = 2.0_dp * s2 * h
+s4 = 2.0_dp * s4 * h
+if (s2 <= 0.0_dp) then
+   v(2) = nanv()
+   v(4) = nanv()
+else
+   v(2) = sqrt(s2)
+   v(4) = s4 / (s2 * s2) - 3.0_dp
+end if
+end function mssk_hyperb
 
 pure function mssk(x) result(v)
 ! Mean, standard deviation, skew and excess kurtosis of data array.
@@ -1547,7 +3412,7 @@ if (k1 <= 0.0_dp) then
    y = nanv()
    return
 end if
-c = alpha / (2.0_dp * scale * k1)
+c = 1.0_dp / (2.0_dp * scale * k1)
 do i = 1, size(x)
    r = sqrt(scale * scale + (x(i) - loc)**2)
    y(i) = c * exp(-alpha * r)
@@ -1964,7 +3829,7 @@ if (k1 <= 0.0_dp) then
    y = nanv()
    return
 end if
-c = alpha / (2.0_dp * scale * k1)
+c = 1.0_dp / (2.0_dp * scale * k1)
 r = sqrt(scale * scale + (x - loc)**2)
 y = c * exp(-alpha * r)
 end function hyperb_pdf_scalar
@@ -2726,7 +4591,7 @@ do i = 1, n
       end if
       d = abs(x - loc)
       acc = exp(-alpha * (sqrt(scale * scale + d * d) - d)) / &
-            max(1.0_dp, scale * besselk1(alpha * scale))
+            max(1.0_dp, alpha * scale * besselk1(alpha * scale))
       call random_number(v)
       if (v <= acc) exit
    end do
@@ -2951,37 +4816,103 @@ pars(2) = sd0
 deallocate (lx)
 end function fit_lnorm
 
-function fit_t(x) result(pars)
+function fit_t(x, df, verbose) result(pars)
 ! MLE for location-scale Student t distribution.
 ! Returns [mu, sigma, df].
 real(kind=dp), intent(in) :: x(:)
+real(kind=dp), intent(in), optional :: df(:)
+logical, intent(in), optional :: verbose
 real(kind=dp) :: pars(3)
-real(kind=dp) :: kex, df0, sd0, mu0
-real(kind=dp) :: u0(3), ubest(3)
-real(kind=dp), allocatable :: z(:)
+real(kind=dp) :: kex, df0, sd0, mu0, best_ll, ll
+real(kind=dp) :: u0(3), ubest(3), u0fix(2), ubest_fix(2), best_u_fix(2), best_df
+real(kind=dp), allocatable :: z(:), cand_df(:), cand_mu(:), cand_sigma(:), cand_ll(:)
 real(kind=dp) :: tol
+integer :: j, best_j
+logical, allocatable :: cand_ok(:)
+character(len=1) :: mark
+logical :: do_verbose
 
 mu0 = mean(x)
 sd0 = sd(x)
 if (sd0 <= 0.0_dp) then
    pars = nanv(); return
 end if
-allocate (z(size(x)))
-z = (x - mu0) / sd0
-kex = kurtosis(z)
-if (kex > 0.0_dp) then
-   df0 = 6.0_dp / kex + 4.0_dp
-else
-   df0 = 30.0_dp
-end if
-df0 = max(df0, 2.01_dp)
-u0 = [0.0_dp, 0.0_dp, log(df0 - 2.0_dp)]
 tol = 1.0e-6_dp
-ubest = nelder_mead(loglik, u0, 0.2_dp, 600, tol)
-pars(1) = mu0 + sd0 * ubest(1)
-pars(2) = sd0 * exp(ubest(2))
-pars(3) = 2.0_dp + exp(ubest(3))
-deallocate (z)
+do_verbose = .false.
+if (present(verbose)) do_verbose = verbose
+if (present(df)) then
+   if (size(df) < 1) then
+      pars = nanv(); return
+   end if
+   if (do_verbose) allocate (cand_df(size(df)), cand_mu(size(df)), cand_sigma(size(df)), cand_ll(size(df)), cand_ok(size(df)))
+   best_ll = -huge(1.0_dp)
+   best_df = -1.0_dp
+   best_j = 0
+   best_u_fix = [0.0_dp, 0.0_dp]
+   u0fix = [0.0_dp, 0.0_dp]
+   do j = 1, size(df)
+      if (do_verbose) cand_ok(j) = .false.
+      if (df(j) <= 2.0_dp) cycle
+      df0 = df(j)
+      ubest_fix = nelder_mead(loglik_fixed, u0fix, 0.2_dp, 500, tol)
+      ll = loglik_fixed(ubest_fix)
+      if (do_verbose) then
+         cand_df(j) = df0
+         cand_mu(j) = mu0 + sd0*ubest_fix(1)
+         cand_sigma(j) = sd0*exp(ubest_fix(2))
+         cand_ll(j) = ll
+         cand_ok(j) = .true.
+      end if
+      if (ll > best_ll) then
+         best_ll = ll
+         best_df = df0
+         best_u_fix = ubest_fix
+         best_j = j
+      end if
+   end do
+   if (best_df <= 2.0_dp) then
+      if (do_verbose) deallocate (cand_df, cand_mu, cand_sigma, cand_ll, cand_ok)
+      pars = nanv(); return
+   end if
+   if (do_verbose) then
+      print *
+      print "(a)", "fit_t candidate fits"
+      print "(a2,a14,a14,a14,a14)", " ", "df", "mu", "sigma", "logLik"
+      do j = 1, size(df)
+         if (.not. cand_ok(j)) cycle
+         mark = " "
+         if (j == best_j) mark = "*"
+         print "(a2,4f14.6)", mark, cand_df(j), cand_mu(j), cand_sigma(j), cand_ll(j)
+      end do
+      deallocate (cand_df, cand_mu, cand_sigma, cand_ll, cand_ok)
+   end if
+   pars(1) = mu0 + sd0 * best_u_fix(1)
+   pars(2) = sd0 * exp(best_u_fix(2))
+   pars(3) = best_df
+else
+   allocate (z(size(x)))
+   z = (x - mu0) / sd0
+   kex = kurtosis(z)
+   if (kex > 0.0_dp) then
+      df0 = 6.0_dp / kex + 4.0_dp
+   else
+      df0 = 30.0_dp
+   end if
+   df0 = max(df0, 2.01_dp)
+   u0 = [0.0_dp, 0.0_dp, log(df0 - 2.0_dp)]
+   ubest = nelder_mead(loglik, u0, 0.2_dp, 600, tol)
+   pars(1) = mu0 + sd0 * ubest(1)
+   pars(2) = sd0 * exp(ubest(2))
+   pars(3) = 2.0_dp + exp(ubest(3))
+   if (do_verbose) then
+      ll = loglik(ubest)
+      print *
+      print "(a)", "fit_t mle fit"
+      print "(a14,a14,a14,a14)", "mu", "sigma", "df", "logLik"
+      print "(4f14.6)", pars(1), pars(2), pars(3), ll
+   end if
+   deallocate (z)
+end if
 
 contains
    pure function loglik(u) result(f)
@@ -2997,15 +4928,40 @@ contains
              - log(sigma) - 0.5_dp * (df + 1.0_dp) * log(1.0_dp + ((x - mu) / sigma)**2 / df))
       end if
    end function loglik
+   pure function loglik_fixed(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, mu, sigma
+      mu = mu0 + sd0 * u(1)
+      sigma = sd0 * exp(u(2))
+      if (sigma <= 0.0_dp .or. df0 <= 2.0_dp) then
+         f = -huge(1.0_dp)
+      else
+         f = sum(log_gamma(0.5_dp * (df0 + 1.0_dp)) - log_gamma(0.5_dp * df0) - 0.5_dp * log(df0 * pi) &
+             - log(sigma) - 0.5_dp * (df0 + 1.0_dp) * log(1.0_dp + ((x - mu) / sigma)**2 / df0))
+      end if
+   end function loglik_fixed
 end function fit_t
 
-function fit_nct(x) result(pars)
+function fit_nct(x, df, verbose, full) result(pars)
 ! MLE for noncentral Student t distribution.
-! Returns [df, ncp].
+! Returns [mu, sigma, df, ncp].
 real(kind=dp), intent(in) :: x(:)
-real(kind=dp) :: pars(2)
+real(kind=dp), intent(in), optional :: df(:)
+logical, intent(in), optional :: verbose, full
+real(kind=dp) :: pars(4)
 real(kind=dp) :: mu0, sd0, kex, df0, u0(2), ubest(2), tol
-real(kind=dp), allocatable :: z(:)
+real(kind=dp) :: u0fix(1), ubest_fix(1), best_ll, ll, best_df, best_ncp
+real(kind=dp) :: u0full(4), ubest_full(4), u0fix3(3), ubest_fix3(3)
+real(kind=dp) :: best_mu, best_sigma
+real(kind=dp), allocatable :: z(:), cand_df(:), cand_mu(:), cand_sigma(:), cand_ncp(:), cand_ll(:)
+integer :: j, best_j, n
+logical, allocatable :: cand_ok(:)
+logical :: do_verbose, do_full
+character(len=1) :: mark
+logical, parameter :: use_hybrid_start = .false.
+real(kind=dp) :: med0, mad0, skew0, kurt0, ncp0
+real(kind=dp) :: df_try, ncp_try, err_best, err, m4(4)
+integer :: i, k
 
 if (size(x) < 2) then
    pars = nanv(); return
@@ -3015,7 +4971,8 @@ sd0 = sd(x)
 if (sd0 <= 0.0_dp) then
    pars = nanv(); return
 end if
-allocate (z(size(x)))
+n = size(x)
+allocate (z(n))
 z = (x - mu0) / sd0
 kex = kurtosis(z)
 if (kex > 0.0_dp) then
@@ -3024,11 +4981,185 @@ else
    df0 = 30.0_dp
 end if
 df0 = max(1.1_dp, df0)
-u0 = [mu0, log(df0)]
+ncp0 = 0.0_dp
+
+if (use_hybrid_start) then
+   med0 = median(x)
+   mad0 = median(abs(x - med0))
+   if (mad0 > 0.0_dp) then
+      mu0 = med0
+      sd0 = mad0 / 0.67448975_dp
+   end if
+   z = (x - mu0) / sd0
+   skew0 = skew(z)
+   kurt0 = kurtosis(z)
+   err_best = huge(1.0_dp)
+   df0 = 6.0_dp
+   ncp0 = 0.0_dp
+   do i = 1, 160
+      df_try = 2.1_dp + 0.3_dp * real(i - 1, dp)
+      do k = 1, 201
+         ncp_try = -3.0_dp + 0.03_dp * real(k - 1, dp)
+         m4 = mssk_nct(df_try, ncp_try)
+         if (any(m4 /= m4)) cycle
+         err = (m4(3) - skew0)**2 + (m4(4) - kurt0)**2
+         if (err < err_best) then
+            err_best = err
+            df0 = df_try
+            ncp0 = ncp_try
+         end if
+      end do
+   end do
+end if
 tol = 1.0e-6_dp
-ubest = nelder_mead(loglik, u0, 0.2_dp, 500, tol)
-pars(1) = exp(ubest(2))
-pars(2) = ubest(1)
+do_verbose = .false.
+if (present(verbose)) do_verbose = verbose
+do_full = .true.
+if (present(full)) do_full = full
+
+if (.not. do_full) then
+   if (present(df)) then
+      if (size(df) < 1) then
+         deallocate (z)
+         pars = nanv(); return
+      end if
+      if (do_verbose) allocate (cand_df(size(df)), cand_ncp(size(df)), cand_ll(size(df)), cand_ok(size(df)))
+      best_ll = -huge(1.0_dp)
+      best_df = -1.0_dp
+      best_ncp = 0.0_dp
+      best_j = 0
+      u0fix = [0.0_dp]
+      do j = 1, size(df)
+         if (do_verbose) cand_ok(j) = .false.
+         if (df(j) <= 0.0_dp) cycle
+         df0 = df(j)
+         ubest_fix = nelder_mead(loglik_fixed, u0fix, 0.2_dp, 400, tol)
+         ll = loglik_fixed(ubest_fix)
+         if (do_verbose) then
+            cand_df(j) = df0
+            cand_ncp(j) = ubest_fix(1)
+            cand_ll(j) = ll
+            cand_ok(j) = .true.
+         end if
+         if (ll > best_ll) then
+            best_ll = ll
+            best_df = df0
+            best_ncp = ubest_fix(1)
+            best_j = j
+         end if
+      end do
+      if (best_df <= 0.0_dp) then
+         if (do_verbose) deallocate (cand_df, cand_ncp, cand_ll, cand_ok)
+         deallocate (z)
+         pars = nanv(); return
+      end if
+      if (do_verbose) then
+         print *
+         print '(a)', 'fit_nct candidate fits'
+         print '(a,2f14.6)', 'mu, sigma:', mu0, sd0
+         print '(a2,a14,a14,a14)', ' ', 'df', 'ncp', 'logLik'
+         do j = 1, size(df)
+            if (.not. cand_ok(j)) cycle
+            mark = ' '
+            if (j == best_j) mark = '*'
+            print '(a2,3f14.6)', mark, cand_df(j), cand_ncp(j), cand_ll(j)
+         end do
+         deallocate (cand_df, cand_ncp, cand_ll, cand_ok)
+      end if
+      pars(1) = mu0
+      pars(2) = sd0
+      pars(3) = best_df
+      pars(4) = best_ncp
+   else
+      u0 = [ncp0, log(df0)]
+      ubest = nelder_mead(loglik, u0, 0.2_dp, 500, tol)
+      pars(1) = mu0
+      pars(2) = sd0
+      pars(3) = exp(ubest(2))
+      pars(4) = ubest(1)
+      if (do_verbose) then
+         ll = loglik(ubest)
+         print *
+         print '(a)', 'fit_nct mle fit'
+         print '(a,2f14.6)', 'mu, sigma:', mu0, sd0
+         print '(a14,a14,a14)', 'df', 'ncp', 'logLik'
+         print '(3f14.6)', pars(3), pars(4), ll
+      end if
+   end if
+else
+   if (present(df)) then
+      if (size(df) < 1) then
+         deallocate (z)
+         pars = nanv(); return
+      end if
+      if (do_verbose) allocate (cand_df(size(df)), cand_mu(size(df)), cand_sigma(size(df)), cand_ncp(size(df)), cand_ll(size(df)), cand_ok(size(df)))
+      best_ll = -huge(1.0_dp)
+      best_df = -1.0_dp
+      best_mu = mu0
+      best_sigma = sd0
+      best_ncp = 0.0_dp
+      best_j = 0
+      u0fix3 = [mu0, log(sd0), 0.0_dp]
+      do j = 1, size(df)
+         if (do_verbose) cand_ok(j) = .false.
+         if (df(j) <= 0.0_dp) cycle
+         df0 = df(j)
+         ubest_fix3 = nelder_mead(loglik_full_fixed, u0fix3, 0.2_dp, 500, tol)
+         ll = loglik_full_fixed(ubest_fix3)
+         if (do_verbose) then
+            cand_df(j) = df0
+            cand_mu(j) = ubest_fix3(1)
+            cand_sigma(j) = exp(ubest_fix3(2))
+            cand_ncp(j) = ubest_fix3(3)
+            cand_ll(j) = ll
+            cand_ok(j) = .true.
+         end if
+         if (ll > best_ll) then
+            best_ll = ll
+            best_df = df0
+            best_mu = ubest_fix3(1)
+            best_sigma = exp(ubest_fix3(2))
+            best_ncp = ubest_fix3(3)
+            best_j = j
+         end if
+      end do
+      if (best_df <= 0.0_dp) then
+         if (do_verbose) deallocate (cand_df, cand_mu, cand_sigma, cand_ncp, cand_ll, cand_ok)
+         deallocate (z)
+         pars = nanv(); return
+      end if
+      if (do_verbose) then
+         print *
+         print '(a)', 'fit_nct candidate fits'
+         print '(a2,a14,a14,a14,a14,a14)', ' ', 'df', 'mu', 'sigma', 'ncp', 'logLik'
+         do j = 1, size(df)
+            if (.not. cand_ok(j)) cycle
+            mark = ' '
+            if (j == best_j) mark = '*'
+            print '(a2,5f14.6)', mark, cand_df(j), cand_mu(j), cand_sigma(j), cand_ncp(j), cand_ll(j)
+         end do
+         deallocate (cand_df, cand_mu, cand_sigma, cand_ncp, cand_ll, cand_ok)
+      end if
+      pars(1) = best_mu
+      pars(2) = best_sigma
+      pars(3) = best_df
+      pars(4) = best_ncp
+   else
+      u0full = [mu0, log(sd0), log(df0), ncp0]
+      ubest_full = nelder_mead(loglik_full, u0full, 0.2_dp, 700, tol)
+      pars(1) = ubest_full(1)
+      pars(2) = exp(ubest_full(2))
+      pars(3) = exp(ubest_full(3))
+      pars(4) = ubest_full(4)
+      if (do_verbose) then
+         ll = loglik_full(ubest_full)
+         print *
+         print '(a)', 'fit_nct mle fit (full)'
+         print '(a14,a14,a14,a14,a14)', 'mu', 'sigma', 'df', 'ncp', 'logLik'
+         print '(5f14.6)', pars(1), pars(2), pars(3), pars(4), ll
+      end if
+   end if
+end if
 deallocate (z)
 
 contains
@@ -3042,14 +5173,72 @@ contains
          f = -huge(1.0_dp)
          return
       end if
-      fx = dnct(x, df, ncp)
+      fx = dnct(z, df, ncp)
       if (any(fx <= 0.0_dp) .or. any(fx /= fx)) then
          f = -huge(1.0_dp)
       else
          f = sum(log(fx))
       end if
    end function loglik
+   pure function loglik_fixed(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, ncp
+      real(kind=dp), allocatable :: fx(:)
+      ncp = u(1)
+      if (df0 <= 0.0_dp) then
+         f = -huge(1.0_dp)
+         return
+      end if
+      fx = dnct(z, df0, ncp)
+      if (any(fx <= 0.0_dp) .or. any(fx /= fx)) then
+         f = -huge(1.0_dp)
+      else
+         f = sum(log(fx))
+      end if
+   end function loglik_fixed
+   pure function loglik_full(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, mu, sigma, df, ncp
+      real(kind=dp), allocatable :: fx(:), zz(:)
+      mu = u(1)
+      sigma = exp(u(2))
+      df = exp(u(3))
+      ncp = u(4)
+      if (sigma <= 0.0_dp .or. df <= 0.0_dp) then
+         f = -huge(1.0_dp)
+         return
+      end if
+      zz = (x - mu) / sigma
+      fx = dnct(zz, df, ncp)
+      if (any(fx <= 0.0_dp) .or. any(fx /= fx)) then
+         f = -huge(1.0_dp)
+      else
+         f = sum(log(fx)) - real(n, dp) * log(sigma)
+      end if
+   end function loglik_full
+   pure function loglik_full_fixed(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, mu, sigma, ncp
+      real(kind=dp), allocatable :: fx(:), zz(:)
+      mu = u(1)
+      sigma = exp(u(2))
+      ncp = u(3)
+      if (sigma <= 0.0_dp .or. df0 <= 0.0_dp) then
+         f = -huge(1.0_dp)
+         return
+      end if
+      zz = (x - mu) / sigma
+      fx = dnct(zz, df0, ncp)
+      if (any(fx <= 0.0_dp) .or. any(fx /= fx)) then
+         f = -huge(1.0_dp)
+      else
+         f = sum(log(fx)) - real(n, dp) * log(sigma)
+      end if
+   end function loglik_full_fixed
 end function fit_nct
+
+
+
 
 function fit_mixnorm(x, k, verbose) result(pars)
 ! EM fit for k-component finite normal mixture.
@@ -3556,8 +5745,9 @@ function fit_hyperb(x) result(pars)
 real(kind=dp), intent(in) :: x(:)
 real(kind=dp) :: pars(3)
 real(kind=dp) :: loc0, scale0, alpha0
-real(kind=dp) :: u0(3), ubest(3), sd0, mad
-real(kind=dp) :: tol
+real(kind=dp) :: sd0, mad
+real(kind=dp) :: u0(3), ubest(3), tol
+real(kind=dp) :: scale_min, scale_max, alpha_min, alpha_max
 
 loc0 = median(x)
 sd0 = sd(x)
@@ -3572,6 +5762,14 @@ else
 end if
 alpha0 = max(alpha0, 1.0e-6_dp)
 scale0 = hyperb_scale_from_sd(alpha0, sd0)
+scale_min = 0.05_dp * sd0
+scale_max = 5.0_dp * sd0
+alpha_min = 0.05_dp / max(sd0, 1.0e-6_dp)
+alpha_max = 5.0_dp / max(sd0, 1.0e-6_dp)
+if (scale0 < scale_min) scale0 = scale_min
+if (scale0 > scale_max) scale0 = scale_max
+if (alpha0 < alpha_min) alpha0 = alpha_min
+if (alpha0 > alpha_max) alpha0 = alpha_max
 u0 = [loc0, log(scale0), log(alpha0)]
 tol = 1.0e-6_dp
 ubest = nelder_mead(loglik, u0, 0.1_dp, 400, tol)
@@ -3626,16 +5824,18 @@ contains
       loc = u(1)
       scale = exp(u(2))
       alpha = exp(u(3))
-      if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
+      if (scale < scale_min .or. scale > scale_max) then
+         f = -huge(1.0_dp); return
+      end if
+      if (alpha < alpha_min .or. alpha > alpha_max) then
+         f = -huge(1.0_dp); return
+      end if
+      k1 = besselk1(alpha * scale)
+      if (k1 <= 0.0_dp) then
          f = -huge(1.0_dp)
       else
-         k1 = besselk1(alpha * scale)
-         if (k1 <= 0.0_dp) then
-            f = -huge(1.0_dp)
-         else
-            f = real(size(x), dp) * (log(alpha) - log(2.0_dp * scale) - log(k1)) - &
-                alpha * sum(sqrt(scale * scale + (x - loc)**2))
-         end if
+            f = real(size(x), dp) * (-log(2.0_dp * scale) - log(k1)) - &
+             alpha * sum(sqrt(scale * scale + (x - loc)**2))
       end if
    end function loglik
 end function fit_hyperb
@@ -3787,17 +5987,19 @@ end if
 deallocate (resid)
 end subroutine armafit_metrics
 
-subroutine armafit(x, p, q, niter)
-! fit ARMA(p,q) and report RMSE/AIC/BIC and coefficients
+subroutine armafit(x, p, q, niter, header, true_ar, true_ma)
+! fit ARMA(p,q) and report RMSE/loglik/AIC/BIC and coefficients
 real(kind=dp), intent(in) :: x(:)
 integer, intent(in) :: p, q
 integer, intent(in), optional :: niter
-real(kind=dp), allocatable :: phi(:), theta(:)
-real(kind=dp) :: rmse, aic, bic
-logical :: ok
-integer :: it
-character(len=18) :: s_rmse, s_aic, s_bic
-character(len=18) :: s_val
+logical, intent(in), optional :: header
+real(kind=dp), intent(in), optional :: true_ar(:), true_ma(:)
+real(kind=dp), allocatable :: phi(:), theta(:), resid(:), xmat(:,:), xtx(:,:), v(:)
+real(kind=dp), allocatable :: se(:), pval(:)
+real(kind=dp) :: rmse, aic, bic, loglik, sigma2, mse, tval
+logical :: ok, do_header
+integer :: it, n, n_eff, maxpq, k, j, df
+character(len=18) :: s_rmse, s_aic, s_bic, s_ll, s_val
 
 if (p < 0 .or. q < 0) then
    print *, "Error: armafit() orders must be >= 0"
@@ -3820,41 +6022,164 @@ if (.not. ok) then
    print *, "Error: armafit() failed"
    return
 end if
-print "(a6,a18,a18,a18)", "lag", "RMSE", "AIC", "BIC"
+n = size(x)
+maxpq = max(p, q)
+n_eff = n - maxpq
+if (n_eff < 1) n_eff = 1
+sigma2 = max(1.0e-30_dp, rmse*rmse)
+loglik = -0.5_dp * real(n_eff, dp) * (log(2.0_dp*pi*sigma2) + 1.0_dp)
+do_header = .true.
+if (present(header)) do_header = header
+
+if (do_header) then
+   print "(a,a)", "method: ", "ls"
+   print "(a,i0)", "#obs: ", n
+end if
+print *
+print "(a5,a5,a14,a14,a14,a14)", "p", "q", "RMSE", "loglik", "AIC", "BIC"
 write (s_rmse, "(g18.6)") rmse
+write (s_ll, "(g18.6)") loglik
 write (s_aic, "(g18.6)") aic
 write (s_bic, "(g18.6)") bic
-print "(i6,a18,a18,a18)", p + q, s_rmse, s_aic, s_bic
+print "(i5,i5,a14,a14,a14,a14)", p, q, s_rmse, s_ll, s_aic, s_bic
 
 print *
 if (p > 0) then
-   print "(a6)", "AR"
-   write (*, "(6x)", advance="no")
+   allocate (se(p), pval(p))
+   se = 0.0_dp
+   pval = 0.0_dp
+   allocate (resid(n))
+   call arma_resid(x, phi, theta, resid)
+   allocate (xmat(n_eff, p + q))
+   do j = 1, p
+      xmat(:, j) = x(maxpq + 1 - j:n - j)
+   end do
+   do j = 1, q
+      xmat(:, p + j) = resid(maxpq + 1 - j:n - j)
+   end do
+   xtx = matmul(transpose(xmat), xmat)
+   k = p + q
+   df = n_eff - k
+   if (df > 0) then
+      mse = sum(resid(maxpq + 1:n)**2) / real(df, dp)
+      allocate (v(k))
+      do j = 1, p
+         call solve_linear(xtx, unit_vec(k, j), v, ok)
+         if (ok) then
+            se(j) = sqrt(max(0.0_dp, mse*v(j)))
+            if (se(j) > 0.0_dp) then
+               pval(j) = 2.0_dp*(1.0_dp - tcdf(abs(phi(j)/se(j)), df))
+            end if
+         end if
+      end do
+      deallocate (v)
+   end if
+   deallocate (resid, xmat, xtx)
+
+   write (*, "(9x)", advance="no")
    do it = 1, p
       write (s_val, "(a,i0)") "AR", it
       write (*, "(1x,a12)", advance="no") trim(s_val)
    end do
    print *
-   write (*, "(i6)", advance="no") p
+
+   if (present(true_ar)) then
+      write (*, "(3x,a8)", advance="no") "true"
+      do it = 1, p
+         if (it <= size(true_ar)) then
+            tval = true_ar(it)
+         else
+            tval = 0.0_dp
+         end if
+         write (*, "(1x,f12.6)", advance="no") tval
+      end do
+      print *
+   end if
+
+   write (*, "(3x,a8)", advance="no") "est"
    do it = 1, p
       write (*, "(1x,f12.6)", advance="no") phi(it)
    end do
    print *
+   write (*, "(3x,a8)", advance="no") "std_err"
+   do it = 1, p
+      write (*, "(1x,f12.6)", advance="no") se(it)
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "p_value"
+   do it = 1, p
+      write (*, "(1x,f12.6)", advance="no") pval(it)
+   end do
+   print *
+   deallocate (se, pval)
 end if
 if (q > 0) then
    print *
-   print "(a6)", "MA"
-   write (*, "(6x)", advance="no")
+   allocate (se(q), pval(q))
+   se = 0.0_dp
+   pval = 0.0_dp
+   allocate (resid(n))
+   call arma_resid(x, phi, theta, resid)
+   allocate (xmat(n_eff, p + q))
+   do j = 1, p
+      xmat(:, j) = x(maxpq + 1 - j:n - j)
+   end do
+   do j = 1, q
+      xmat(:, p + j) = resid(maxpq + 1 - j:n - j)
+   end do
+   xtx = matmul(transpose(xmat), xmat)
+   k = p + q
+   df = n_eff - k
+   if (df > 0) then
+      mse = sum(resid(maxpq + 1:n)**2) / real(df, dp)
+      allocate (v(k))
+      do j = 1, q
+         call solve_linear(xtx, unit_vec(k, p + j), v, ok)
+         if (ok) then
+            se(j) = sqrt(max(0.0_dp, mse*v(p + j)))
+            if (se(j) > 0.0_dp) then
+               pval(j) = 2.0_dp*(1.0_dp - tcdf(abs(theta(j)/se(j)), df))
+            end if
+         end if
+      end do
+      deallocate (v)
+   end if
+   deallocate (resid, xmat, xtx)
+
+   write (*, "(9x)", advance="no")
    do it = 1, q
       write (s_val, "(a,i0)") "MA", it
       write (*, "(1x,a12)", advance="no") trim(s_val)
    end do
    print *
-   write (*, "(i6)", advance="no") q
+   if (present(true_ma)) then
+      write (*, "(3x,a8)", advance="no") "true"
+      do it = 1, q
+         if (it <= size(true_ma)) then
+            tval = true_ma(it)
+         else
+            tval = 0.0_dp
+         end if
+         write (*, "(1x,f12.6)", advance="no") tval
+      end do
+      print *
+   end if
+   write (*, "(3x,a8)", advance="no") "est"
    do it = 1, q
       write (*, "(1x,f12.6)", advance="no") theta(it)
    end do
    print *
+   write (*, "(3x,a8)", advance="no") "std_err"
+   do it = 1, q
+      write (*, "(1x,f12.6)", advance="no") se(it)
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "p_value"
+   do it = 1, q
+      write (*, "(1x,f12.6)", advance="no") pval(it)
+   end do
+   print *
+   deallocate (se, pval)
 end if
 end subroutine armafit
 
@@ -4014,6 +6339,170 @@ print *
 print "(a,i0,a,i0)", "AIC chooses p=", best_aic_p, " q=", best_aic_q
 print "(a,i0,a,i0)", "BIC chooses p=", best_bic_p, " q=", best_bic_q
 end subroutine armafitaic
+
+subroutine araic(x, nar_max, niter)
+! fit AR(p) models up to max order and report AIC/BIC best order
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: nar_max
+integer, intent(in), optional :: niter
+integer :: pmax, p, j, no_improve, it
+real(kind=dp) :: best_aic_prev
+integer :: best_aic_p, best_bic_p
+real(kind=dp) :: rmse, aic, bic, best_aic, best_bic
+real(kind=dp), allocatable :: phi(:), theta(:)
+logical :: ok
+character(len=18) :: s_rmse, s_aic, s_bic
+
+if (present(nar_max)) then
+   pmax = nar_max
+else
+   pmax = 5
+end if
+if (present(niter)) then
+   it = niter
+else
+   it = 5
+end if
+if (it < 1) it = 1
+if (pmax < 0) then
+   print *, "Error: araic() max AR order must be >= 0"
+   return
+end if
+
+best_aic = huge(1.0_dp)
+best_bic = huge(1.0_dp)
+best_aic_p = 0
+best_bic_p = 0
+no_improve = 0
+
+print "(a6,a14,a14,a14,2x,a)", "p", "RMSE", "AIC", "BIC", "AR coefficients"
+do p = 0, pmax
+   best_aic_prev = best_aic
+   allocate (phi(max(1, p)), theta(1))
+   phi = 0.0_dp
+   theta = 0.0_dp
+   call armafit_metrics(x, p, 0, it, rmse, aic, bic, phi, theta, ok)
+   if (.not. ok .or. rmse /= rmse .or. aic /= aic .or. bic /= bic .or. &
+       abs(rmse) > huge(1.0_dp) .or. abs(aic) > huge(1.0_dp) .or. abs(bic) > huge(1.0_dp)) then
+      print "(i6,3a14,2x,a)", p, "NaN", "NaN", "NaN", "-"
+   else
+      write (s_rmse, "(f14.6)") rmse
+      write (s_aic, "(f14.3)") aic
+      write (s_bic, "(f14.3)") bic
+      if (p == 0) then
+         print "(i6,a14,a14,a14,2x,a)", p, s_rmse, s_aic, s_bic, "-"
+      else
+         write (*, "(i6,a14,a14,a14,2x)", advance="no") p, s_rmse, s_aic, s_bic
+         do j = 1, p
+            write (*, "(f11.6)", advance="no") phi(j)
+         end do
+         write (*, *)
+      end if
+      if (aic < best_aic) then
+         best_aic = aic
+         best_aic_p = p
+      end if
+      if (bic < best_bic) then
+         best_bic = bic
+         best_bic_p = p
+      end if
+   end if
+   deallocate (phi, theta)
+   if (best_aic == huge(1.0_dp)) cycle
+   if (best_aic < best_aic_prev) then
+      no_improve = 0
+   else
+      no_improve = no_improve + 1
+   end if
+   if (no_improve >= 2) exit
+end do
+
+print *
+print "(a,i0)", "AIC chooses p=", best_aic_p
+print "(a,i0)", "BIC chooses p=", best_bic_p
+end subroutine araic
+
+subroutine maaic(x, nma_max, niter)
+! fit MA(q) models up to max order and report AIC/BIC best order
+real(kind=dp), intent(in) :: x(:)
+integer, intent(in), optional :: nma_max
+integer, intent(in), optional :: niter
+integer :: qmax, q, j, no_improve, it
+real(kind=dp) :: best_aic_prev
+integer :: best_aic_q, best_bic_q
+real(kind=dp) :: rmse, aic, bic, best_aic, best_bic
+real(kind=dp), allocatable :: phi(:), theta(:)
+logical :: ok
+character(len=18) :: s_rmse, s_aic, s_bic
+
+if (present(nma_max)) then
+   qmax = nma_max
+else
+   qmax = 5
+end if
+if (present(niter)) then
+   it = niter
+else
+   it = 5
+end if
+if (it < 1) it = 1
+if (qmax < 0) then
+   print *, "Error: maaic() max MA order must be >= 0"
+   return
+end if
+
+best_aic = huge(1.0_dp)
+best_bic = huge(1.0_dp)
+best_aic_q = 0
+best_bic_q = 0
+no_improve = 0
+
+print "(a6,a14,a14,a14,2x,a)", "q", "RMSE", "AIC", "BIC", "MA coefficients"
+do q = 0, qmax
+   best_aic_prev = best_aic
+   allocate (phi(1), theta(max(1, q)))
+   phi = 0.0_dp
+   theta = 0.0_dp
+   call armafit_metrics(x, 0, q, it, rmse, aic, bic, phi, theta, ok)
+   if (.not. ok .or. rmse /= rmse .or. aic /= aic .or. bic /= bic .or. &
+       abs(rmse) > huge(1.0_dp) .or. abs(aic) > huge(1.0_dp) .or. abs(bic) > huge(1.0_dp)) then
+      print "(i6,3a14,2x,a)", q, "NaN", "NaN", "NaN", "-"
+   else
+      write (s_rmse, "(f14.6)") rmse
+      write (s_aic, "(f14.3)") aic
+      write (s_bic, "(f14.3)") bic
+      if (q == 0) then
+         print "(i6,a14,a14,a14,2x,a)", q, s_rmse, s_aic, s_bic, "-"
+      else
+         write (*, "(i6,a14,a14,a14,2x)", advance="no") q, s_rmse, s_aic, s_bic
+         do j = 1, q
+            write (*, "(f11.6)", advance="no") theta(j)
+         end do
+         write (*, *)
+      end if
+      if (aic < best_aic) then
+         best_aic = aic
+         best_aic_q = q
+      end if
+      if (bic < best_bic) then
+         best_bic = bic
+         best_bic_q = q
+      end if
+   end if
+   deallocate (phi, theta)
+   if (best_aic == huge(1.0_dp)) cycle
+   if (best_aic < best_aic_prev) then
+      no_improve = 0
+   else
+      no_improve = no_improve + 1
+   end if
+   if (no_improve >= 2) exit
+end do
+
+print *
+print "(a,i0)", "AIC chooses q=", best_aic_q
+print "(a,i0)", "BIC chooses q=", best_bic_q
+end subroutine maaic
 
 pure function aracf(phi, k) result(r)
 ! theoretical ACF for AR(p) up to lag k via Yule-Walker
@@ -4290,6 +6779,77 @@ do m = 2, k
 end do
 deallocate (r, phi_dl, v)
 end function armapacf
+
+function armastab(ar, ma) result(out)
+! check ARMA stationarity/invertibility from characteristic roots
+! out = [is_stationary, is_invertible, min_mod_ar, min_mod_ma]
+real(kind=dp), intent(in), optional :: ar(:), ma(:)
+real(kind=dp), allocatable :: out(:)
+real(kind=dp), allocatable :: ar_poly(:), ma_poly(:), ar_roots(:), ma_roots(:)
+real(kind=dp), allocatable :: ar_loc(:), ma_loc(:)
+real(kind=dp) :: min_mod_ar, min_mod_ma, modv
+real(kind=dp), parameter :: tol = 1.0e-8_dp
+integer :: i
+
+allocate (out(4))
+out = 0.0_dp
+
+if (present(ar)) then
+   ar_loc = ar
+else
+   allocate (ar_loc(0))
+end if
+if (present(ma)) then
+   ma_loc = ma
+else
+   allocate (ma_loc(0))
+end if
+
+if (size(ar_loc) > 0) then
+   allocate (ar_poly(size(ar_loc) + 1))
+   ar_poly(1) = 1.0_dp
+   ar_poly(2:) = -ar_loc
+   ar_roots = polyroots(ar_poly)
+   if (size(ar_roots) == 0) then
+      min_mod_ar = 0.0_dp
+      out(1) = 1.0_dp
+   else
+      min_mod_ar = huge(1.0_dp)
+      do i = 1, size(ar_roots), 2
+         modv = sqrt(ar_roots(i)*ar_roots(i) + ar_roots(i + 1)*ar_roots(i + 1))
+         if (modv < min_mod_ar) min_mod_ar = modv
+      end do
+      if (min_mod_ar > 1.0_dp + tol) out(1) = 1.0_dp
+   end if
+else
+   min_mod_ar = 0.0_dp
+   out(1) = 1.0_dp
+end if
+
+if (size(ma_loc) > 0) then
+   allocate (ma_poly(size(ma_loc) + 1))
+   ma_poly(1) = 1.0_dp
+   ma_poly(2:) = ma_loc
+   ma_roots = polyroots(ma_poly)
+   if (size(ma_roots) == 0) then
+      min_mod_ma = 0.0_dp
+      out(2) = 1.0_dp
+   else
+      min_mod_ma = huge(1.0_dp)
+      do i = 1, size(ma_roots), 2
+         modv = sqrt(ma_roots(i)*ma_roots(i) + ma_roots(i + 1)*ma_roots(i + 1))
+         if (modv < min_mod_ma) min_mod_ma = modv
+      end do
+      if (min_mod_ma > 1.0_dp + tol) out(2) = 1.0_dp
+   end if
+else
+   min_mod_ma = 0.0_dp
+   out(2) = 1.0_dp
+end if
+
+out(3) = min_mod_ar
+out(4) = min_mod_ma
+end function armastab
 
 pure function arpacf(phi, k) result(pacf)
 ! theoretical PACF for AR(p) up to lag k using Durbin-Levinson
@@ -6233,7 +8793,7 @@ end if
 deallocate (y2, legends)
 end function naturalspline_kvec
 
-function cpsim(n, cp, mu, sd, seed, plot, verbose) result(x)
+function cpsim(n, cp, mu, sd, seed, plot, verbose, noise) result(x)
 ! Simulate piecewise-normal data with changepoints.
 ! cp has length m and defines m+1 segments.
 ! mu/sd may be absent (defaults 0/1), scalar (broadcast), or length m+1.
@@ -6243,6 +8803,7 @@ real(kind=dp), intent(in) :: cp(:)
 real(kind=dp), intent(in), optional :: mu(:), sd(:)
 integer, intent(in), optional :: seed
 integer, intent(in), optional :: plot, verbose
+real(kind=dp), intent(in), optional :: noise(:)
 real(kind=dp), allocatable :: x(:), z(:), mu_seg(:), sd_seg(:), ytrue(:), tt(:)
 integer, allocatable :: cpi(:)
 integer :: m, i, j, lo, hi
@@ -6258,8 +8819,19 @@ do_plot = .false.
 if (present(plot)) do_plot = (plot /= 0)
 do_verbose = .false.
 if (present(verbose)) do_verbose = (verbose /= 0)
+if (present(noise)) then
+   if (size(noise) < n) then
+      print *, "Error: cpsim() noise must have size >= n"
+      allocate (x(0))
+      return
+   end if
+end if
 allocate (x(n), z(n))
-z = random_normal(n)
+if (present(noise)) then
+   z = noise(1:n)
+else
+   z = random_normal(n)
+end if
 m = size(cp)
 allocate (cpi(m))
 if (m > 0) cpi = nint(cp)
@@ -6827,17 +9399,30 @@ real(kind=dp), allocatable :: best_out(:)
 best_out = cpfitaic(x, mode=mode, max_cp=max_cp, minseg=minseg, criterion=criterion, plot=plot, plot_ic=plot_ic, verbose=verbose)
 end function cpfit_aic
 
-subroutine distaicscan(x, verbose)
+subroutine distaicscan(x, verbose, nct)
 ! Fit sensible distributions to x and print AIC ranking table.
 real(kind=dp), intent(in) :: x(:)
 integer, intent(in), optional :: verbose
+logical, intent(in), optional :: nct
 integer, parameter :: mmax = 20
 character(len=16) :: names(mmax), tmpn
-real(kind=dp) :: aicv(mmax), llv(mmax)
+real(kind=dp) :: aicv(mmax), llv(mmax), tsv(mmax), ts
+real(kind=dp) :: meanv(mmax), sdv(mmax), skewv(mmax), kurtv(mmax)
+real(kind=dp) :: parv(mmax, 4)
+integer :: parn(mmax)
+integer :: kpv(mmax), tk
 real(kind=dp), allocatable :: p(:), fx(:)
 logical :: do_verbose
+logical :: do_nct
 integer :: m, i, j
 real(kind=dp) :: ta, tl
+real(kind=dp) :: tm1, tm2, tm3, tm4
+real(kind=dp) :: ms(4)
+real(kind=dp) :: nan1
+real(kind=dp) :: nanv_tmp(4)
+integer :: jp
+real(kind=dp) :: par_tmp(4)
+real(kind=dp) :: t0, t1
 
 if (size(x) < 2) then
    print *, "Error: distaicscan() requires size(x) > 1"
@@ -6845,40 +9430,90 @@ if (size(x) < 2) then
 end if
 do_verbose = .true.
 if (present(verbose)) do_verbose = (verbose /= 0)
+do_nct = .false.
+if (present(nct)) do_nct = nct
 m = 0
 
+nanv_tmp = nanv()
+nan1 = nanv_tmp(1)
 ! normal
-p = fit_norm(x); fx = dnorm(x, p(1), p(2)); call add_fit("norm", p, fx)
+call cpu_time(t0); p = fit_norm(x); fx = dnorm(x, p(1), p(2)); call cpu_time(t1)
+tm1 = p(1); tm2 = p(2); tm3 = 0.0_dp; tm4 = 0.0_dp
+call add_fit("norm", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 ! t
-p = fit_t(x); fx = dt((x - p(1)) / p(2), p(3)) / p(2); call add_fit("t", p, fx)
+call cpu_time(t0); p = fit_t(x); fx = dt((x - p(1)) / p(2), p(3)) / p(2); call cpu_time(t1)
+ms = mssk_t(p(3))
+tm1 = p(1) + p(2) * ms(1)
+tm2 = p(2) * ms(2)
+tm3 = ms(3)
+tm4 = ms(4)
+call add_fit("t", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 ! nct
-p = fit_nct(x); fx = dnct(x, p(1), p(2)); call add_fit("nct", p, fx)
+if (do_nct) then
+   call cpu_time(t0)
+   p = fit_nct(x)
+   fx = dnct((x - p(1)) / p(2), p(3), p(4)) / p(2)
+   call cpu_time(t1)
+   ms = mssk_nct(p(3), p(4))
+   tm1 = p(1) + p(2) * ms(1)
+   tm2 = p(2) * ms(2)
+   tm3 = ms(3)
+   tm4 = ms(4)
+   call add_fit("nct", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
+end if
 ! logistic
-p = fit_logis(x); fx = dlogis(x, p(1), p(2)); call add_fit("logis", p, fx)
+call cpu_time(t0); p = fit_logis(x); fx = dlogis(x, p(1), p(2)); call cpu_time(t1)
+ms = mssk_logis(p(1), p(2))
+call add_fit("logis", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! sech
-p = fit_sech(x); fx = dsech((x - p(1)) / p(2)) / p(2); call add_fit("sech", p, fx)
+call cpu_time(t0); p = fit_sech(x); fx = dsech((x - p(1)) / p(2)) / p(2); call cpu_time(t1)
+tm1 = p(1)
+ms = mssk_sech()
+tm2 = p(2) * ms(2)
+tm3 = ms(3)
+tm4 = ms(4)
+call add_fit("sech", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 ! laplace
-p = fit_laplace(x); fx = dlaplace(x, p(1), p(2)); call add_fit("laplace", p, fx)
+call cpu_time(t0); p = fit_laplace(x); fx = dlaplace(x, p(1), p(2)); call cpu_time(t1)
+ms = mssk_laplace(p(1), p(2))
+call add_fit("laplace", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! cauchy
-p = fit_cauchy(x); fx = dcauchy(x, p(1), p(2)); call add_fit("cauchy", p, fx)
+call cpu_time(t0); p = fit_cauchy(x); fx = dcauchy(x, p(1), p(2)); call cpu_time(t1)
+call add_fit("cauchy", p, fx, t1 - t0, nan1, nan1, nan1, nan1)
 ! ged
-p = fit_ged(x); fx = dged(x, p(1), p(2), p(3)); call add_fit("ged", p, fx)
+call cpu_time(t0); p = fit_ged(x); fx = dged(x, p(1), p(2), p(3)); call cpu_time(t1)
+ms = mssk_ged(p(1), p(2), p(3))
+call add_fit("ged", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! hyperbolic
-p = fit_hyperb(x); fx = dhyperb(x, p(1), p(2), p(3)); call add_fit("hyperb", p, fx)
+call cpu_time(t0); p = fit_hyperb(x); fx = dhyperb(x, p(1), p(2), p(3)); call cpu_time(t1)
+call hyperb_moments(p(1), p(2), p(3), tm1, tm2, tm3, tm4)
+call add_fit("hyperb", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 
 if (all(x >= 0.0_dp)) then
-   p = fit_exp(x); fx = dexp(x, p(1)); call add_fit("exp", p, fx)
-   p = fit_gamma(x); fx = dgamma(x, p(1), p(2)); call add_fit("gamma", p, fx)
-   p = fit_chisq(x); fx = dchisq(x, p(1)); call add_fit("chisq", p, fx)
+   call cpu_time(t0); p = fit_exp(x); fx = dexp(x, p(1)); call cpu_time(t1)
+   ms = mssk_exp(p(1))
+   call add_fit("exp", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call cpu_time(t0); p = fit_gamma(x); fx = dgamma(x, p(1), p(2)); call cpu_time(t1)
+   ms = mssk_gamma(p(1), p(2))
+   call add_fit("gamma", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call cpu_time(t0); p = fit_chisq(x); fx = dchisq(x, p(1)); call cpu_time(t1)
+   ms = mssk_chisq(p(1))
+   call add_fit("chisq", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp)) then
-   p = fit_lnorm(x); fx = dlnorm(x, p(1), p(2)); call add_fit("lnorm", p, fx)
+   call cpu_time(t0); p = fit_lnorm(x); fx = dlnorm(x, p(1), p(2)); call cpu_time(t1)
+   ms = mssk_lnorm(p(1), p(2))
+   call add_fit("lnorm", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp .and. x < 1.0_dp)) then
-   p = fit_beta(x); fx = dbeta(x, p(1), p(2)); call add_fit("beta", p, fx)
+   call cpu_time(t0); p = fit_beta(x); fx = dbeta(x, p(1), p(2)); call cpu_time(t1)
+   ms = mssk_beta(p(1), p(2))
+   call add_fit("beta", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp)) then
-   p = fit_f(x); fx = df(x, p(1), p(2)); call add_fit("f", p, fx)
+   call cpu_time(t0); p = fit_f(x); fx = df(x, p(1), p(2)); call cpu_time(t1)
+   ms = mssk_f(p(1), p(2))
+   call add_fit("f", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 
 if (m < 1) then
@@ -6892,26 +9527,48 @@ do i = 1, m - 1
       if (aicv(j) < aicv(i)) then
          ta = aicv(i); aicv(i) = aicv(j); aicv(j) = ta
          tl = llv(i); llv(i) = llv(j); llv(j) = tl
+         ts = tsv(i); tsv(i) = tsv(j); tsv(j) = ts
+         tk = kpv(i); kpv(i) = kpv(j); kpv(j) = tk
+         tm1 = meanv(i); meanv(i) = meanv(j); meanv(j) = tm1
+         tm2 = sdv(i); sdv(i) = sdv(j); sdv(j) = tm2
+         tm3 = skewv(i); skewv(i) = skewv(j); skewv(j) = tm3
+         tm4 = kurtv(i); kurtv(i) = kurtv(j); kurtv(j) = tm4
+         par_tmp = parv(i, :)
+         parv(i, :) = parv(j, :)
+         parv(j, :) = par_tmp
+         tk = parn(i); parn(i) = parn(j); parn(j) = tk
          tmpn = names(i); names(i) = names(j); names(j) = tmpn
       end if
    end do
 end do
 
 if (do_verbose) then
-   print "(a16,a18,a18)", "distribution", "logLik", "AIC"
+   print "(a16,a8,a12,a12,a12,a12,a18,a18,a10,a12,a12,a12,a12)", "distribution", "#param", "mean", "sd", "skew", "kurt", "logLik", "AIC", "seconds", &
+        "par1", "par2", "par3", "par4"
    do i = 1, m
-      print "(a16,2f18.6)", trim(names(i)), llv(i), aicv(i)
+      write (*, "(a16,i8,4f12.6,2f18.6,f10.4)", advance="no") trim(names(i)), kpv(i), meanv(i), sdv(i), skewv(i), kurtv(i), llv(i), aicv(i), tsv(i)
+      do jp = 1, 4
+         if (jp <= parn(i)) then
+            write (*, "(f12.6)", advance="no") parv(i, jp)
+         else
+            write (*, "(a12)", advance="no") " "
+         end if
+      end do
+      write (*, *)
    end do
 else
    print "(a,a)", "AIC best: ", trim(names(1))
 end if
 
 contains
-   subroutine add_fit(nm, pars, dens)
+   subroutine add_fit(nm, pars, dens, sec, m1, m2, m3, m4)
       character(len=*), intent(in) :: nm
       real(kind=dp), intent(in) :: pars(:)
       real(kind=dp), intent(in) :: dens(:)
+      real(kind=dp), intent(in) :: sec
+      real(kind=dp), intent(in) :: m1, m2, m3, m4
       real(kind=dp) :: ll, aic
+      integer :: k
       if (size(dens) /= size(x)) return
       if (any(dens <= 0.0_dp) .or. any(dens /= dens)) return
       ll = sum(log(dens))
@@ -6921,27 +9578,84 @@ contains
          names(m) = nm
          aicv(m) = aic
          llv(m) = ll
+         tsv(m) = sec
+         kpv(m) = size(pars)
+         meanv(m) = m1
+         sdv(m) = m2
+         skewv(m) = m3
+         kurtv(m) = m4
+         parv(m, :) = nan1
+         parn(m) = min(4, size(pars))
+         do k = 1, parn(m)
+            parv(m, k) = pars(k)
+         end do
       end if
    end subroutine add_fit
+
+   subroutine hyperb_moments(loc, scale, alpha, m1, m2, m3, m4)
+      real(kind=dp), intent(in) :: loc, scale, alpha
+      real(kind=dp), intent(out) :: m1, m2, m3, m4
+      integer, parameter :: ngrid = 4096
+      real(kind=dp) :: tmax, h, s2, s4, t, f
+      integer :: i
+      if (scale <= 0.0_dp .or. alpha <= 0.0_dp) then
+         m1 = nan1; m2 = nan1; m3 = nan1; m4 = nan1
+         return
+      end if
+      m1 = loc
+      m3 = 0.0_dp
+      tmax = max(10.0_dp * scale, 10.0_dp / alpha)
+      h = tmax / real(ngrid - 1, dp)
+      s2 = 0.0_dp
+      s4 = 0.0_dp
+      do i = 1, ngrid
+         t = h * real(i - 1, dp)
+         f = hyperb_pdf_scalar(loc + t, loc, scale, alpha)
+         if (i == 1 .or. i == ngrid) then
+            s2 = s2 + 0.5_dp * t * t * f
+            s4 = s4 + 0.5_dp * t**4 * f
+         else
+            s2 = s2 + t * t * f
+            s4 = s4 + t**4 * f
+         end if
+      end do
+      s2 = 2.0_dp * s2 * h
+      s4 = 2.0_dp * s4 * h
+      if (s2 <= 0.0_dp) then
+         m2 = nan1; m4 = nan1
+      else
+         m2 = sqrt(s2)
+         m4 = s4 / (s2 * s2) - 3.0_dp
+      end if
+   end subroutine hyperb_moments
 end subroutine distaicscan
 
-subroutine arfit(x, k1, k2, nacf, nlb)
+subroutine arfit(x, k1, k2, nacf, nlb, method, header, true_phi)
 ! fit AR models and report RMSE/AIC/BIC and coefficients
 real(kind=dp), intent(in) :: x(:)
 integer, intent(in) :: k1
 integer, intent(in), optional :: k2
 integer, intent(in), optional :: nacf
 integer, intent(in), optional :: nlb
+character(len=*), intent(in), optional :: method
+logical, intent(in), optional :: header
+real(kind=dp), intent(in), optional :: true_phi(:)
 integer :: n, k, k_start, k_end, n_eff, j, best_aic_k, best_bic_k, k_params
-real(kind=dp) :: aic, bic, best_aic, best_bic, sse, sigma2
-real(kind=dp), allocatable :: y(:), xmat(:,:), beta(:), xtx(:,:), xty(:)
-real(kind=dp), allocatable :: aicv(:), bicv(:), rmsev(:), coeffs(:,:)
-logical, allocatable :: okv(:)
+real(kind=dp) :: aic, bic, best_aic, best_bic, sse, sigma2, loglik
+real(kind=dp), allocatable :: y(:), beta(:)
+real(kind=dp), allocatable :: aicv(:), bicv(:), rmsev(:), loglikv(:), coeffs(:,:)
+real(kind=dp), allocatable :: se_ar(:,:), p_ar(:,:)
+real(kind=dp), allocatable :: xmat(:,:), xtx(:,:), v(:)
+real(kind=dp) :: mse, tval
+integer :: df
 logical :: ok
-character(len=18) :: s_rmse, s_aic, s_bic, s_q, s_p
+logical, allocatable :: okv(:)
+character(len=18) :: s_rmse, s_aic, s_bic, s_ll, s_q, s_p
 integer :: acf_lags, lb_lags, df_lb
 real(kind=dp) :: qstat, pval
 real(kind=dp), allocatable :: resid(:), resacf(:)
+character(len=16) :: mth
+logical :: do_header
 
 n = size(x)
 if (n < 2) then
@@ -6975,15 +9689,25 @@ if (lb_lags < 0) then
    print *, "Error: lb lag count must be >= 0"
    return
 end if
+mth = "ls"
+if (present(method)) mth = lower_ascii(trim(adjustl(method)))
+if (trim(mth) /= "ls" .and. trim(mth) /= "yw" .and. trim(mth) /= "burg") then
+   print *, "Error: arfit() method must be ls/yw/burg"
+   return
+end if
+do_header = .true.
+if (present(header)) do_header = header
 
 best_aic = huge(1.0_dp)
 best_bic = huge(1.0_dp)
 best_aic_k = k_start
 best_bic_k = k_start
 
-allocate (aicv(0:k_end), bicv(0:k_end), rmsev(0:k_end), &
-          coeffs(0:k_end, 1:max(1, k_end)), okv(0:k_end))
-aicv = 0.0_dp; bicv = 0.0_dp; rmsev = 0.0_dp; coeffs = 0.0_dp; okv = .false.
+allocate (aicv(0:k_end), bicv(0:k_end), rmsev(0:k_end), loglikv(0:k_end), &
+          coeffs(0:k_end, 1:max(1, k_end)), okv(0:k_end), &
+          se_ar(0:k_end, 1:max(1, k_end)), p_ar(0:k_end, 1:max(1, k_end)))
+aicv = 0.0_dp; bicv = 0.0_dp; rmsev = 0.0_dp; loglikv = 0.0_dp; coeffs = 0.0_dp; okv = .false.
+se_ar = 0.0_dp; p_ar = 0.0_dp
 
 do k = k_start, k_end
    if (k == 0) then
@@ -6993,21 +9717,17 @@ do k = k_start, k_end
       sse = sum((y - mean(y))**2)
    else
       n_eff = n - k
-      allocate (y(n_eff), xmat(n_eff, k))
-      y = x(k + 1:n)
-      do j = 1, k
-         xmat(:, j) = x(k + 1 - j:n - j)
-      end do
-
-      xtx = matmul(transpose(xmat), xmat)
-      xty = matmul(transpose(xmat), y)
-      call solve_linear(xtx, xty, beta, ok)
-      if (.not. ok) then
+      beta = arcoef_method(x, k, trim(mth))
+      if (size(beta) /= k .or. all(beta == -3.0_dp)) then
          okv(k) = .false.
-         deallocate (y, xmat)
          cycle
       end if
-      sse = sum((y - matmul(xmat, beta))**2)
+      allocate (y(n_eff))
+      y = x(k + 1:n)
+      sse = 0.0_dp
+      do j = k + 1, n
+         sse = sse + (x(j) - sum(beta*x(j - 1:j - k:-1)))**2
+      end do
    end if
    if (n_eff > 0 .and. sse > 0.0_dp) then
       sigma2 = sse / real(n_eff, dp)
@@ -7018,14 +9738,17 @@ do k = k_start, k_end
       end if
       aic = real(n_eff, dp) * log(sigma2) + 2.0_dp * real(k_params, dp)
       bic = real(n_eff, dp) * log(sigma2) + log(real(n_eff, dp)) * real(k_params, dp)
+      loglik = -0.5_dp * real(n_eff, dp) * (log(2.0_dp * pi * sigma2) + 1.0_dp)
    else
       aic = huge(1.0_dp)
       bic = huge(1.0_dp)
+      loglik = -huge(1.0_dp)
    end if
 
    okv(k) = .true.
    aicv(k) = aic
    bicv(k) = bic
+   loglikv(k) = loglik
    if (n_eff > 0) then
       rmsev(k) = sqrt(sse / real(n_eff, dp))
    else
@@ -7035,6 +9758,33 @@ do k = k_start, k_end
       do j = 1, k
          coeffs(k, j) = beta(j)
       end do
+      allocate (xmat(n_eff, k))
+      do j = 1, k
+         xmat(:, j) = x(k + 1 - j:n - j)
+      end do
+      xtx = matmul(transpose(xmat), xmat)
+      df = n_eff - k
+      if (df > 0 .and. sse > 0.0_dp) then
+         mse = sse / real(df, dp)
+      else
+         mse = 0.0_dp
+      end if
+      allocate (v(k))
+      do j = 1, k
+         call solve_linear(xtx, unit_vec(k, j), v, ok)
+         if (.not. ok) then
+            se_ar(k, j) = 0.0_dp
+            p_ar(k, j) = 0.0_dp
+         else
+            se_ar(k, j) = sqrt(max(0.0_dp, mse * v(j)))
+            if (se_ar(k, j) > 0.0_dp .and. df > 0) then
+               p_ar(k, j) = 2.0_dp * (1.0_dp - tcdf(abs(coeffs(k, j) / se_ar(k, j)), df))
+            else
+               p_ar(k, j) = 0.0_dp
+            end if
+         end if
+      end do
+      deallocate (xmat, xtx, v)
    end if
    if (aic < best_aic) then
       best_aic = aic
@@ -7044,47 +9794,87 @@ do k = k_start, k_end
       best_bic = bic
       best_bic_k = k
    end if
-   if (k == 0) then
-      deallocate (y)
-   else
-      deallocate (y, xmat)
-   end if
+    deallocate (y)
 end do
 
-print "(a6,a18,a18,a18)", "lag", "RMSE", "AIC", "BIC"
+if (do_header) then
+   print "(a,a)", "method: ", trim(mth)
+   print "(a,i0)", "#obs: ", n
+end if
+print *
+print "(a5,a14,a14,a14,a14)", "order", "RMSE", "loglik", "AIC", "BIC"
 do k = k_start, k_end
    if (.not. okv(k)) then
-      print "(i6,3a18)", k, "NaN", "NaN", "NaN"
+      print "(i5,a14,a14,a14,a14)", k, "NaN", "NaN", "NaN", "NaN"
    else
       write (s_rmse, "(g18.6)") rmsev(k)
+      write (s_ll, "(g18.6)") loglikv(k)
       write (s_aic, "(g18.6)") aicv(k)
       write (s_bic, "(g18.6)") bicv(k)
-      print "(i6,a18,a18,a18)", k, s_rmse, s_aic, s_bic
+      print "(i5,a14,a14,a14,a14)", k, s_rmse, s_ll, s_aic, s_bic
    end if
 end do
 
-print *
-print "(a6)", "lag"
-write (*, "(6x)", advance="no")
-do j = 1, k_end
-   write (s_rmse, "(a,i0)") "AR", j
-   write (*, "(1x,a12)", advance="no") trim(s_rmse)
-end do
 print *
 do k = k_start, k_end
    if (.not. okv(k)) then
       print "(i6,1x,a)", k, "NaN"
-   else
-      write (*, "(i6)", advance="no") k
+      cycle
+   end if
+   if (k == 0) cycle
+   if (k_start /= k_end) then
+      print "(a,i0)", "order ", k
+   end if
+   write (*, "(9x)", advance="no")
+   do j = 1, k_end
+      write (s_rmse, "(a,i0)") "AR", j
+      write (*, "(1x,a12)", advance="no") trim(s_rmse)
+   end do
+   print *
+   if (present(true_phi)) then
+      write (*, "(3x,a8)", advance="no") "true"
       do j = 1, k_end
          if (j <= k) then
-            write (*, "(1x,f12.6)", advance="no") coeffs(k, j)
+            if (j <= size(true_phi)) then
+               tval = true_phi(j)
+            else
+               tval = 0.0_dp
+            end if
+            write (*, "(1x,f12.6)", advance="no") tval
          else
             write (*, "(1x,a12)", advance="no") ""
          end if
       end do
       print *
    end if
+   write (*, "(3x,a8)", advance="no") "est"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") coeffs(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "std_err"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") se_ar(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "p_value"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") p_ar(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   if (k < k_end) print *
 end do
 
 if (k_end > k_start) then
@@ -7112,13 +9902,10 @@ if (acf_lags > 0) then
             resid = x - mean(x)
          else
             n_eff = n - k
-            allocate (y(n_eff), xmat(n_eff, k), resid(n_eff))
-            y = x(k + 1:n)
-            do j = 1, k
-               xmat(:, j) = x(k + 1 - j:n - j)
+            allocate (resid(n_eff))
+            do j = k + 1, n
+               resid(j - k) = x(j) - sum(coeffs(k, 1:k)*x(j - 1:j - k:-1))
             end do
-            resid = y - matmul(xmat, coeffs(k, 1:k))
-            deallocate (y, xmat)
          end if
          resacf = acf(resid, acf_lags)
          write (*, "(i6)", advance="no") k
@@ -7145,13 +9932,10 @@ if (lb_lags > 0) then
             n_eff = n
          else
             n_eff = n - k
-            allocate (y(n_eff), xmat(n_eff, k), resid(n_eff))
-            y = x(k + 1:n)
-            do j = 1, k
-               xmat(:, j) = x(k + 1 - j:n - j)
+            allocate (resid(n_eff))
+            do j = k + 1, n
+               resid(j - k) = x(j) - sum(coeffs(k, 1:k)*x(j - 1:j - k:-1))
             end do
-            resid = y - matmul(xmat, coeffs(k, 1:k))
-            deallocate (y, xmat)
          end if
          resacf = acf(resid, lb_lags)
          qstat = 0.0_dp
@@ -7171,7 +9955,357 @@ if (lb_lags > 0) then
 end if
 end subroutine arfit
 
-subroutine mafit(x, k1, k2, nacf, nlb, niter)
+subroutine arsimfit_scalar(n, phi, k1, k2, nacf, nlb, method)
+! simulate AR process and fit AR models (show true coeffs above estimates)
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: phi(:)
+integer, intent(in), optional :: k1
+integer, intent(in), optional :: k2
+integer, intent(in), optional :: nacf
+integer, intent(in), optional :: nlb
+character(len=*), intent(in), optional :: method
+real(kind=dp), allocatable :: x(:)
+logical :: have_method
+character(len=16) :: mth
+integer :: k1_use
+
+if (n < 1) then
+   print *, "Error: arsimfit() requires n > 0"
+   return
+end if
+if (size(phi) < 1) then
+   print *, "Error: arsimfit() requires at least one AR coefficient"
+   return
+end if
+if (present(k1)) then
+   k1_use = k1
+else
+   k1_use = size(phi)
+end if
+if (k1_use < 0) then
+   print *, "Error: arsimfit() lag order must be >= 0"
+   return
+end if
+
+x = arsim(n, phi)
+have_method = .false.
+if (present(method)) then
+   have_method = .true.
+   mth = trim(method)
+end if
+if (present(k2)) then
+   if (present(nacf) .and. present(nlb)) then
+      if (have_method) then
+         call arfit(x, k1_use, k2, nacf=nacf, nlb=nlb, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, k2, nacf=nacf, nlb=nlb, header=.true., true_phi=phi)
+      end if
+   else if (present(nacf)) then
+      if (have_method) then
+         call arfit(x, k1_use, k2, nacf=nacf, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, k2, nacf=nacf, header=.true., true_phi=phi)
+      end if
+   else if (present(nlb)) then
+      if (have_method) then
+         call arfit(x, k1_use, k2, nlb=nlb, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, k2, nlb=nlb, header=.true., true_phi=phi)
+      end if
+   else
+      if (have_method) then
+         call arfit(x, k1_use, k2, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, k2, header=.true., true_phi=phi)
+      end if
+   end if
+else
+   if (present(nacf) .and. present(nlb)) then
+      if (have_method) then
+         call arfit(x, k1_use, nacf=nacf, nlb=nlb, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, nacf=nacf, nlb=nlb, header=.true., true_phi=phi)
+      end if
+   else if (present(nacf)) then
+      if (have_method) then
+         call arfit(x, k1_use, nacf=nacf, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, nacf=nacf, header=.true., true_phi=phi)
+      end if
+   else if (present(nlb)) then
+      if (have_method) then
+         call arfit(x, k1_use, nlb=nlb, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, nlb=nlb, header=.true., true_phi=phi)
+      end if
+   else
+      if (have_method) then
+         call arfit(x, k1_use, method=mth, header=.true., true_phi=phi)
+      else
+         call arfit(x, k1_use, header=.true., true_phi=phi)
+      end if
+   end if
+end if
+end subroutine arsimfit_scalar
+
+subroutine arsimfit_vec(n, phi, kvec, nacf, nlb, method)
+! simulate AR process and fit AR models for vector orders
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: phi(:)
+integer, intent(in) :: kvec(:)
+integer, intent(in), optional :: nacf
+integer, intent(in), optional :: nlb
+character(len=*), intent(in), optional :: method
+real(kind=dp), allocatable :: x(:)
+integer :: j
+logical :: have_method
+character(len=16) :: mth
+
+if (n < 1) then
+   print *, "Error: arsimfit() requires n > 0"
+   return
+end if
+if (size(phi) < 1) then
+   print *, "Error: arsimfit() requires at least one AR coefficient"
+   return
+end if
+if (size(kvec) < 1) then
+   print *, "Error: arsimfit() requires non-empty order vector"
+   return
+end if
+
+if (any(kvec < 0)) then
+   print *, "Error: arsimfit() lag order must be >= 0"
+   return
+end if
+
+x = arsim(n, phi)
+have_method = .false.
+if (present(method)) then
+   have_method = .true.
+   mth = trim(method)
+end if
+
+do j = 1, size(kvec)
+   if (present(nacf) .and. present(nlb)) then
+      if (have_method) then
+         call arfit(x, kvec(j), nacf=nacf, nlb=nlb, method=mth, header=(j == 1), true_phi=phi)
+      else
+         call arfit(x, kvec(j), nacf=nacf, nlb=nlb, header=(j == 1), true_phi=phi)
+      end if
+   else if (present(nacf)) then
+      if (have_method) then
+         call arfit(x, kvec(j), nacf=nacf, method=mth, header=(j == 1), true_phi=phi)
+      else
+         call arfit(x, kvec(j), nacf=nacf, header=(j == 1), true_phi=phi)
+      end if
+   else if (present(nlb)) then
+      if (have_method) then
+         call arfit(x, kvec(j), nlb=nlb, method=mth, header=(j == 1), true_phi=phi)
+      else
+         call arfit(x, kvec(j), nlb=nlb, header=(j == 1), true_phi=phi)
+      end if
+   else
+      if (have_method) then
+         call arfit(x, kvec(j), method=mth, header=(j == 1), true_phi=phi)
+      else
+         call arfit(x, kvec(j), header=(j == 1), true_phi=phi)
+      end if
+   end if
+end do
+end subroutine arsimfit_vec
+
+subroutine masimfit_scalar(n, theta, k1, k2, nacf, nlb, niter)
+! simulate MA process and fit MA models
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: theta(:)
+integer, intent(in), optional :: k1
+integer, intent(in), optional :: k2
+integer, intent(in), optional :: nacf
+integer, intent(in), optional :: nlb
+integer, intent(in), optional :: niter
+real(kind=dp), allocatable :: x(:)
+integer :: k1_use
+
+if (n < 1) then
+   print *, "Error: masimfit() requires n > 0"
+   return
+end if
+if (size(theta) < 1) then
+   print *, "Error: masimfit() requires at least one MA coefficient"
+   return
+end if
+if (present(k1)) then
+   k1_use = k1
+else
+   k1_use = size(theta)
+end if
+if (k1_use < 0) then
+   print *, "Error: masimfit() lag order must be >= 0"
+   return
+end if
+
+x = masim(n, theta)
+if (present(k2)) then
+   if (present(nacf) .and. present(nlb) .and. present(niter)) then
+      call mafit(x, k1_use, k2, nacf=nacf, nlb=nlb, niter=niter, header=.true., true_theta=theta)
+   else if (present(nacf) .and. present(nlb)) then
+      call mafit(x, k1_use, k2, nacf=nacf, nlb=nlb, header=.true., true_theta=theta)
+   else if (present(nacf) .and. present(niter)) then
+      call mafit(x, k1_use, k2, nacf=nacf, niter=niter, header=.true., true_theta=theta)
+   else if (present(nlb) .and. present(niter)) then
+      call mafit(x, k1_use, k2, nlb=nlb, niter=niter, header=.true., true_theta=theta)
+   else if (present(nacf)) then
+      call mafit(x, k1_use, k2, nacf=nacf, header=.true., true_theta=theta)
+   else if (present(nlb)) then
+      call mafit(x, k1_use, k2, nlb=nlb, header=.true., true_theta=theta)
+   else if (present(niter)) then
+      call mafit(x, k1_use, k2, niter=niter, header=.true., true_theta=theta)
+   else
+      call mafit(x, k1_use, k2, header=.true., true_theta=theta)
+   end if
+else
+   if (present(nacf) .and. present(nlb) .and. present(niter)) then
+      call mafit(x, k1_use, nacf=nacf, nlb=nlb, niter=niter, header=.true., true_theta=theta)
+   else if (present(nacf) .and. present(nlb)) then
+      call mafit(x, k1_use, nacf=nacf, nlb=nlb, header=.true., true_theta=theta)
+   else if (present(nacf) .and. present(niter)) then
+      call mafit(x, k1_use, nacf=nacf, niter=niter, header=.true., true_theta=theta)
+   else if (present(nlb) .and. present(niter)) then
+      call mafit(x, k1_use, nlb=nlb, niter=niter, header=.true., true_theta=theta)
+   else if (present(nacf)) then
+      call mafit(x, k1_use, nacf=nacf, header=.true., true_theta=theta)
+   else if (present(nlb)) then
+      call mafit(x, k1_use, nlb=nlb, header=.true., true_theta=theta)
+   else if (present(niter)) then
+      call mafit(x, k1_use, niter=niter, header=.true., true_theta=theta)
+   else
+      call mafit(x, k1_use, header=.true., true_theta=theta)
+   end if
+end if
+end subroutine masimfit_scalar
+
+subroutine masimfit_vec(n, theta, kvec, nacf, nlb, niter)
+! simulate MA process and fit MA models for vector orders
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: theta(:)
+integer, intent(in) :: kvec(:)
+integer, intent(in), optional :: nacf
+integer, intent(in), optional :: nlb
+integer, intent(in), optional :: niter
+real(kind=dp), allocatable :: x(:)
+integer :: j
+
+if (n < 1) then
+   print *, "Error: masimfit() requires n > 0"
+   return
+end if
+if (size(theta) < 1) then
+   print *, "Error: masimfit() requires at least one MA coefficient"
+   return
+end if
+if (size(kvec) < 1) then
+   print *, "Error: masimfit() requires non-empty order vector"
+   return
+end if
+if (any(kvec < 0)) then
+   print *, "Error: masimfit() lag order must be >= 0"
+   return
+end if
+
+x = masim(n, theta)
+do j = 1, size(kvec)
+   if (present(nacf) .and. present(nlb) .and. present(niter)) then
+      call mafit(x, kvec(j), nacf=nacf, nlb=nlb, niter=niter, header=(j == 1), true_theta=theta)
+   else if (present(nacf) .and. present(nlb)) then
+      call mafit(x, kvec(j), nacf=nacf, nlb=nlb, header=(j == 1), true_theta=theta)
+   else if (present(nacf) .and. present(niter)) then
+      call mafit(x, kvec(j), nacf=nacf, niter=niter, header=(j == 1), true_theta=theta)
+   else if (present(nlb) .and. present(niter)) then
+      call mafit(x, kvec(j), nlb=nlb, niter=niter, header=(j == 1), true_theta=theta)
+   else if (present(nacf)) then
+      call mafit(x, kvec(j), nacf=nacf, header=(j == 1), true_theta=theta)
+   else if (present(nlb)) then
+      call mafit(x, kvec(j), nlb=nlb, header=(j == 1), true_theta=theta)
+   else if (present(niter)) then
+      call mafit(x, kvec(j), niter=niter, header=(j == 1), true_theta=theta)
+   else
+      call mafit(x, kvec(j), header=(j == 1), true_theta=theta)
+   end if
+end do
+end subroutine masimfit_vec
+
+subroutine armasimfit(n, ar, ma, pvec, qvec, niter)
+! simulate ARMA process and fit ARMA models over tensor-product order grid
+integer, intent(in) :: n
+real(kind=dp), intent(in) :: ar(:), ma(:)
+real(kind=dp), intent(in), optional :: pvec(:), qvec(:)
+integer, intent(in), optional :: niter
+real(kind=dp), allocatable :: x(:)
+integer, allocatable :: p_orders(:), q_orders(:)
+integer :: i, j, it
+logical :: first
+
+if (n < 1) then
+   print *, "Error: armasimfit() requires n > 0"
+   return
+end if
+if (size(ar) < 1) then
+   print *, "Error: armasimfit() requires non-empty AR coefficients"
+   return
+end if
+if (size(ma) < 1) then
+   print *, "Error: armasimfit() requires non-empty MA coefficients"
+   return
+end if
+if (present(niter)) then
+   it = niter
+else
+   it = 5
+end if
+if (it < 1) then
+   print *, "Error: armasimfit() iter must be >= 1"
+   return
+end if
+
+if (present(pvec)) then
+   if (size(pvec) < 1) then
+      print *, "Error: armasimfit() pvec must be non-empty"
+      return
+   end if
+   allocate (p_orders(size(pvec)))
+   p_orders = nint(pvec)
+else
+   allocate (p_orders(1))
+   p_orders(1) = size(ar)
+end if
+if (present(qvec)) then
+   if (size(qvec) < 1) then
+      print *, "Error: armasimfit() qvec must be non-empty"
+      return
+   end if
+   allocate (q_orders(size(qvec)))
+   q_orders = nint(qvec)
+else
+   allocate (q_orders(1))
+   q_orders(1) = size(ma)
+end if
+if (any(p_orders < 0) .or. any(q_orders < 0)) then
+   print *, "Error: armasimfit() orders must be >= 0"
+   return
+end if
+
+x = armasim(n, ar, ma)
+first = .true.
+do i = 1, size(p_orders)
+   do j = 1, size(q_orders)
+      call armafit(x, p_orders(i), q_orders(j), niter=it, header=first, true_ar=ar, true_ma=ma)
+      first = .false.
+   end do
+end do
+end subroutine armasimfit
+
+subroutine mafit(x, k1, k2, nacf, nlb, niter, header, true_theta)
 ! fit MA models and report RMSE/AIC/BIC and coefficients
 real(kind=dp), intent(in) :: x(:)
 integer, intent(in) :: k1
@@ -7179,17 +10313,20 @@ integer, intent(in), optional :: k2
 integer, intent(in), optional :: nacf
 integer, intent(in), optional :: nlb
 integer, intent(in), optional :: niter
+logical, intent(in), optional :: header
+real(kind=dp), intent(in), optional :: true_theta(:)
 integer :: n, k, k_start, k_end, n_eff, j, best_aic_k, best_bic_k, k_params
-integer :: iter, n_iter, df_lb
-real(kind=dp) :: aic, bic, best_aic, best_bic, sse, sigma2
-real(kind=dp) :: qstat, pval
-real(kind=dp), allocatable :: y(:), xmat(:,:), beta(:), xtx(:,:), xty(:)
-real(kind=dp), allocatable :: aicv(:), bicv(:), rmsev(:), coeffs(:,:)
+integer :: iter, n_iter, df_lb, df
+integer :: acf_lags, lb_lags
+real(kind=dp) :: aic, bic, best_aic, best_bic, sse, sigma2, loglik
+real(kind=dp) :: qstat, pval, mse, tval
+real(kind=dp), allocatable :: y(:), xmat(:,:), beta(:), xtx(:,:), xty(:), v(:)
+real(kind=dp), allocatable :: aicv(:), bicv(:), rmsev(:), loglikv(:), coeffs(:,:)
+real(kind=dp), allocatable :: se_ma(:,:), p_ma(:,:)
 real(kind=dp), allocatable :: eps(:), resid(:), resacf(:)
 logical, allocatable :: okv(:)
-logical :: ok
-character(len=18) :: s_rmse, s_aic, s_bic, s_q, s_p
-integer :: acf_lags, lb_lags
+logical :: ok, do_header
+character(len=18) :: s_rmse, s_aic, s_bic, s_ll, s_q, s_p
 
 n = size(x)
 if (n < 2) then
@@ -7223,15 +10360,19 @@ if (lb_lags < 0) then
    print *, "Error: lb lag count must be >= 0"
    return
 end if
+do_header = .true.
+if (present(header)) do_header = header
 
 best_aic = huge(1.0_dp)
 best_bic = huge(1.0_dp)
 best_aic_k = k_start
 best_bic_k = k_start
 
-allocate (aicv(0:k_end), bicv(0:k_end), rmsev(0:k_end), &
-          coeffs(0:k_end, 1:max(1, k_end)), okv(0:k_end))
-aicv = 0.0_dp; bicv = 0.0_dp; rmsev = 0.0_dp; coeffs = 0.0_dp; okv = .false.
+allocate (aicv(0:k_end), bicv(0:k_end), rmsev(0:k_end), loglikv(0:k_end), &
+          coeffs(0:k_end, 1:max(1, k_end)), okv(0:k_end), &
+          se_ma(0:k_end, 1:max(1, k_end)), p_ma(0:k_end, 1:max(1, k_end)))
+aicv = 0.0_dp; bicv = 0.0_dp; rmsev = 0.0_dp; loglikv = 0.0_dp; coeffs = 0.0_dp; okv = .false.
+se_ma = 0.0_dp; p_ma = 0.0_dp
 
 if (present(niter)) then
    n_iter = niter
@@ -7278,7 +10419,35 @@ do k = k_start, k_end
       call ma_resid(x, coeffs(k, 1:k), resid)
       sse = sum(resid(k + 1:n)**2)
       okv(k) = .true.
-      deallocate (eps, resid)
+
+      allocate (y(n_eff), xmat(n_eff, k))
+      y = x(k + 1:n)
+      do j = 1, k
+         xmat(:, j) = resid(k + 1 - j:n - j)
+      end do
+      xtx = matmul(transpose(xmat), xmat)
+      df = n_eff - k
+      if (df > 0 .and. sse > 0.0_dp) then
+         mse = sse / real(df, dp)
+      else
+         mse = 0.0_dp
+      end if
+      allocate (v(k))
+      do j = 1, k
+         call solve_linear(xtx, unit_vec(k, j), v, ok)
+         if (.not. ok) then
+            se_ma(k, j) = 0.0_dp
+            p_ma(k, j) = 0.0_dp
+         else
+            se_ma(k, j) = sqrt(max(0.0_dp, mse * v(j)))
+            if (se_ma(k, j) > 0.0_dp .and. df > 0) then
+               p_ma(k, j) = 2.0_dp * (1.0_dp - tcdf(abs(coeffs(k, j) / se_ma(k, j)), df))
+            else
+               p_ma(k, j) = 0.0_dp
+            end if
+         end if
+      end do
+      deallocate (eps, resid, y, xmat, xtx, v)
    end if
 
    if (n_eff > 0 .and. sse > 0.0_dp) then
@@ -7290,12 +10459,15 @@ do k = k_start, k_end
       end if
       aic = real(n_eff, dp) * log(sigma2) + 2.0_dp * real(k_params, dp)
       bic = real(n_eff, dp) * log(sigma2) + log(real(n_eff, dp)) * real(k_params, dp)
+      loglik = -0.5_dp * real(n_eff, dp) * (log(2.0_dp * pi * sigma2) + 1.0_dp)
    else
       aic = huge(1.0_dp)
       bic = huge(1.0_dp)
+      loglik = -huge(1.0_dp)
    end if
    aicv(k) = aic
    bicv(k) = bic
+   loglikv(k) = loglik
    if (n_eff > 0) then
       rmsev(k) = sqrt(sse / real(n_eff, dp))
    else
@@ -7311,40 +10483,84 @@ do k = k_start, k_end
    end if
 end do
 
-print "(a6,a18,a18,a18)", "lag", "RMSE", "AIC", "BIC"
+if (do_header) then
+   print "(a,a)", "method: ", "ls"
+   print "(a,i0)", "#obs: ", n
+end if
+print *
+print "(a5,a14,a14,a14,a14)", "order", "RMSE", "loglik", "AIC", "BIC"
 do k = k_start, k_end
    if (.not. okv(k)) then
-      print "(i6,3a18)", k, "NaN", "NaN", "NaN"
+      print "(i5,a14,a14,a14,a14)", k, "NaN", "NaN", "NaN", "NaN"
    else
-      write (s_rmse, "(f18.6)") rmsev(k)
-      write (s_aic, "(f18.6)") aicv(k)
-      write (s_bic, "(f18.6)") bicv(k)
-      print "(i6,a18,a18,a18)", k, s_rmse, s_aic, s_bic
+      write (s_rmse, "(g18.6)") rmsev(k)
+      write (s_ll, "(g18.6)") loglikv(k)
+      write (s_aic, "(g18.6)") aicv(k)
+      write (s_bic, "(g18.6)") bicv(k)
+      print "(i5,a14,a14,a14,a14)", k, s_rmse, s_ll, s_aic, s_bic
    end if
 end do
 
 print *
-print "(a6)", "lag"
-write (*, "(6x)", advance="no")
-do j = 1, k_end
-   write (s_rmse, "(a,i0)") "MA", j
-   write (*, "(1x,a12)", advance="no") trim(s_rmse)
-end do
-print *
 do k = k_start, k_end
    if (.not. okv(k)) then
       print "(i6,1x,a)", k, "NaN"
-   else
-      write (*, "(i6)", advance="no") k
+      cycle
+   end if
+   if (k == 0) cycle
+   if (k_start /= k_end) then
+      print "(a,i0)", "order ", k
+   end if
+   write (*, "(9x)", advance="no")
+   do j = 1, k_end
+      write (s_rmse, "(a,i0)") "MA", j
+      write (*, "(1x,a12)", advance="no") trim(s_rmse)
+   end do
+   print *
+   if (present(true_theta)) then
+      write (*, "(3x,a8)", advance="no") "true"
       do j = 1, k_end
          if (j <= k) then
-            write (*, "(1x,f12.6)", advance="no") coeffs(k, j)
+            if (j <= size(true_theta)) then
+               tval = true_theta(j)
+            else
+               tval = 0.0_dp
+            end if
+            write (*, "(1x,f12.6)", advance="no") tval
          else
             write (*, "(1x,a12)", advance="no") ""
          end if
       end do
       print *
    end if
+   write (*, "(3x,a8)", advance="no") "est"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") coeffs(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "std_err"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") se_ma(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   write (*, "(3x,a8)", advance="no") "p_value"
+   do j = 1, k_end
+      if (j <= k) then
+         write (*, "(1x,f12.6)", advance="no") p_ma(k, j)
+      else
+         write (*, "(1x,a12)", advance="no") ""
+      end if
+   end do
+   print *
+   if (k < k_end) print *
 end do
 
 if (k_end > k_start) then
@@ -7366,25 +10582,24 @@ if (acf_lags > 0) then
    do k = k_start, k_end
       if (.not. okv(k)) then
          print "(i6,1x,a)", k, "NaN"
-      else
-         if (k == 0) then
-            allocate (resid(n))
-            resid = x - mean(x)
-            resacf = acf(resid, acf_lags)
-         else
-            n_eff = n - k
-            allocate (resid(n))
-            call ma_resid(x, coeffs(k, 1:k), resid)
-            resacf = acf(resid(k + 1:n), acf_lags)
-         end if
-         write (*, "(i6)", advance="no") k
-         do j = 1, acf_lags
-            write (*, "(1x,f12.6)", advance="no") resacf(j)
-         end do
-         print *
-         deallocate (resid, resacf)
-      end if
-   end do
+       else
+          if (k == 0) then
+             allocate (resid(n))
+             resid = x - mean(x)
+             resacf = acf(resid, acf_lags)
+          else
+             allocate (resid(n))
+             call ma_resid(x, coeffs(k, 1:k), resid)
+             resacf = acf(resid(k + 1:n), acf_lags)
+          end if
+          write (*, "(i6)", advance="no") k
+          do j = 1, acf_lags
+             write (*, "(1x,f12.6)", advance="no") resacf(j)
+          end do
+          print *
+          deallocate (resid, resacf)
+       end if
+    end do
 end if
 
 if (lb_lags > 0) then
@@ -7414,8 +10629,8 @@ if (lb_lags > 0) then
          df_lb = lb_lags - k
          if (df_lb < 1) df_lb = 1
          pval = 1.0_dp - chisq_cdf(qstat, df_lb)
-         write (s_q, "(f18.6)") qstat
-         write (s_p, "(f18.6)") pval
+         write (s_q, "(g18.6)") qstat
+         write (s_p, "(g18.6)") pval
          print "(i6,a18,i8,a18)", k, s_q, df_lb, s_p
          deallocate (resid, resacf)
       end if
@@ -7769,5 +10984,20 @@ mean_x = mean(x)
 sd_x = sd(x)
 kurtosis_val = sum(((x - mean_x) / sd_x)**4) / n - 3.0_dp
 end function kurtosis
+
+pure function lowercase(s) result(out)
+! convert ASCII letters to lowercase
+character(len=*), intent(in) :: s
+character(len=len(s)) :: out
+integer :: i, c
+do i = 1, len(s)
+   c = iachar(s(i:i))
+   if (c >= iachar('A') .and. c <= iachar('Z')) then
+      out(i:i) = achar(c + 32)
+   else
+      out(i:i) = s(i:i)
+   end if
+end do
+end function lowercase
 
 end module stats_mod

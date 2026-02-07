@@ -2,16 +2,153 @@ module util_mod
 use kind_mod, only: dp
 implicit none
 private
-public :: matched_parentheses, matched_brackets, arange, head, &
+public :: matched_parentheses, matched_brackets, arange, irange, head, &
    tail, grid, print_real, replace, is_numeral, is_letter, &
    is_alphanumeric, zeros, ones, windows, rep, matrix, read_vec, &
-   reverse
+   reverse, runif1, polyroots
 
 interface rep
    module procedure rep_vec
 end interface rep
 
+interface arange
+   module procedure arange1
+   module procedure arange2
+   module procedure arange3
+end interface arange
+
+interface irange
+   module procedure irange1
+   module procedure irange2
+   module procedure irange3
+end interface irange
+
+interface polyroots
+   module procedure polyroots_real
+   module procedure polyroots_int
+end interface polyroots
+
 contains
+
+function runif1() result(y)
+real(kind=dp) :: y
+call random_number(y)
+end function runif1
+
+function polyroots_real(a) result(r)
+! roots of polynomial a(1) + a(2)*x + ... + a(n)*x^(n-1)
+! returned as [Re(z1), Im(z1), Re(z2), Im(z2), ...]
+real(kind=dp), intent(in) :: a(:)
+real(kind=dp), allocatable :: r(:)
+complex(kind=dp), allocatable :: coef(:), z(:), znew(:)
+complex(kind=dp) :: pval, denom, delta
+real(kind=dp), parameter :: eps = 1.0e-12_dp, tol = 1.0e-10_dp
+integer, parameter :: max_iter = 200
+real(kind=dp) :: twopi, angle, maxc, radius, delta_max
+integer :: i, j, iter, ilo, ihi, nred, nzero, ntotal, idx
+
+if (size(a) < 2) then
+   allocate (r(0))
+   return
+end if
+
+ilo = 0
+do i = 1, size(a)
+   if (abs(a(i)) > eps) then
+      ilo = i
+      exit
+   end if
+end do
+if (ilo == 0) then
+   allocate (r(0))
+   return
+end if
+
+ihi = 0
+do i = size(a), 1, -1
+   if (abs(a(i)) > eps) then
+      ihi = i
+      exit
+   end if
+end do
+if (ihi <= 1) then
+   allocate (r(0))
+   return
+end if
+
+ntotal = ihi - 1
+nzero = ilo - 1
+nred = ihi - ilo
+allocate (r(2*ntotal))
+r = 0.0_dp
+if (nred < 1) return
+
+allocate (coef(0:nred))
+do i = 0, nred
+   coef(i) = cmplx(a(ilo + i), 0.0_dp, kind=dp)
+end do
+coef = coef / coef(nred)
+
+maxc = 0.0_dp
+do i = 0, nred - 1
+   maxc = max(maxc, abs(coef(i)))
+end do
+radius = 1.0_dp + maxc
+twopi = 2.0_dp*acos(-1.0_dp)
+
+allocate (z(nred), znew(nred))
+do i = 1, nred
+   angle = twopi*real(i - 1, dp)/real(nred, dp)
+   z(i) = cmplx(radius*cos(angle), radius*sin(angle), kind=dp)
+end do
+
+do iter = 1, max_iter
+   delta_max = 0.0_dp
+   do i = 1, nred
+      pval = poly_eval_complex(coef, nred, z(i))
+      denom = cmplx(1.0_dp, 0.0_dp, kind=dp)
+      do j = 1, nred
+         if (j /= i) denom = denom*(z(i) - z(j))
+      end do
+      if (abs(denom) < eps) denom = denom + cmplx(eps, eps, kind=dp)
+      delta = pval/denom
+      znew(i) = z(i) - delta
+      delta_max = max(delta_max, abs(delta))
+   end do
+   z = znew
+   if (delta_max < tol) exit
+end do
+
+idx = 1
+do i = 1, nzero
+   r(idx) = 0.0_dp
+   r(idx + 1) = 0.0_dp
+   idx = idx + 2
+end do
+do i = 1, nred
+   r(idx) = real(z(i), kind=dp)
+   r(idx + 1) = aimag(z(i))
+   idx = idx + 2
+end do
+end function polyroots_real
+
+function polyroots_int(a) result(r)
+integer, intent(in) :: a(:)
+real(kind=dp), allocatable :: r(:)
+r = polyroots_real(real(a, kind=dp))
+end function polyroots_int
+
+pure function poly_eval_complex(c, n, z) result(v)
+complex(kind=dp), intent(in) :: c(0:)
+integer, intent(in) :: n
+complex(kind=dp), intent(in) :: z
+complex(kind=dp) :: v
+integer :: i
+v = c(n)
+do i = n - 1, 0, -1
+   v = v*z + c(i)
+end do
+end function poly_eval_complex
 
 elemental logical function matched_parentheses(s) result(is_valid)
 !> Returns .true. if parentheses in input string are balanced
@@ -49,7 +186,7 @@ elemental logical function matched_brackets(s) result(is_valid)
   is_valid = balance == 0
 end function matched_brackets
 
-pure function arange(n) result(vec)
+pure function arange1(n) result(vec)
 ! return an array of 1.0 through n inclusive
 integer, intent(in) :: n
 real(kind=dp) :: vec(n)
@@ -57,7 +194,108 @@ integer :: i
 do i=1,n
    vec(i) = real(i, kind=dp)
 end do
-end function arange
+end function arange1
+
+pure function arange2(start, stop) result(vec)
+! return an array from start to stop inclusive with step 1.0
+real(kind=dp), intent(in) :: start, stop
+real(kind=dp), allocatable :: vec(:)
+vec = arange3(start, stop, 1.0_dp)
+end function arange2
+
+pure function arange3(start, stop, step) result(vec)
+! return an array from start to stop inclusive with given step
+real(kind=dp), intent(in) :: start, stop, step
+real(kind=dp), allocatable :: vec(:)
+real(kind=dp) :: val, eps
+integer :: n, i
+
+eps = 1.0e-12_dp
+if (step == 0.0_dp) then
+   allocate (vec(0))
+   return
+end if
+if ((step > 0.0_dp .and. stop < start) .or. (step < 0.0_dp .and. stop > start)) then
+   allocate (vec(0))
+   return
+end if
+
+n = 0
+val = start
+if (step > 0.0_dp) then
+   do while (val <= stop + eps)
+      n = n + 1
+      val = val + step
+   end do
+else
+   do while (val >= stop - eps)
+      n = n + 1
+      val = val + step
+   end do
+end if
+
+allocate (vec(n))
+val = start
+do i = 1, n
+   vec(i) = val
+   val = val + step
+end do
+end function arange3
+
+pure function irange1(n) result(vec)
+! return an integer array of 1 through n inclusive
+integer, intent(in) :: n
+integer :: vec(n)
+integer :: i
+do i = 1, n
+   vec(i) = i
+end do
+end function irange1
+
+pure function irange2(start, stop) result(vec)
+! return an integer array from start to stop inclusive with step 1
+integer, intent(in) :: start, stop
+integer, allocatable :: vec(:)
+vec = irange3(start, stop, 1)
+end function irange2
+
+pure function irange3(start, stop, step) result(vec)
+! return an integer array from start to stop inclusive with given step
+integer, intent(in) :: start, stop, step
+integer, allocatable :: vec(:)
+integer :: val, n, i
+
+if (step == 0) then
+   allocate (vec(0))
+   return
+end if
+if ((step > 0 .and. stop < start) .or. (step < 0 .and. stop > start)) then
+   allocate (vec(0))
+   return
+end if
+
+n = 0
+val = start
+if (step > 0) then
+   do while (val <= stop)
+      n = n + 1
+      val = val + step
+   end do
+else
+   do while (val >= stop)
+      n = n + 1
+      val = val + step
+   end do
+end if
+
+allocate (vec(n))
+val = start
+do i = 1, n
+   vec(i) = val
+   val = val + step
+end do
+end function irange3
+
 
 pure function grid(n, x0, xh) result(vec)
 ! return a grid of n values starting at x0 with increment of xh

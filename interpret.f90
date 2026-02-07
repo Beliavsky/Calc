@@ -1,13 +1,13 @@
 module interpret_mod
    use kind_mod, only: dp
-   use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, arsim, masim, armasim, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, arfimafit, mssk, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+  use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, armastab, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_hyperb, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
-   use util_mod, only: matched_brackets, matched_parentheses, arange, &
+  use util_mod, only: matched_brackets, matched_parentheses, arange, irange, &
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
-                       rep, read_vec, reverse
-   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+                       rep, read_vec, reverse, runif1, polyroots
+   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged, random_seed_init
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version
    use plot_mod, only: plot, plot_to_label, set_plotout, get_plotout
@@ -484,7 +484,7 @@ contains
          character(len=*), intent(in) :: line_in
          integer, intent(out) :: n
          character(len=:), allocatable :: parts(:)
-         integer :: i, start, len_line, newlen, nlen_tail
+         integer :: i, start, len_line, newlen, nlen_tail, oldlen
 
          n = 0
          len_line = len_trim(line_in)
@@ -504,7 +504,12 @@ contains
          end do
          nlen_tail = min(i - 1, len_line)
             if (nlen_tail < start) cycle
-            newlen = max(nlen_tail - start + 1, merge(0, len(parts(1)), allocated(parts)))
+            if (allocated(parts)) then
+               oldlen = len(parts(1))
+            else
+               oldlen = 0
+            end if
+            newlen = max(nlen_tail - start + 1, oldlen)
             if (.not. allocated(parts)) then
                allocate (character(len=newlen) :: parts(1))
             else if (len(parts(1)) < newlen) then
@@ -2275,7 +2280,7 @@ contains
          ! and return it as a one-element array num
          real(kind=dp), allocatable :: num(:)
          character(len=64) :: buf
-         integer :: i
+         integer :: i, ios
          real(kind=dp) :: tmp
          call skip_spaces()
          i = 0
@@ -2284,7 +2289,19 @@ contains
             buf(i:i) = curr_char
             call next_char()
          end do
-         read (buf(1:i), *) tmp
+         if (i <= 0) then
+            eval_error = .true.
+            print *, "Error: expected numeric literal"
+            num = [bad_value]
+            return
+         end if
+         read (buf(1:i), *, iostat=ios) tmp
+         if (ios /= 0) then
+            eval_error = .true.
+            print *, "Error: invalid numeric literal: ", trim(buf(1:i))
+            num = [bad_value]
+            return
+         end if
          num = [tmp]
       end function parse_number
 
@@ -2395,13 +2412,14 @@ contains
          integer, allocatable :: idxv(:)
          character(len=len_name) :: id
          character(len=:), allocatable :: idxs
-         integer :: nsize, pstart, pend, depth, n1, n2, dim_val, nstart_i
+         integer :: nsize, pstart, pend, depth, n1, n2, dim_val, nstart_i, p0
          integer :: n_args, i_arg
-         logical :: is_neg, have_second, verbose_opt, plot_opt
+         logical :: is_neg, have_second, verbose_opt, plot_opt, skip_positional
          logical :: toplevel_colon, toplevel_comma, have_dim
          character(len=len_name) :: look_name    ! NEW
-         type(arr_t), allocatable :: args(:)
-         character(len=:), allocatable :: labels(:), pred_labels(:)
+      type(arr_t), allocatable :: args(:)
+      character(len=:), allocatable :: labels(:), pred_labels(:)
+         f = [real(kind=dp) ::]
          have_dim = .false.
          dim_val = 1
          call skip_spaces()
@@ -2435,21 +2453,32 @@ contains
          case ("[")                                    ! array literal
             f = parse_array()
 
-        case default
-            if (pos - 1 + 5 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 5)) == ".true.") then
-               f = [1.0_dp]
-               call advance_token(6)
-            else if (pos - 1 + 6 <= lenstr .and. lower_str(expr(pos - 1:pos - 1 + 6)) == ".false.") then
-               f = [0.0_dp]
-               call advance_token(7)
-            else if (is_numeral(curr_char) .or. curr_char == ".") then
+         case default
+            p0 = pos - 1
+            if (p0 >= 1) then
+               if (p0 + 5 <= lenstr) then
+                  if (lower_str(expr(p0:p0 + 5)) == ".true.") then
+                     f = [1.0_dp]
+                     call advance_token(6)
+                     return
+                  end if
+               end if
+               if (p0 + 6 <= lenstr) then
+                  if (lower_str(expr(p0:p0 + 6)) == ".false.") then
+                     f = [0.0_dp]
+                     call advance_token(7)
+                     return
+                  end if
+               end if
+            end if
+            if (is_numeral(curr_char) .or. starts_decimal_literal()) then
                f = parse_number()
-
+ 
             else if (is_letter(curr_char)) then
-
+ 
                id = parse_identifier()
                call skip_spaces()
-
+ 
                !-----------------------------------------------------------------
                if (curr_char == "(") then            !  id()
                   call next_char()                   !  consume "("
@@ -2469,41 +2498,83 @@ contains
                         character(len=:), allocatable :: fname
                         integer                       :: icol
                         real(dp), allocatable         :: tmp(:)
-                        integer                       :: q1, q2, save_pos
+                        integer                       :: q1, q2, save_pos, start_pos, end_pos
+                        character(len=1)              :: quote
                         character(len=len_name)       :: kw
 
                         icol = 1                     ! default column
                         call skip_spaces()
-
-                        ! ---- first argument : a quoted string --------------------
-                        if (curr_char /= '"') then
+                        ! ---- first argument : quoted or bare file name ------------
+                        start_pos = pos - 1
+                        do while (start_pos <= lenstr)
+                           if (expr(start_pos:start_pos) /= " ") exit
+                           start_pos = start_pos + 1
+                        end do
+                        if (start_pos > lenstr) then
                            print *, "Error: read(): first argument must be a quoted file name"
                            eval_error = .true.; f = [bad_value]; return
                         end if
 
-                        q1 = pos - 1                 ! opening quote location in EXPR
-                        q2 = q1
-                        if (debug_read) print *, "q1, q2 =", q1, q2
-                        do
-                           q2 = q2 + 1
-                           if (q2 > lenstr) then
+                        q1 = index(expr(start_pos:), '"')
+                        if (q1 > 0) q1 = q1 + start_pos - 1
+                        q2 = index(expr(start_pos:), "'")
+                        if (q2 > 0) q2 = q2 + start_pos - 1
+
+                        if (q1 > 0 .or. q2 > 0) then
+                           if (q1 == 0) then
+                              q1 = q2
+                              quote = "'"
+                           else if (q2 == 0) then
+                              quote = '"'
+                           else if (q1 <= q2) then
+                              quote = '"'
+                           else
+                              q1 = q2
+                              quote = "'"
+                           end if
+
+                           q2 = index(expr(q1 + 1:), quote)
+                           if (q2 == 0) then
                               print *, "Error: unmatched quote in read()"
                               eval_error = .true.; f = [bad_value]; return
                            end if
-                           if (expr(q2:q2) == '"') exit
-                        end do
-                        fname = expr(q1 + 1:q2 - 1)      ! file name without quotes
-                        if (debug_read) then
-                           print *, "fname =", trim(fname)
-                        end if
-                        ! advance cursor to first char after closing quote
-                        pos = q2 + 1
-                        if (pos > lenstr) then
-                           curr_char = char(0)
+                           q2 = q2 + q1
+                           fname = expr(q1 + 1:q2 - 1)      ! file name without quotes
+                           if (debug_read) then
+                              print *, "fname =", trim(fname)
+                           end if
+                           ! advance cursor to first char after closing quote
+                           pos = q2 + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos); pos = pos + 1
+                           end if
+                           call skip_spaces()
                         else
-                           curr_char = expr(pos:pos); pos = pos + 1
+                           end_pos = start_pos
+                           do while (end_pos <= lenstr)
+                              if (expr(end_pos:end_pos) == "," .or. &
+                                  expr(end_pos:end_pos) == ")" .or. &
+                                  expr(end_pos:end_pos) == " ") exit
+                              end_pos = end_pos + 1
+                           end do
+                           if (end_pos <= start_pos) then
+                              print *, "Error: read(): first argument must be a quoted file name"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           fname = expr(start_pos:end_pos - 1)
+                           if (debug_read) then
+                              print *, "fname =", trim(fname)
+                           end if
+                           pos = end_pos
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos); pos = pos + 1
+                           end if
+                           call skip_spaces()
                         end if
-                        call skip_spaces()
 
                         ! ---- optional  ,  [col =] n  -----------------------------
                         if (curr_char == ",") then
@@ -2560,8 +2631,7 @@ contains
                      call next_char()                !  consume ")"
                      select case (trim(id))
                      case ("runif")
-                        allocate (f(1))
-                        call random_number(f(1))
+                        f = [runif1()]
                      case ("rnorm")
                         f = random_normal(1)
                      case ("mssk_exp")
@@ -2637,17 +2707,97 @@ contains
                      return
                   end if
 
-                  !------------- first argument -----------------------------------
-                  arg1 = parse_expression()
-                  if (eval_error) then
-                     f = [bad_value]; return
+                  if (trim(id) == "seed") then
+                     block
+                        integer :: n_args, iseed, nburn
+                        logical :: print_seed
+                        character(len=:), allocatable :: labels(:)
+                        real(kind=dp), allocatable :: tmp(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 1 .or. n_args > 3) then
+                           print *, "Error: seed() expects 1 to 3 arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        tmp = evaluate(adjustl(labels(1)))
+                        if (eval_error .or. size(tmp) /= 1) then
+                           print *, "Error: seed() requires scalar seed"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        iseed = nint(tmp(1))
+                        nburn = 0
+                        print_seed = .false.
+                        if (n_args >= 2) then
+                           tmp = evaluate(adjustl(labels(2)))
+                           if (eval_error .or. size(tmp) /= 1) then
+                              print *, "Error: seed() nburn must be scalar"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           nburn = nint(tmp(1))
+                        end if
+                        if (n_args >= 3) then
+                           tmp = evaluate(adjustl(labels(3)))
+                           if (eval_error .or. size(tmp) /= 1) then
+                              print *, "Error: seed() print_seed must be scalar"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           print_seed = (tmp(1) /= 0.0_dp)
+                        end if
+                        if (n_args == 1) then
+                           call random_seed_init(iseed)
+                        else if (n_args == 2) then
+                           call random_seed_init(iseed, nburn=nburn)
+                        else
+                           call random_seed_init(iseed, nburn=nburn, print_seed=print_seed)
+                        end if
+                        f = [0.0_dp]
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        return
+                     end block
                   end if
 
-! after ARG1 has been parsed
-                  call skip_spaces()
+                  !------------- first argument -----------------------------------
+                  skip_positional = .false.
+                  if (trim(id) == "armaspec") then
+                     block
+                        integer :: nargs_tmp, eq_tmp
+                        character(len=:), allocatable :: tok_tmp, key_tmp
+                        character(len=:), allocatable :: labs_tmp(:)
+                        call split_by_comma(expr(pstart:pend - 1), nargs_tmp, labs_tmp)
+                        if (nargs_tmp >= 1) then
+                           tok_tmp = adjustl(labs_tmp(1))
+                           eq_tmp = index(tok_tmp, "=")
+                           if (eq_tmp > 0) then
+                              key_tmp = lower_str(adjustl(tok_tmp(:eq_tmp - 1)))
+                              if (index(key_tmp, "ar") == 1 .or. index(key_tmp, "ma") == 1) then
+                                 skip_positional = .true.
+                              end if
+                           end if
+                        end if
+                     end block
+                  end if
+
+                  if (trim(id) == "distaicscan") then
+                     skip_positional = .true.
+                  end if
+                  if (trim(id) == "armastab") then
+                     skip_positional = .true.
+                  end if
+
+                  if (.not. skip_positional) then
+                     arg1 = parse_expression()
+                     if (eval_error) then
+                        f = [bad_value]; return
+                     end if
+                     call skip_spaces()
+                  end if
                   have_second = .false.
 
-                  if (curr_char == ",") then
+                  if (.not. skip_positional .and. curr_char == ",") then
                      if (any(trim(id) == [character(len=len_name) :: &
                                           "sum", "product", "minval", "maxval"])) then
                         !------------------------------------------------------------
@@ -2706,7 +2856,7 @@ contains
                            curr_char = expr(pos:pos); pos = pos + 1
                         end if
                         have_second = .false.
-                     else if (trim(id) == "armafitaic" .or. trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic") then
+                     else if (trim(id) == "armafitaic" .or. trim(id) == "araic" .or. trim(id) == "maaic" .or. trim(id) == "arspecaic" .or. trim(id) == "armaspec" .or. trim(id) == "armaspecaic" .or. trim(id) == "arma_mt_spec" .or. trim(id) == "armaaic_mt_spec" .or. trim(id) == "welchspec" .or. trim(id) == "pgramspec" .or. trim(id) == "mtspec" .or. trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic" .or. trim(id) == "fit_t" .or. trim(id) == "fit_nct") then
                         !------------------------------------------------------------
                         !  armafitaic/cpfit: allow keyword-only argument after first arg
                         !------------------------------------------------------------
@@ -2807,7 +2957,7 @@ contains
                      block
                         logical :: have_n, replace_flag
                         integer :: n_rs, eqpos
-                        character(len=:), allocatable :: tok, ltok, rval
+                        character(len=256) :: tok, ltok, rval
                         real(kind=dp), allocatable :: tmp(:)
 
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
@@ -3005,7 +3155,7 @@ contains
                         character(len=:), allocatable :: tok, ltok, rval, acf_title
                         real(kind=dp), allocatable :: tmp(:), lags(:)
 
-                        do_plot = .false.
+                        do_plot = .true.
 
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
                         if (n_args > 3) then
@@ -3088,7 +3238,7 @@ contains
                         character(len=:), allocatable :: tok, ltok, rval, pacf_title
                         real(kind=dp), allocatable :: tmp(:), lags(:)
 
-                        do_plot = .false.
+                        do_plot = .true.
 
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
                         if (n_args > 3) then
@@ -3159,6 +3309,1710 @@ contains
                                        call plot(lags, f, title=pacf_title)
                                     end if
                                  end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("arspec")
+                     block
+                        logical :: do_plot
+                        integer :: eqpos, nfreq_i, j
+                        integer, allocatable :: orders(:)
+                        character(len=:), allocatable :: tok, ltok, rval, sp_title
+                        character(len=16) :: method_s
+                        character(len=16), allocatable :: legends(:)
+                        real(kind=dp), allocatable :: tmp(:), freq(:), y2(:,:), sj(:)
+
+                        do_plot = .false.
+                        nfreq_i = 256
+                        method_s = "ls"
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 5) then
+                           print *, "Error: arspec() takes at most five arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           if (n_args >= 3) then
+                              ! consume everything through ')' for optional-argument parsing
+                              pos = pend + 1
+                              if (pos > lenstr) then
+                                 curr_char = char(0)
+                              else
+                                 curr_char = expr(pos:pos)
+                                 pos = pos + 1
+                              end if
+                              do i_arg = 3, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos /= 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error) then
+                                             f = [bad_value]
+                                             exit
+                                          else if (size(tmp) /= 1) then
+                                             print *, "Error: plot must be scalar"
+                                             eval_error = .true.; f = [bad_value]
+                                             exit
+                                          else
+                                             do_plot = (tmp(1) /= 0.0_dp)
+                                          end if
+                                       end if
+                                    else if (index(ltok, "nfreq") == 1) then
+                                        tmp = evaluate(rval)
+                                        if (eval_error) then
+                                           f = [bad_value]
+                                           exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]
+                                          exit
+                                        else
+                                           nfreq_i = nint(tmp(1))
+                                        end if
+                                    else if (index(ltok, "method") == 1) then
+                                       method_s = lower_str(trim(rval))
+                                       if (len_trim(method_s) >= 2) then
+                                          if (method_s(1:1) == "'" .or. method_s(1:1) == '"') method_s = method_s(2:)
+                                          if (method_s(len_trim(method_s):len_trim(method_s)) == "'" .or. method_s(len_trim(method_s):len_trim(method_s)) == '"') &
+                                             method_s = method_s(:len_trim(method_s) - 1)
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in arspec()"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                 else
+                                    if (i_arg == 3) then
+                                       if (ltok == ".false." .or. ltok == "false" .or. ltok == "f") then
+                                          do_plot = .false.
+                                       else if (ltok == ".true." .or. ltok == "true" .or. ltok == "t") then
+                                          do_plot = .true.
+                                       else
+                                          tmp = evaluate(tok)
+                                          if (eval_error) then
+                                             f = [bad_value]
+                                             exit
+                                          else if (size(tmp) /= 1) then
+                                             print *, "Error: third argument of arspec() must be scalar"
+                                             eval_error = .true.; f = [bad_value]
+                                             exit
+                                          else
+                                             nfreq_i = nint(tmp(1))
+                                          end if
+                                       end if
+                                    else if (i_arg == 4) then
+                                       tmp = evaluate(tok)
+                                       if (eval_error) then
+                                          f = [bad_value]
+                                          exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]
+                                          exit
+                                       else
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    end if
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_second) then
+                                 print *, "Error: function needs two arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg2) < 1) then
+                                 print *, "Error: second argument of arspec() must be non-empty"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 3) then
+                                 print *, "Error: arspec() needs size(x) >= 3"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                    if (size(arg2) == 1) then
+                                       n1 = nint(arg2(1))
+                                    if (n1 < 0 .or. n1 > size(arg1) - 2) then
+                                       print *, "Error: arspec() order must be between 0 and ", size(arg1) - 2
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = arspec(arg1, n1, nfreq=max(16, nfreq_i), plot=.false., method=trim(method_s))
+                                       if (do_plot) then
+                                          freq = grid(size(f), 0.0_dp, 0.5_dp)
+                                          sp_title = "arspec(" // trim(labels(1)) // ", " // trim(labels(2)) // ")"
+                                          call plot(freq, f, title=sp_title)
+                                       end if
+                                    end if
+                                 else
+                                    allocate (orders(size(arg2)))
+                                    orders = nint(arg2)
+                                    if (any(orders < 0) .or. any(orders > size(arg1) - 2)) then
+                                       print *, "Error: each arspec() order must be between 0 and ", size(arg1) - 2
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = arspec(arg1, orders(size(orders)), nfreq=max(16, nfreq_i), plot=.false., method=trim(method_s))
+                                       if (do_plot .and. size(f) > 0) then
+                                          allocate (y2(size(f), size(orders)), legends(size(orders)))
+                                          do j = 1, size(orders)
+                                             sj = arspec(arg1, orders(j), nfreq=size(f), plot=.false., method=trim(method_s))
+                                             if (size(sj) == size(f)) then
+                                                y2(:, j) = sj
+                                             else
+                                                y2(:, j) = bad_value
+                                             end if
+                                             write (legends(j), "(a,i0)") "p=", orders(j)
+                                          end do
+                                          freq = grid(size(f), 0.0_dp, 0.5_dp)
+                                          sp_title = "arspec(" // trim(labels(1)) // ", p)"
+                                          call plot(freq, y2, title=sp_title, xlabel="frequency", legend_labels=legends)
+                                       end if
+                                    end if
+                                    if (allocated(orders)) deallocate (orders)
+                                    if (allocated(y2)) deallocate (y2)
+                                    if (allocated(legends)) deallocate (legends)
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("arspecaic")
+                     block
+                        logical :: do_plot
+                        integer :: pmax_i, nfreq_i, iter_i, eqpos
+                        logical :: have_pmax
+                        character(len=256) :: tok, ltok, rval
+                        character(len=16) :: method_s
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        do_plot = .true.
+                        pmax_i = min(10, max(0, size(arg1) - 2))
+                        nfreq_i = 256
+                        iter_i = 5
+                        have_pmax = .false.
+                        method_s = "ls"
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 6) then
+                           print *, "Error: arspecaic() takes at most six arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           ! consume through ')' so parser does not leave trailing text
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error) then
+                                             f = [bad_value]; exit
+                                          else if (size(tmp) /= 1) then
+                                             print *, "Error: plot must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          else
+                                             do_plot = (tmp(1) /= 0.0_dp)
+                                          end if
+                                       end if
+                                    else if (index(ltok, "pmax") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: pmax must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       else
+                                          pmax_i = nint(tmp(1))
+                                          have_pmax = .true.
+                                       end if
+                                    else if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       else
+                                          nfreq_i = nint(tmp(1))
+                                       end if
+                                    else if (index(ltok, "iter") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: iter must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       else
+                                          iter_i = nint(tmp(1))
+                                       end if
+                                    else if (index(ltok, "method") == 1) then
+                                       method_s = lower_str(trim(rval))
+                                       if (len_trim(method_s) >= 2) then
+                                          if (method_s(1:1) == "'" .or. method_s(1:1) == '"') method_s = method_s(2:)
+                                          if (method_s(len_trim(method_s):len_trim(method_s)) == "'" .or. method_s(len_trim(method_s):len_trim(method_s)) == '"') &
+                                             method_s = method_s(:len_trim(method_s) - 1)
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in arspecaic()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error) then
+                                       f = [bad_value]; exit
+                                    else if (size(tmp) /= 1) then
+                                       print *, "Error: positional optional arguments to arspecaic() must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    else if (.not. have_pmax) then
+                                       pmax_i = nint(tmp(1))
+                                       have_pmax = .true.
+                                    else if (nfreq_i == 256) then
+                                       nfreq_i = nint(tmp(1))
+                                    else if (i_arg == 4) then
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    else
+                                       iter_i = nint(tmp(1))
+                                    end if
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (size(arg1) < 3) then
+                                 print *, "Error: arspecaic() needs size(x) >= 3"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (pmax_i < 0) then
+                                 print *, "Error: arspecaic() pmax must be >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: arspecaic() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (iter_i < 1) then
+                                 print *, "Error: arspecaic() iter must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = arspecaic(arg1, pmax=min(pmax_i, size(arg1) - 2), &
+                                               nfreq=max(16, nfreq_i), plot=do_plot, niter=iter_i, method=trim(method_s))
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("armaspec")
+                     block
+                        logical :: do_plot
+                        integer :: p_i, q_i, nfreq_i, iter_i, eqpos
+                        logical :: have_p, have_q, theory_mode, have_ar, have_ma, have_sigma2
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:), ar_v(:), ma_v(:)
+                        real(kind=dp) :: sigma2_v
+
+                        do_plot = .true.
+                        nfreq_i = 256
+                        iter_i = 5
+                        p_i = 0
+                        q_i = 0
+                        have_p = .false.
+                        have_q = .false.
+                        theory_mode = .false.
+                        have_ar = .false.
+                        have_ma = .false.
+                        have_sigma2 = .false.
+                        sigma2_v = 1.0_dp
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 1 .or. n_args > 9) then
+                           print *, "Error: armaspec() argument count is invalid"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           tok = adjustl(labels(1))
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                              theory_mode = (index(ltok, "ar") == 1 .or. index(ltok, "ma") == 1)
+                           end if
+
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (theory_mode) then
+                              do i_arg = 1, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 if (len_trim(tok) > 0) then
+                                    if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                                 end if
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos <= 0) then
+                                    print *, "Error: armaspec() theoretical mode requires named args only"
+                                    eval_error = .true.; f = [bad_value]; exit
+                                 end if
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 if (index(ltok, "ar") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error) then
+                                       f = [bad_value]; exit
+                                    end if
+                                    ar_v = tmp
+                                    have_ar = .true.
+                                 else if (index(ltok, "ma") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error) then
+                                       f = [bad_value]; exit
+                                    end if
+                                    ma_v = tmp
+                                    have_ma = .true.
+                                 else if (index(ltok, "sigma2") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: sigma2 must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    sigma2_v = tmp(1)
+                                    have_sigma2 = .true.
+                                 else if (index(ltok, "nfreq") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: nfreq must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    nfreq_i = nint(tmp(1))
+                                 else if (index(ltok, "iter") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: iter must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    iter_i = nint(tmp(1))
+                                 else if (index(ltok, "plot") == 1) then
+                                    rval = lower_str(trim(rval))
+                                    if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                       do_plot = .false.
+                                    else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                       do_plot = .true.
+                                    else
+                                       print *, "Error: plot must be .true. or .false."
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    print *, "Error: unknown named argument in armaspec()"
+                                    eval_error = .true.; f = [bad_value]; exit
+                                 end if
+                              end do
+
+                              if (.not. eval_error) then
+                                 if (.not. have_ar .and. .not. have_ma) then
+                                    print *, "Error: armaspec() theoretical mode needs ar= or ma="
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (nfreq_i < 1) then
+                                    print *, "Error: armaspec() nfreq must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (iter_i < 1) then
+                                    print *, "Error: armaspec() iter must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (have_ar .and. have_ma) then
+                                    if (have_sigma2) then
+                                       f = armaspec(ar=ar_v, ma=ma_v, sigma2=sigma2_v, &
+                                                    nfreq=max(16, nfreq_i), plot=do_plot, niter=iter_i)
+                                    else
+                                       f = armaspec(ar=ar_v, ma=ma_v, nfreq=max(16, nfreq_i), &
+                                                    plot=do_plot, niter=iter_i)
+                                    end if
+                                 else if (have_ar) then
+                                    if (have_sigma2) then
+                                       f = armaspec(ar=ar_v, sigma2=sigma2_v, nfreq=max(16, nfreq_i), &
+                                                    plot=do_plot, niter=iter_i)
+                                    else
+                                       f = armaspec(ar=ar_v, nfreq=max(16, nfreq_i), plot=do_plot, niter=iter_i)
+                                    end if
+                                 else
+                                    if (have_sigma2) then
+                                       f = armaspec(ma=ma_v, sigma2=sigma2_v, nfreq=max(16, nfreq_i), &
+                                                    plot=do_plot, niter=iter_i)
+                                    else
+                                       f = armaspec(ma=ma_v, nfreq=max(16, nfreq_i), plot=do_plot, niter=iter_i)
+                                    end if
+                                 end if
+                              end if
+                           else
+                              if (n_args < 3 .or. n_args > 6) then
+                                 print *, "Error: armaspec() takes x, p, q plus optional nfreq/plot/iter"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 do i_arg = 2, n_args
+                                    tok = adjustl(labels(i_arg))
+                                    if (len_trim(tok) > 0) then
+                                       if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                                    end if
+                                    ltok = lower_str(tok)
+                                    eqpos = index(tok, "=")
+                                    if (eqpos > 0) then
+                                       rval = adjustl(tok(eqpos + 1:))
+                                       if (index(ltok, "p") == 1) then
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: p must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          p_i = nint(tmp(1)); have_p = .true.
+                                       else if (index(ltok, "q") == 1) then
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: q must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          q_i = nint(tmp(1)); have_q = .true.
+                                       else if (index(ltok, "nfreq") == 1) then
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: nfreq must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          nfreq_i = nint(tmp(1))
+                                       else if (index(ltok, "iter") == 1) then
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: iter must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          iter_i = nint(tmp(1))
+                                       else if (index(ltok, "plot") == 1) then
+                                          rval = lower_str(trim(rval))
+                                          if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                             do_plot = .false.
+                                          else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                             do_plot = .true.
+                                          else
+                                             print *, "Error: plot must be .true. or .false."
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                       else if (index(ltok, "ar") == 1 .or. index(ltok, "ma") == 1) then
+                                          print *, "Error: cannot mix x/p/q with ar=/ma= in armaspec()"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       else
+                                          print *, "Error: unknown named argument in armaspec()"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                    else
+                                       tmp = evaluate(tok)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: positional optional arguments to armaspec() must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (.not. have_p) then
+                                          p_i = nint(tmp(1)); have_p = .true.
+                                       else if (.not. have_q) then
+                                          q_i = nint(tmp(1)); have_q = .true.
+                                       else if (i_arg == 4) then
+                                          nfreq_i = nint(tmp(1))
+                                       else if (i_arg == 5) then
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       else
+                                          iter_i = nint(tmp(1))
+                                       end if
+                                    end if
+                                 end do
+
+                                 if (.not. eval_error) then
+                                    if (.not. have_p .or. .not. have_q) then
+                                       print *, "Error: armaspec() requires p and q"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (size(arg1) < 3) then
+                                       print *, "Error: armaspec() needs size(x) >= 3"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (p_i < 0 .or. q_i < 0) then
+                                       print *, "Error: armaspec() p and q must be >= 0"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (max(p_i, q_i) > size(arg1) - 2) then
+                                       print *, "Error: armaspec() requires max(p,q) <= ", size(arg1) - 2
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (nfreq_i < 1) then
+                                       print *, "Error: armaspec() nfreq must be >= 1"
+                                       eval_error = .true.; f = [bad_value]
+                                    else if (iter_i < 1) then
+                                       print *, "Error: armaspec() iter must be >= 1"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = armaspec(arg1, p_i, q_i, nfreq=max(16, nfreq_i), plot=do_plot, niter=iter_i)
+                                    end if
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("armaspecaic")
+                     block
+                        integer :: pmax_i, qmax_i, nfreq_i, iter_i, eqpos
+                        logical :: do_plot, have_pmax, have_qmax
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        do_plot = .true.
+                        pmax_i = 5
+                        qmax_i = 5
+                        nfreq_i = 256
+                        iter_i = 5
+                        have_pmax = .false.
+                        have_qmax = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 6) then
+                           print *, "Error: armaspecaic() takes at most six arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 if (len_trim(tok) > 0) then
+                                    if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                                 end if
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(rval, "!") > 0) rval = rval(:index(rval, "!") - 1)
+                                    rval = trim(adjustl(rval))
+                                    do while (len_trim(rval) > 0)
+                                       if (rval(len_trim(rval):len_trim(rval)) == ")" .or. &
+                                           rval(len_trim(rval):len_trim(rval)) == ";") then
+                                          rval = trim(rval(:len_trim(rval) - 1))
+                                       else
+                                          exit
+                                       end if
+                                    end do
+                                    if (index(ltok, "pmax") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: pmax must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       pmax_i = nint(tmp(1)); have_pmax = .true.
+                                    else if (index(ltok, "qmax") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: qmax must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       qmax_i = nint(tmp(1)); have_qmax = .true.
+                                    else if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1))
+                                    else if (index(ltok, "iter") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: iter must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       iter_i = nint(tmp(1))
+                                    else if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          print *, "Error: plot must be .true. or .false."
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in armaspecaic()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: positional optional arguments to armaspecaic() must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    if (.not. have_pmax) then
+                                       pmax_i = nint(tmp(1)); have_pmax = .true.
+                                    else if (.not. have_qmax) then
+                                       qmax_i = nint(tmp(1)); have_qmax = .true.
+                                    else if (i_arg == 4) then
+                                       nfreq_i = nint(tmp(1))
+                                    else if (i_arg == 5) then
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    else
+                                       iter_i = nint(tmp(1))
+                                    end if
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (size(arg1) < 3) then
+                                 print *, "Error: armaspecaic() needs size(x) >= 3"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (pmax_i < 0 .or. qmax_i < 0) then
+                                 print *, "Error: armaspecaic() pmax and qmax must be >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: armaspecaic() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (iter_i < 1) then
+                                 print *, "Error: armaspecaic() iter must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = armaspecaic(arg1, pmax=pmax_i, qmax=qmax_i, nfreq=max(16, nfreq_i), plot=do_plot, iter=iter_i)
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("arma_mt_spec")
+                     block
+                        logical :: do_plot
+                        integer :: p_i, q_i, nfreq_i, iter_i, k_i, eqpos
+                        real(kind=dp) :: nw_r
+                        logical :: have_p, have_q
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        do_plot = .true.
+                        nfreq_i = 256
+                        iter_i = 5
+                        nw_r = 3.5_dp
+                        k_i = max(1, nint(2.0_dp*nw_r - 1.0_dp))
+                        have_p = .false.
+                        have_q = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 3 .or. n_args > 8) then
+                           print *, "Error: arma_mt_spec() takes x, p, q plus optional nfreq/iter/nw/k/plot"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              ltok = lower_str(tok)
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 if (index(ltok, "p") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: p must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    p_i = nint(tmp(1)); have_p = .true.
+                                 else if (index(ltok, "q") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: q must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    q_i = nint(tmp(1)); have_q = .true.
+                                 else if (index(ltok, "nfreq") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: nfreq must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    nfreq_i = nint(tmp(1))
+                                 else if (index(ltok, "iter") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: iter must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    iter_i = nint(tmp(1))
+                                 else if (index(ltok, "nw") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: nw must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    nw_r = tmp(1)
+                                 else if (index(ltok, "k") == 1) then
+                                    tmp = evaluate(rval)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: k must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    k_i = nint(tmp(1))
+                                 else if (index(ltok, "plot") == 1) then
+                                    rval = lower_str(rval)
+                                    if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                       do_plot = .false.
+                                    else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                       do_plot = .true.
+                                    else
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 else
+                                    print *, "Error: unknown named argument in arma_mt_spec()"
+                                    eval_error = .true.; f = [bad_value]; exit
+                                 end if
+                              else
+                                 tmp = evaluate(tok)
+                                 if (eval_error .or. size(tmp) /= 1) then
+                                    print *, "Error: positional optional arguments to arma_mt_spec() must be scalar"
+                                    eval_error = .true.; f = [bad_value]; exit
+                                 end if
+                                 if (.not. have_p) then
+                                    p_i = nint(tmp(1)); have_p = .true.
+                                 else if (.not. have_q) then
+                                    q_i = nint(tmp(1)); have_q = .true.
+                                 else if (i_arg == 4) then
+                                    nfreq_i = nint(tmp(1))
+                                 else if (i_arg == 5) then
+                                    iter_i = nint(tmp(1))
+                                 else if (i_arg == 6) then
+                                    nw_r = tmp(1)
+                                 else if (i_arg == 7) then
+                                    k_i = nint(tmp(1))
+                                 else
+                                    do_plot = (tmp(1) /= 0.0_dp)
+                                 end if
+                              end if
+                           end do
+
+                           if (.not. eval_error) then
+                              if (.not. have_p .or. .not. have_q) then
+                                 print *, "Error: arma_mt_spec() requires p and q"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (size(arg1) < 3) then
+                                 print *, "Error: arma_mt_spec() needs size(x) >= 3"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (p_i < 0 .or. q_i < 0) then
+                                 print *, "Error: arma_mt_spec() p and q must be >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (max(p_i, q_i) > size(arg1) - 2) then
+                                 print *, "Error: arma_mt_spec() requires max(p,q) <= ", size(arg1) - 2
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: arma_mt_spec() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (iter_i < 1) then
+                                 print *, "Error: arma_mt_spec() iter must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nw_r <= 0.0_dp) then
+                                 print *, "Error: arma_mt_spec() nw must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (k_i < 1) then
+                                 print *, "Error: arma_mt_spec() k must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = arma_mt_spec(arg1, p_i, q_i, nfreq=max(16, nfreq_i), iter=iter_i, &
+                                                  nw=nw_r, k=k_i, plot=do_plot)
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("armaaic_mt_spec")
+                     block
+                        logical :: do_plot
+                        integer :: pmax_i, qmax_i, nfreq_i, iter_i, k_i, eqpos
+                        logical :: have_pmax, have_qmax
+                        real(kind=dp) :: nw_r
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        do_plot = .true.
+                        pmax_i = 5
+                        qmax_i = 5
+                        nfreq_i = 256
+                        iter_i = 5
+                        nw_r = 3.5_dp
+                        k_i = max(1, nint(2.0_dp*nw_r - 1.0_dp))
+                        have_pmax = .false.
+                        have_qmax = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 8) then
+                           print *, "Error: armaaic_mt_spec() takes at most eight arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(rval, "!") > 0) rval = rval(:index(rval, "!") - 1)
+                                    rval = trim(adjustl(rval))
+                                    if (len_trim(rval) > 0) then
+                                       if (rval(len_trim(rval):len_trim(rval)) == ")") rval = rval(:len_trim(rval) - 1)
+                                    end if
+                                    if (index(ltok, "pmax") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: pmax must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       pmax_i = nint(tmp(1)); have_pmax = .true.
+                                    else if (index(ltok, "qmax") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: qmax must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       qmax_i = nint(tmp(1)); have_qmax = .true.
+                                    else if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1))
+                                    else if (index(ltok, "iter") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: iter must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       iter_i = nint(tmp(1))
+                                    else if (index(ltok, "nw") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nw must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nw_r = tmp(1)
+                                    else if (index(ltok, "k") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: k must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       k_i = nint(tmp(1))
+                                    else if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          print *, "Error: plot must be .true. or .false."
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in armaaic_mt_spec()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) /= 1) then
+                                       print *, "Error: positional optional arguments to armaaic_mt_spec() must be scalar"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    if (.not. have_pmax) then
+                                       pmax_i = nint(tmp(1)); have_pmax = .true.
+                                    else if (.not. have_qmax) then
+                                       qmax_i = nint(tmp(1)); have_qmax = .true.
+                                    else if (i_arg == 4) then
+                                       nfreq_i = nint(tmp(1))
+                                    else if (i_arg == 5) then
+                                       iter_i = nint(tmp(1))
+                                    else if (i_arg == 6) then
+                                       nw_r = tmp(1)
+                                    else if (i_arg == 7) then
+                                       k_i = nint(tmp(1))
+                                    else
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (size(arg1) < 3) then
+                                 print *, "Error: armaaic_mt_spec() needs size(x) >= 3"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (pmax_i < 0 .or. qmax_i < 0) then
+                                 print *, "Error: armaaic_mt_spec() pmax and qmax must be >= 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: armaaic_mt_spec() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (iter_i < 1) then
+                                 print *, "Error: armaaic_mt_spec() iter must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nw_r <= 0.0_dp) then
+                                 print *, "Error: armaaic_mt_spec() nw must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (k_i < 1) then
+                                 print *, "Error: armaaic_mt_spec() k must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = armaaic_mt_spec(arg1, pmax=pmax_i, qmax=qmax_i, nfreq=max(16, nfreq_i), &
+                                                     iter=iter_i, nw=nw_r, k=k_i, plot=do_plot)
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("welchspec")
+                     block
+                        integer :: seglen_i, nfreq_i, eqpos, pos_idx
+                        real(kind=dp) :: overlap_r
+                        logical :: do_plot
+                        logical :: have_seglen_vec
+                        character(len=16) :: window_s, detrend_s
+                        character(len=:), allocatable :: tok, ltok, rval, sval
+                        real(kind=dp), allocatable :: tmp(:), seglen_v(:)
+
+                        seglen_i = 256
+                        overlap_r = 0.5_dp
+                        window_s = "hann"
+                        detrend_s = "mean"
+                        nfreq_i = 256
+                        do_plot = .true.
+                        have_seglen_vec = .false.
+                        pos_idx = 0
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 7) then
+                           print *, "Error: welchspec() takes at most seven arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "seglen") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) < 1) then
+                                          print *, "Error: seglen must be non-empty"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (size(tmp) == 1) then
+                                          seglen_i = nint(tmp(1))
+                                          have_seglen_vec = .false.
+                                          if (allocated(seglen_v)) deallocate (seglen_v)
+                                       else
+                                          if (allocated(seglen_v)) deallocate (seglen_v)
+                                          allocate (seglen_v(size(tmp)))
+                                          seglen_v = tmp
+                                          have_seglen_vec = .true.
+                                       end if
+                                    else if (index(ltok, "overlap") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: overlap must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       overlap_r = tmp(1)
+                                    else if (index(ltok, "window") == 1) then
+                                       sval = trim(rval)
+                                       if (len_trim(sval) >= 2) then
+                                          if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                          if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') &
+                                             sval = sval(:len_trim(sval) - 1)
+                                       end if
+                                       window_s = lower_str(trim(sval))
+                                    else if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1))
+                                    else if (index(ltok, "detrend") == 1) then
+                                       sval = trim(rval)
+                                       if (len_trim(sval) >= 2) then
+                                          if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                          if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') &
+                                             sval = sval(:len_trim(sval) - 1)
+                                       end if
+                                       detrend_s = lower_str(trim(sval))
+                                    else if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(trim(rval))
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          print *, "Error: plot must be .true. or .false."
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in welchspec()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    pos_idx = pos_idx + 1
+                                    select case (pos_idx)
+                                    case (1)
+                                       tmp = evaluate(tok)
+                                       if (eval_error .or. size(tmp) < 1) then
+                                          print *, "Error: seglen must be non-empty"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (size(tmp) == 1) then
+                                          seglen_i = nint(tmp(1))
+                                          have_seglen_vec = .false.
+                                          if (allocated(seglen_v)) deallocate (seglen_v)
+                                       else
+                                          if (allocated(seglen_v)) deallocate (seglen_v)
+                                          allocate (seglen_v(size(tmp)))
+                                          seglen_v = tmp
+                                          have_seglen_vec = .true.
+                                       end if
+                                    case (2)
+                                       tmp = evaluate(tok)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: overlap must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       overlap_r = tmp(1)
+                                    case (3)
+                                       sval = trim(tok)
+                                       if (len_trim(sval) >= 2) then
+                                          if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                          if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') &
+                                             sval = sval(:len_trim(sval) - 1)
+                                       end if
+                                       window_s = lower_str(trim(sval))
+                                    case (4)
+                                       tmp = evaluate(tok)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1))
+                                    case (5)
+                                       sval = trim(tok)
+                                       if (len_trim(sval) >= 2) then
+                                          if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                          if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') &
+                                             sval = sval(:len_trim(sval) - 1)
+                                       end if
+                                       detrend_s = lower_str(trim(sval))
+                                    case default
+                                       tmp = evaluate(tok)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end select
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (size(arg1) < 2) then
+                                 print *, "Error: welchspec() needs size(x) >= 2"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (have_seglen_vec) then
+                                 if (.not. allocated(seglen_v) .or. size(seglen_v) < 1) then
+                                    print *, "Error: welchspec() seglen must be non-empty"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (any(nint(seglen_v) < 2)) then
+                                    print *, "Error: welchspec() all seglen values must be >= 2"
+                                    eval_error = .true.; f = [bad_value]
+                                 end if
+                              else if (seglen_i < 2) then
+                                 print *, "Error: welchspec() seglen must be >= 2"
+                                 eval_error = .true.; f = [bad_value]
+                              end if
+                              if (.not. eval_error .and. (overlap_r < 0.0_dp .or. overlap_r >= 1.0_dp)) then
+                                 print *, "Error: welchspec() overlap must be in [0, 1)"
+                                 eval_error = .true.; f = [bad_value]
+                              end if
+                              if (.not. eval_error .and. nfreq_i < 1) then
+                                 print *, "Error: welchspec() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              end if
+                              if (.not. eval_error) then
+                                 if (have_seglen_vec) then
+                                    f = welchspec(arg1, seglen=nint(seglen_v), overlap=overlap_r, window=trim(window_s), &
+                                                  nfreq=max(16, nfreq_i), detrend=trim(detrend_s), plot=do_plot)
+                                 else
+                                    f = welchspec(arg1, seglen=seglen_i, overlap=overlap_r, window=trim(window_s), &
+                                                  nfreq=max(16, nfreq_i), detrend=trim(detrend_s), plot=do_plot)
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("pgramspec")
+                     block
+                        integer :: nfreq_i, smooth_i, eqpos
+                        integer :: n_sm, j_sm, i_ch, start_ch, end_ch, ios_sm, iv_sm
+                        integer, allocatable :: smooth_v(:)
+                        logical :: do_plot, do_demean
+                        logical :: have_nfreq, have_smooth, have_smooth_vec
+                        real(kind=dp) :: taper_r
+                        character(len=256) :: tok, ltok, rval, keytok, sm_txt
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        nfreq_i = 256
+                        smooth_i = 1
+                        do_plot = .true.
+                        do_demean = .true.
+                        taper_r = 0.0_dp
+                        have_nfreq = .false.
+                        have_smooth = .false.
+                        have_smooth_vec = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 6) then
+                           print *, "Error: pgramspec() takes at most six arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    keytok = adjustl(tok(:eqpos - 1))
+                                    ltok = lower_str(trim(keytok))
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1)); have_nfreq = .true.
+                                    else if (index(ltok, "smooth") == 1) then
+                                       if (len_trim(rval) >= 2 .and. rval(1:1) == "[" .and. &
+                                           rval(len_trim(rval):len_trim(rval)) == "]") then
+                                          sm_txt = adjustl(rval(2:len_trim(rval) - 1))
+                                          if (len_trim(sm_txt) < 1) then
+                                             print *, "Error: smooth must be non-empty"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          n_sm = 1
+                                          do i_ch = 1, len_trim(sm_txt)
+                                             if (sm_txt(i_ch:i_ch) == ",") n_sm = n_sm + 1
+                                          end do
+                                          if (allocated(smooth_v)) deallocate (smooth_v)
+                                          allocate (smooth_v(n_sm))
+                                          start_ch = 1
+                                          j_sm = 0
+                                          do i_ch = 1, len_trim(sm_txt) + 1
+                                             if (i_ch > len_trim(sm_txt) .or. sm_txt(i_ch:i_ch) == ",") then
+                                                end_ch = i_ch - 1
+                                                do while (start_ch <= end_ch .and. sm_txt(start_ch:start_ch) == " ")
+                                                   start_ch = start_ch + 1
+                                                end do
+                                                do while (end_ch >= start_ch .and. sm_txt(end_ch:end_ch) == " ")
+                                                   end_ch = end_ch - 1
+                                                end do
+                                                if (end_ch < start_ch) then
+                                                   print *, "Error: smooth values must be integers"
+                                                   eval_error = .true.; f = [bad_value]; exit
+                                                end if
+                                                tok = ""
+                                                tok(1:end_ch - start_ch + 1) = sm_txt(start_ch:end_ch)
+                                                read (tok, *, iostat=ios_sm) iv_sm
+                                                if (ios_sm /= 0) then
+                                                   print *, "Error: smooth values must be integers"
+                                                   eval_error = .true.; f = [bad_value]; exit
+                                                end if
+                                                j_sm = j_sm + 1
+                                                smooth_v(j_sm) = iv_sm
+                                                start_ch = i_ch + 1
+                                             end if
+                                          end do
+                                          if (eval_error) exit
+                                          have_smooth = .true.
+                                          have_smooth_vec = (n_sm > 1)
+                                          if (.not. have_smooth_vec) smooth_i = smooth_v(1)
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) < 1) then
+                                             print *, "Error: smooth must be non-empty"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          if (size(tmp) == 1) then
+                                             smooth_i = nint(tmp(1))
+                                             have_smooth = .true.
+                                             have_smooth_vec = .false.
+                                             if (allocated(smooth_v)) deallocate (smooth_v)
+                                          else
+                                             if (allocated(smooth_v)) deallocate (smooth_v)
+                                             allocate (smooth_v(size(tmp)))
+                                             smooth_v = nint(tmp)
+                                             have_smooth = .true.
+                                             have_smooth_vec = .true.
+                                          end if
+                                       end if
+                                    else if (index(ltok, "taper") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error .or. size(tmp) /= 1) then
+                                          print *, "Error: taper must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       taper_r = tmp(1)
+                                    else if (index(ltok, "demean") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_demean = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_demean = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: demean must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          do_demean = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    else if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error .or. size(tmp) /= 1) then
+                                             print *, "Error: plot must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in pgramspec()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error .or. size(tmp) < 1) then
+                                       print *, "Error: positional optional arguments to pgramspec() must be non-empty"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    if (.not. have_nfreq) then
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1)); have_nfreq = .true.
+                                    else if (i_arg == 3) then
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: demean must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_demean = (tmp(1) /= 0.0_dp)
+                                    else if (i_arg == 4) then
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: taper must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       taper_r = tmp(1)
+                                    else if (.not. have_smooth) then
+                                       if (tok(1:1) == "[" .and. tok(len_trim(tok):len_trim(tok)) == "]") then
+                                          sm_txt = adjustl(tok(2:len_trim(tok) - 1))
+                                          if (len_trim(sm_txt) < 1) then
+                                             print *, "Error: smooth must be non-empty"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          n_sm = 1
+                                          do i_ch = 1, len_trim(sm_txt)
+                                             if (sm_txt(i_ch:i_ch) == ",") n_sm = n_sm + 1
+                                          end do
+                                          if (allocated(smooth_v)) deallocate (smooth_v)
+                                          allocate (smooth_v(n_sm))
+                                          start_ch = 1
+                                          j_sm = 0
+                                          do i_ch = 1, len_trim(sm_txt) + 1
+                                             if (i_ch > len_trim(sm_txt) .or. sm_txt(i_ch:i_ch) == ",") then
+                                                end_ch = i_ch - 1
+                                                do while (start_ch <= end_ch .and. sm_txt(start_ch:start_ch) == " ")
+                                                   start_ch = start_ch + 1
+                                                end do
+                                                do while (end_ch >= start_ch .and. sm_txt(end_ch:end_ch) == " ")
+                                                   end_ch = end_ch - 1
+                                                end do
+                                                if (end_ch < start_ch) then
+                                                   print *, "Error: smooth values must be integers"
+                                                   eval_error = .true.; f = [bad_value]; exit
+                                                end if
+                                                tok = ""
+                                                tok(1:end_ch - start_ch + 1) = sm_txt(start_ch:end_ch)
+                                                read (tok, *, iostat=ios_sm) iv_sm
+                                                if (ios_sm /= 0) then
+                                                   print *, "Error: smooth values must be integers"
+                                                   eval_error = .true.; f = [bad_value]; exit
+                                                end if
+                                                j_sm = j_sm + 1
+                                                smooth_v(j_sm) = iv_sm
+                                                start_ch = i_ch + 1
+                                             end if
+                                          end do
+                                          if (eval_error) exit
+                                          have_smooth = .true.
+                                          have_smooth_vec = (n_sm > 1)
+                                          if (.not. have_smooth_vec) smooth_i = smooth_v(1)
+                                       else if (size(tmp) == 1) then
+                                          smooth_i = nint(tmp(1))
+                                          have_smooth = .true.
+                                          have_smooth_vec = .false.
+                                          if (allocated(smooth_v)) deallocate (smooth_v)
+                                       else
+                                          if (allocated(smooth_v)) deallocate (smooth_v)
+                                          allocate (smooth_v(size(tmp)))
+                                          smooth_v = nint(tmp)
+                                          have_smooth = .true.
+                                          have_smooth_vec = .true.
+                                       end if
+                                    else
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 end if
+                              end do
+                           end if
+                           if (.not. eval_error) then
+                              if (size(arg1) < 2) then
+                                 print *, "Error: pgramspec() needs size(x) >= 2"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: pgramspec() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (have_smooth_vec) then
+                                 if (.not. allocated(smooth_v)) then
+                                    print *, "Error: pgramspec() smooth values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (any(smooth_v < 1)) then
+                                    print *, "Error: pgramspec() smooth values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 end if
+                              else if (smooth_i < 1) then
+                                 print *, "Error: pgramspec() smooth must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              end if
+                              if (.not. eval_error) then
+                                 if (taper_r < 0.0_dp .or. taper_r > 0.5_dp) then
+                                    print *, "Error: pgramspec() taper must be in [0, 0.5]"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (have_smooth_vec) then
+                                    f = pgramspec(arg1, nfreq=max(16, nfreq_i), demean=do_demean, taper=taper_r, &
+                                                  smooth=smooth_v, plot=do_plot)
+                                 else
+                                    f = pgramspec(arg1, nfreq=max(16, nfreq_i), demean=do_demean, taper=taper_r, &
+                                                  smooth=smooth_i, plot=do_plot)
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
+
+                  case ("mtspec")
+                     block
+                        integer :: nfreq_i, k_i, eqpos
+                        integer, allocatable :: k_v(:)
+                        real(kind=dp) :: nw_r
+                        real(kind=dp), allocatable :: nw_v(:)
+                        logical :: do_plot, do_demean
+                        logical :: have_nfreq, have_nw, have_k, have_k_vec, have_nw_vec
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+
+                        nfreq_i = 256
+                        nw_r = 3.5_dp
+                        k_i = max(1, nint(2.0_dp*nw_r - 1.0_dp))
+                        do_plot = .true.
+                        do_demean = .true.
+                        have_nfreq = .false.
+                        have_nw = .false.
+                        have_k = .false.
+                        have_k_vec = .false.
+                        have_nw_vec = .false.
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args > 6) then
+                           print *, "Error: mtspec() takes at most six arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           pos = pend + 1
+                           if (pos > lenstr) then
+                              curr_char = char(0)
+                           else
+                              curr_char = expr(pos:pos)
+                              pos = pos + 1
+                           end if
+
+                           if (n_args >= 2) then
+                              do i_arg = 2, n_args
+                                 tok = adjustl(labels(i_arg))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "nfreq") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1)); have_nfreq = .true.
+                                    else if (index(ltok, "nw") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) < 1) then
+                                          print *, "Error: nw must be non-empty"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (size(tmp) == 1) then
+                                          nw_r = tmp(1)
+                                          have_nw_vec = .false.
+                                          if (allocated(nw_v)) deallocate (nw_v)
+                                       else
+                                          if (allocated(nw_v)) deallocate (nw_v)
+                                          allocate (nw_v(size(tmp)))
+                                          nw_v = tmp
+                                          have_nw_vec = .true.
+                                          nw_r = nw_v(size(nw_v))
+                                       end if
+                                       have_nw = .true.
+                                    else if (index(ltok, "k") == 1) then
+                                       tmp = evaluate(rval)
+                                       if (eval_error) then
+                                          f = [bad_value]; exit
+                                       else if (size(tmp) < 1) then
+                                          print *, "Error: k must be non-empty"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (size(tmp) == 1) then
+                                          k_i = nint(tmp(1))
+                                          have_k_vec = .false.
+                                          if (allocated(k_v)) deallocate (k_v)
+                                       else
+                                          if (allocated(k_v)) deallocate (k_v)
+                                          allocate (k_v(size(tmp)))
+                                          k_v = nint(tmp)
+                                          have_k_vec = .true.
+                                       end if
+                                       have_k = .true.
+                                    else if (index(ltok, "demean") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_demean = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_demean = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error) then
+                                             f = [bad_value]; exit
+                                          else if (size(tmp) /= 1) then
+                                             print *, "Error: demean must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          do_demean = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    else if (index(ltok, "plot") == 1) then
+                                       rval = lower_str(rval)
+                                       if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                          do_plot = .false.
+                                       else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                          do_plot = .true.
+                                       else
+                                          tmp = evaluate(rval)
+                                          if (eval_error) then
+                                             f = [bad_value]; exit
+                                          else if (size(tmp) /= 1) then
+                                             print *, "Error: plot must be scalar"
+                                             eval_error = .true.; f = [bad_value]; exit
+                                          end if
+                                          do_plot = (tmp(1) /= 0.0_dp)
+                                       end if
+                                    else
+                                       print *, "Error: unknown named argument in mtspec()"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                 else
+                                    tmp = evaluate(tok)
+                                    if (eval_error) then
+                                       f = [bad_value]; exit
+                                    else if (size(tmp) < 1) then
+                                       print *, "Error: positional optional arguments to mtspec() must be non-empty"
+                                       eval_error = .true.; f = [bad_value]; exit
+                                    end if
+                                    if (.not. have_nfreq) then
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: nfreq must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       nfreq_i = nint(tmp(1)); have_nfreq = .true.
+                                    else if (.not. have_nw) then
+                                       if (size(tmp) < 1) then
+                                          print *, "Error: nw must be non-empty"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       if (size(tmp) == 1) then
+                                          nw_r = tmp(1)
+                                          have_nw_vec = .false.
+                                          if (allocated(nw_v)) deallocate (nw_v)
+                                       else
+                                          if (allocated(nw_v)) deallocate (nw_v)
+                                          allocate (nw_v(size(tmp)))
+                                          nw_v = tmp
+                                          have_nw_vec = .true.
+                                          nw_r = nw_v(size(nw_v))
+                                       end if
+                                       have_nw = .true.
+                                    else if (.not. have_k) then
+                                       if (size(tmp) == 1) then
+                                          k_i = nint(tmp(1))
+                                          have_k_vec = .false.
+                                          if (allocated(k_v)) deallocate (k_v)
+                                       else
+                                          if (allocated(k_v)) deallocate (k_v)
+                                          allocate (k_v(size(tmp)))
+                                          k_v = nint(tmp)
+                                          have_k_vec = .true.
+                                       end if
+                                       have_k = .true.
+                                    else if (i_arg == 5) then
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: demean must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_demean = (tmp(1) /= 0.0_dp)
+                                    else
+                                       if (size(tmp) /= 1) then
+                                          print *, "Error: plot must be scalar"
+                                          eval_error = .true.; f = [bad_value]; exit
+                                       end if
+                                       do_plot = (tmp(1) /= 0.0_dp)
+                                    end if
+                                 end if
+                              end do
+                           end if
+
+                           if (.not. eval_error) then
+                              if (.not. have_k) then
+                                 if (have_nw_vec) then
+                                    if (allocated(nw_v) .and. size(nw_v) > 0) then
+                                       k_i = max(1, nint(2.0_dp*nw_v(size(nw_v)) - 1.0_dp))
+                                    end if
+                                 else
+                                    k_i = max(1, nint(2.0_dp*nw_r - 1.0_dp))
+                                 end if
+                              end if
+                              if (size(arg1) < 2) then
+                                 print *, "Error: mtspec() needs size(x) >= 2"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (nfreq_i < 1) then
+                                 print *, "Error: mtspec() nfreq must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (have_nw_vec) then
+                                 if (.not. allocated(nw_v) .or. any(nw_v <= 0.0_dp)) then
+                                    print *, "Error: mtspec() nw values must be > 0"
+                                    eval_error = .true.; f = [bad_value]
+                                 else if (have_k_vec) then
+                                    if (.not. allocated(k_v) .or. any(k_v < 1)) then
+                                       print *, "Error: mtspec() k values must be >= 1"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = mtspec(arg1, nfreq=max(16, nfreq_i), nw=nw_v, k=k_v, demean=do_demean, plot=do_plot)
+                                    end if
+                                 else if (k_i < 1) then
+                                    print *, "Error: mtspec() k must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = mtspec(arg1, nfreq=max(16, nfreq_i), nw=nw_v, k=k_i, demean=do_demean, plot=do_plot)
+                                 end if
+                              else if (nw_r <= 0.0_dp) then
+                                 print *, "Error: mtspec() nw must be > 0"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (have_k_vec) then
+                                 if (.not. allocated(k_v) .or. any(k_v < 1)) then
+                                    print *, "Error: mtspec() k values must be >= 1"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = mtspec(arg1, nfreq=max(16, nfreq_i), nw=nw_r, k=k_v, demean=do_demean, plot=do_plot)
+                                 end if
+                              else if (k_i < 1) then
+                                 print *, "Error: mtspec() k must be >= 1"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = mtspec(arg1, nfreq=max(16, nfreq_i), nw=nw_r, k=k_i, demean=do_demean, plot=do_plot)
                               end if
                            end if
                         end if
@@ -3567,6 +5421,208 @@ contains
                         f = ks2_test(arg1, arg2)
                      end if
 
+                  case ("fit_t")
+                     block
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: df_arg(:), tmpv(:)
+                        integer :: eqpos
+                        logical :: have_df, have_verbose, verbose_opt
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_df = .false.
+                        have_verbose = .false.
+                        verbose_opt = .false.
+                        if (n_args < 1 .or. n_args > 3) then
+                           print *, "Error: fit_t() takes x and optional df, verbose"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmpv = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                    exit
+                                 end if
+                                 if (trim(ltok) == "df") then
+                                    if (size(tmpv) < 1) then
+                                       print *, "Error: df must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    df_arg = tmpv
+                                    have_df = .true.
+                                 else if (trim(ltok) == "verbose") then
+                                    if (size(tmpv) /= 1) then
+                                       print *, "Error: verbose must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    verbose_opt = (tmpv(1) /= 0.0_dp)
+                                    have_verbose = .true.
+                                 else
+                                    print *, "Error: unknown named argument in fit_t()"
+                                    eval_error = .true.; f = [bad_value]
+                                    exit
+                                 end if
+                              else
+                                 if (.not. have_df) then
+                                    df_arg = evaluate(tok)
+                                    if (eval_error .or. size(df_arg) < 1) then
+                                       print *, "Error: df must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    have_df = .true.
+                                 else if (.not. have_verbose) then
+                                    tmpv = evaluate(tok)
+                                    if (eval_error .or. size(tmpv) /= 1) then
+                                       print *, "Error: verbose must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    verbose_opt = (tmpv(1) /= 0.0_dp)
+                                    have_verbose = .true.
+                                 else
+                                    print *, "Error: too many positional arguments in fit_t()"
+                                    eval_error = .true.; f = [bad_value]
+                                    exit
+                                 end if
+                              end if
+                           end do
+                           if (.not. eval_error) then
+                              if (have_df .and. have_verbose) then
+                                 f = fit_t(arg1, df_arg, verbose_opt)
+                              else if (have_df) then
+                                 f = fit_t(arg1, df_arg)
+                              else if (have_verbose) then
+                                 f = fit_t(arg1, verbose=verbose_opt)
+                              else
+                                 f = fit_t(arg1)
+                              end if
+                           end if
+                        end if
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos)
+                           pos = pos + 1
+                        end if
+                     end block
+
+                  case ("fit_nct")
+                     block
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: df_arg(:), tmpv(:)
+                        integer :: eqpos
+                        logical :: have_df, have_verbose, have_full, verbose_opt, full_opt
+
+                        if (eval_error) eval_error = .false.
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        have_df = .false.
+                        have_verbose = .false.
+                        have_full = .false.
+                        verbose_opt = .false.
+                        full_opt = .true.
+                        if (n_args < 1 .or. n_args > 4) then
+                           print *, "Error: fit_nct() takes x and optional df, verbose, full"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmpv = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                    exit
+                                 end if
+                                 if (trim(ltok) == "df") then
+                                    if (size(tmpv) < 1) then
+                                       print *, "Error: df must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    df_arg = tmpv
+                                    have_df = .true.
+                                 else if (trim(ltok) == "verbose") then
+                                    if (size(tmpv) /= 1) then
+                                       print *, "Error: verbose must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    verbose_opt = (tmpv(1) /= 0.0_dp)
+                                    have_verbose = .true.
+                                 else if (trim(ltok) == "full") then
+                                    if (size(tmpv) /= 1) then
+                                       print *, "Error: full must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    full_opt = (tmpv(1) /= 0.0_dp)
+                                    have_full = .true.
+                                 else
+                                    print *, "Error: unknown named argument in fit_nct()"
+                                    eval_error = .true.; f = [bad_value]
+                                    exit
+                                 end if
+                              else
+                                 if (.not. have_df) then
+                                    df_arg = evaluate(tok)
+                                    if (eval_error .or. size(df_arg) < 1) then
+                                       print *, "Error: df must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    have_df = .true.
+                                 else if (.not. have_verbose) then
+                                    tmpv = evaluate(tok)
+                                    if (eval_error .or. size(tmpv) /= 1) then
+                                       print *, "Error: verbose must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    verbose_opt = (tmpv(1) /= 0.0_dp)
+                                    have_verbose = .true.
+                                 else if (.not. have_full) then
+                                    tmpv = evaluate(tok)
+                                    if (eval_error .or. size(tmpv) /= 1) then
+                                       print *, "Error: full must be scalar"
+                                       eval_error = .true.; f = [bad_value]
+                                       exit
+                                    end if
+                                    full_opt = (tmpv(1) /= 0.0_dp)
+                                    have_full = .true.
+                                 else
+                                    print *, "Error: too many positional arguments in fit_nct()"
+                                    eval_error = .true.; f = [bad_value]
+                                    exit
+                                 end if
+                              end if
+                           end do
+                           if (.not. eval_error) then
+                              if (have_df) then
+                                 f = fit_nct(arg1, df_arg, verbose=verbose_opt, full=full_opt)
+                              else
+                                 f = fit_nct(arg1, verbose=verbose_opt, full=full_opt)
+                              end if
+                           end if
+                        end if
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos)
+                           pos = pos + 1
+                        end if
+                     end block
+
                   case ("fit_mixnorm")
                      if (.not. have_second) then
                         print *, "Error: function needs two arguments"
@@ -3732,7 +5788,7 @@ contains
 
                   case ("mssk_exp", "mssk_t", "mssk_chisq")
                      if (have_second) then
-                        print *, "Error: function takes one argument"
+                        print *, "Error: function ", trim(id), " takes one argument"
                         eval_error = .true.; f = [bad_value]
                      else if (size(arg1) /= 1) then
                         print *, "Error: argument must be scalar"
@@ -3745,7 +5801,7 @@ contains
                         end select
                      end if
 
-                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace", "mssk_nct")
+                  case ("mssk_gamma", "mssk_lnorm", "mssk_f", "mssk_beta", "mssk_logis", "mssk_laplace", "mssk_nct", "mssk_norm", "mssk_cauchy")
                      if (.not. have_second) then
                         if (size(arg1) /= 1) then
                            print *, "Error: first argument must be scalar"
@@ -3757,6 +5813,8 @@ contains
                            case ("mssk_logis"); f = mssk_logis(arg1(1), 1.0_dp)
                            case ("mssk_laplace"); f = mssk_laplace(arg1(1), 1.0_dp)
                            case ("mssk_nct"); f = mssk_nct(arg1(1), 0.0_dp)
+                           case ("mssk_norm"); f = mssk_norm(arg1(1), 1.0_dp)
+                           case ("mssk_cauchy"); f = mssk_cauchy(arg1(1), 1.0_dp)
                            case default
                               print *, "Error: function needs two arguments"
                               eval_error = .true.; f = [bad_value]
@@ -3774,7 +5832,49 @@ contains
                         case ("mssk_logis"); f = mssk_logis(arg1(1), arg2(1))
                         case ("mssk_laplace"); f = mssk_laplace(arg1(1), arg2(1))
                         case ("mssk_nct"); f = mssk_nct(arg1(1), arg2(1))
+                        case ("mssk_norm"); f = mssk_norm(arg1(1), arg2(1))
+                        case ("mssk_cauchy"); f = mssk_cauchy(arg1(1), arg2(1))
                         end select
+                     end if
+
+                  case ("mssk_unif")
+                     if (.not. have_second) then
+                        print *, "Error: function needs two arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1 .or. size(arg2) /= 1) then
+                        print *, "Error: arguments must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        f = mssk_unif(arg1(1), arg2(1))
+                     end if
+
+                  case ("mssk_hyperb")
+                     if (.not. have_second) then
+                        print *, "Error: function needs three arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) /= 1 .or. size(arg2) /= 1) then
+                        print *, "Error: first two arguments must be scalar"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (size(arg3) /= 1) then
+                              print *, "Error: third argument must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              f = mssk_hyperb(arg1(1), arg2(1), arg3(1))
+                              call skip_spaces()
+                              if (curr_char == ")") call next_char()
+                           end if
+                        end if
                      end if
 
                   case ("mssk_mixnorm")
@@ -4449,6 +6549,74 @@ contains
                         end if
                      end if
 
+                  case ("armastab")
+                     block
+                        integer :: n_args_local, eqpos
+                        logical :: have_ar, have_ma
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: ar_v(:), ma_v(:), tmp(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local < 1 .or. n_args_local > 2) then
+                           print *, "Error: armastab() takes one or two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           have_ar = .false.
+                           have_ma = .false.
+                           do i_arg = 1, n_args_local
+                              tok = adjustl(labels(i_arg))
+                              ltok = lower_str(tok)
+                              eqpos = index(tok, "=")
+                              if (eqpos > 0) then
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; exit
+                                 end if
+                                 if (index(ltok, "ar") == 1) then
+                                    ar_v = tmp
+                                    have_ar = .true.
+                                 else if (index(ltok, "ma") == 1) then
+                                    ma_v = tmp
+                                    have_ma = .true.
+                                 else
+                                    print *, "Error: unknown named argument in armastab()"
+                                    eval_error = .true.; f = [bad_value]; exit
+                                 end if
+                              else if (.not. have_ar) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; exit
+                                 end if
+                                 ar_v = tmp
+                                 have_ar = .true.
+                              else if (.not. have_ma) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; exit
+                                 end if
+                                 ma_v = tmp
+                                 have_ma = .true.
+                              else
+                                 print *, "Error: armastab() takes one or two arguments"
+                                 eval_error = .true.; f = [bad_value]; exit
+                              end if
+                           end do
+                           if (.not. eval_error) then
+                              if (have_ar .and. have_ma) then
+                                 f = armastab(ar=ar_v, ma=ma_v)
+                              else if (have_ar) then
+                                 f = armastab(ar=ar_v)
+                              else if (have_ma) then
+                                 f = armastab(ma=ma_v)
+                              else
+                                 print *, "Error: armastab() requires ar or ma"
+                                 eval_error = .true.; f = [bad_value]
+                              end if
+                           end if
+                        end if
+                     end block
+
                   case ("rexp", "rt", "rchisq")
                      if (.not. have_second) then
                         if (trim(id) == "rexp") then
@@ -4612,6 +6780,45 @@ contains
                                        call skip_spaces()
                                        if (curr_char == ")") call next_char()
                                     end if
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end if
+
+                  case ("mixnoise")
+                     if (.not. have_second) then
+                        print *, "Error: function needs four arguments"
+                        eval_error = .true.; f = [bad_value]
+                     else if (size(arg1) < 1) then
+                        print *, "Error: first argument must be non-empty"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        call skip_spaces()
+                        if (curr_char /= ",") then
+                           print *, "Error: function needs four arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           call next_char()
+                           call skip_spaces()
+                           arg3 = parse_expression()
+                           if (eval_error) then
+                              f = [bad_value]
+                           else
+                              call skip_spaces()
+                              if (curr_char /= ",") then
+                                 print *, "Error: function needs four arguments"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call next_char()
+                                 call skip_spaces()
+                                 arg4 = parse_expression()
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else
+                                    f = mixnoise(arg1, arg2, arg3, arg4)
+                                    call skip_spaces()
+                                    if (curr_char == ")") call next_char()
                                  end if
                               end if
                            end if
@@ -4876,130 +7083,245 @@ contains
                      end if
 
                   case ("arsim")
-                     if (.not. have_second) then
-                        print *, "Error: function needs two arguments"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) /= 1) then
-                        print *, "Error: first argument of arsim() must be scalar"
-                        eval_error = .true.; f = [bad_value]
-                     else
+                     block
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmpn(:), noise_v(:)
+                        integer :: eqpos
+                        logical :: have_noise
+
+                        have_noise = .false.
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
-                        if (size(arg2) == 1 .and. n_args >= 2) then
-                           if (index(labels(2), "[") == 0) then
-                              print *, "Error: second argument of arsim() must be an explicit 1D array"
-                              eval_error = .true.; f = [bad_value]
-                           end if
-                        end if
-                     end if
-                     if (eval_error) then
-                        f = [bad_value]
-                        return
-                     else if (size(arg2) < 1) then
-                        print *, "Error: second argument of arsim() must be non-empty"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        n1 = nint(arg1(1))
-                        if (n1 < 1) then
-                           print *, "Error: arsim() length must be > 0"
+                        if (n_args < 2 .or. n_args > 3) then
+                           print *, "Error: arsim() takes n, phi, and optional noise"
+                           eval_error = .true.; f = [bad_value]
+                        else if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg1) /= 1) then
+                           print *, "Error: first argument of arsim() must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg2) < 1) then
+                           print *, "Error: second argument of arsim() must be non-empty"
                            eval_error = .true.; f = [bad_value]
                         else
-                           f = arsim(n1, arg2)
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: arsim() length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              if (n_args == 3) then
+                                 tok = adjustl(labels(3))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "noise") /= 1) then
+                                       print *, "Error: unknown named argument in arsim()"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       tmpn = evaluate(rval)
+                                       if (eval_error .or. size(tmpn) < 1) then
+                                          print *, "Error: noise must be non-empty"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          noise_v = tmpn
+                                          have_noise = .true.
+                                       end if
+                                    end if
+                                 else
+                                    tmpn = evaluate(tok)
+                                    if (eval_error .or. size(tmpn) < 1) then
+                                       print *, "Error: third argument of arsim() must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       noise_v = tmpn
+                                       have_noise = .true.
+                                    end if
+                                 end if
+                              end if
+                              if (.not. eval_error) then
+                                 if (have_noise) then
+                                    if (size(noise_v) < n1) then
+                                       print *, "Error: arsim() noise must have size >= n"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = arsim(n1, arg2, noise_v)
+                                    end if
+                                 else
+                                    f = arsim(n1, arg2)
+                                 end if
+                              end if
+                           end if
                         end if
-                     end if
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos)
+                           pos = pos + 1
+                        end if
+                     end block
 
                   case ("masim")
-                     if (.not. have_second) then
-                        print *, "Error: function needs two arguments"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) /= 1) then
-                        print *, "Error: first argument of masim() must be scalar"
-                        eval_error = .true.; f = [bad_value]
-                     else
+                     block
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmpn(:), noise_v(:)
+                        integer :: eqpos
+                        logical :: have_noise
+
+                        have_noise = .false.
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
-                        if (size(arg2) == 1 .and. n_args >= 2) then
-                           if (index(labels(2), "[") == 0) then
-                              print *, "Error: second argument of masim() must be an explicit 1D array"
-                              eval_error = .true.; f = [bad_value]
-                           end if
-                        end if
-                     end if
-                     if (eval_error) then
-                        f = [bad_value]
-                        return
-                     else if (size(arg2) < 1) then
-                        print *, "Error: second argument of masim() must be non-empty"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        n1 = nint(arg1(1))
-                        if (n1 < 1) then
-                           print *, "Error: masim() length must be > 0"
+                        if (n_args < 2 .or. n_args > 3) then
+                           print *, "Error: masim() takes n, theta, and optional noise"
+                           eval_error = .true.; f = [bad_value]
+                        else if (.not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg1) /= 1) then
+                           print *, "Error: first argument of masim() must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else if (size(arg2) < 1) then
+                           print *, "Error: second argument of masim() must be non-empty"
                            eval_error = .true.; f = [bad_value]
                         else
-                           f = masim(n1, arg2)
+                           n1 = nint(arg1(1))
+                           if (n1 < 1) then
+                              print *, "Error: masim() length must be > 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              if (n_args == 3) then
+                                 tok = adjustl(labels(3))
+                                 ltok = lower_str(tok)
+                                 eqpos = index(tok, "=")
+                                 if (eqpos > 0) then
+                                    rval = adjustl(tok(eqpos + 1:))
+                                    if (index(ltok, "noise") /= 1) then
+                                       print *, "Error: unknown named argument in masim()"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       tmpn = evaluate(rval)
+                                       if (eval_error .or. size(tmpn) < 1) then
+                                          print *, "Error: noise must be non-empty"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          noise_v = tmpn
+                                          have_noise = .true.
+                                       end if
+                                    end if
+                                 else
+                                    tmpn = evaluate(tok)
+                                    if (eval_error .or. size(tmpn) < 1) then
+                                       print *, "Error: third argument of masim() must be non-empty"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       noise_v = tmpn
+                                       have_noise = .true.
+                                    end if
+                                 end if
+                              end if
+                              if (.not. eval_error) then
+                                 if (have_noise) then
+                                    if (size(noise_v) < n1) then
+                                       print *, "Error: masim() noise must have size >= n"
+                                       eval_error = .true.; f = [bad_value]
+                                    else
+                                       f = masim(n1, arg2, noise_v)
+                                    end if
+                                 else
+                                    f = masim(n1, arg2)
+                                 end if
+                              end if
+                           end if
                         end if
-                     end if
+                     end block
 
                   case ("armasim")
-                     if (.not. have_second) then
-                        print *, "Error: function needs three arguments"
-                        eval_error = .true.; f = [bad_value]
-                     else if (size(arg1) /= 1) then
-                        print *, "Error: first argument of armasim() must be scalar"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        call skip_spaces()
-                        if (curr_char /= ",") then
-                           print *, "Error: function needs three arguments"
+                     block
+                        real(kind=dp), allocatable :: tmpn(:), phi_v(:), theta_v(:), noise_v(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        integer :: eqpos
+                        logical :: have_noise
+
+                        have_noise = .false.
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 3 .or. n_args > 4) then
+                           print *, "Error: armasim() takes n, phi, theta, and optional noise"
                            eval_error = .true.; f = [bad_value]
                         else
-                           call next_char()
-                           call skip_spaces()
-                           arg3 = parse_expression()
-                           if (eval_error) then
-                              f = [bad_value]
+                           tmpn = evaluate(adjustl(labels(1)))
+                           if (eval_error .or. size(tmpn) /= 1) then
+                              print *, "Error: first argument of armasim() must be scalar"
+                              eval_error = .true.; f = [bad_value]
                            else
-                              call split_by_comma(expr(pstart:pend - 1), n_args, labels)
-                              if (size(arg2) == 1 .and. n_args >= 2) then
-                                 if (index(labels(2), "[") == 0) then
-                                    print *, "Error: second argument of armasim() must be an explicit 1D array"
-                                    eval_error = .true.; f = [bad_value]
-                                 end if
-                              end if
-                              if (size(arg3) == 1 .and. n_args >= 3) then
-                                 if (index(labels(3), "[") == 0) then
-                                    print *, "Error: third argument of armasim() must be an explicit 1D array"
-                                    eval_error = .true.; f = [bad_value]
-                                 end if
-                              end if
-                              if (eval_error) then
-                                 f = [bad_value]
-                                 return
-                              end if
-                              if (size(arg2) < 1 .or. size(arg3) < 1) then
+                              n1 = nint(tmpn(1))
+                              phi_v = evaluate(adjustl(labels(2)))
+                              theta_v = evaluate(adjustl(labels(3)))
+                              if (eval_error .or. size(phi_v) < 1 .or. size(theta_v) < 1) then
                                  print *, "Error: second and third arguments of armasim() must be non-empty"
                                  eval_error = .true.; f = [bad_value]
+                              else if (n1 < 1) then
+                                 print *, "Error: armasim() length must be > 0"
+                                 eval_error = .true.; f = [bad_value]
                               else
-                                 n1 = nint(arg1(1))
-                                 if (n1 < 1) then
-                                    print *, "Error: armasim() length must be > 0"
-                                    eval_error = .true.; f = [bad_value]
-                                 else
-                                    f = armasim(n1, arg2, arg3)
+                                 if (n_args == 4) then
+                                    tok = adjustl(labels(4))
+                                    ltok = lower_str(tok)
+                                    eqpos = index(tok, "=")
+                                    if (eqpos > 0) then
+                                       rval = adjustl(tok(eqpos + 1:))
+                                       if (index(ltok, "noise") /= 1) then
+                                          print *, "Error: unknown named argument in armasim()"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          noise_v = evaluate(rval)
+                                          if (eval_error .or. size(noise_v) < 1) then
+                                             print *, "Error: noise must be non-empty"
+                                             eval_error = .true.; f = [bad_value]
+                                          else
+                                             have_noise = .true.
+                                          end if
+                                       end if
+                                    else
+                                       noise_v = evaluate(tok)
+                                       if (eval_error .or. size(noise_v) < 1) then
+                                          print *, "Error: fourth argument of armasim() must be non-empty"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          have_noise = .true.
+                                       end if
+                                    end if
+                                 end if
+                                 if (.not. eval_error) then
+                                    if (have_noise) then
+                                       if (size(noise_v) < n1) then
+                                          print *, "Error: armasim() noise must have size >= n"
+                                          eval_error = .true.; f = [bad_value]
+                                       else
+                                          f = armasim(n1, phi_v, theta_v, noise_v)
+                                       end if
+                                    else
+                                       f = armasim(n1, phi_v, theta_v)
+                                    end if
                                  end if
                               end if
-                              call skip_spaces()
-                              if (curr_char == ")") call next_char()
                            end if
                         end if
-                     end if
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos)
+                           pos = pos + 1
+                        end if
+                     end block
 
                   case ("arfimasim")
                      block
                         integer :: n_sim, burn_sim, m_sim, eqpos
-                        logical :: have_burn, have_m, have_phi, have_theta
+                        logical :: have_burn, have_m, have_phi, have_theta, have_noise
                         real(kind=dp) :: d_sim
                         character(len=:), allocatable :: tok, ltok, rval
-                        real(kind=dp), allocatable :: tmp(:), phi_sim(:), theta_sim(:)
+                        real(kind=dp), allocatable :: tmp(:), phi_sim(:), theta_sim(:), noise_sim(:)
 
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
                         pos = pend + 1
@@ -5036,7 +7358,7 @@ contains
                            eval_error = .true.; f = [bad_value]; return
                         end if
 
-                        have_burn = .false.; have_m = .false.; have_phi = .false.; have_theta = .false.
+                        have_burn = .false.; have_m = .false.; have_phi = .false.; have_theta = .false.; have_noise = .false.
                         phi_sim = [real(kind=dp) ::]
                         theta_sim = [real(kind=dp) ::]
                         do i_arg = 3, n_args
@@ -5081,10 +7403,20 @@ contains
                                  end if
                                  m_sim = nint(tmp(1))
                                  have_m = .true.
-                              else
-                                 print *, "Error: too many positional arguments for arfimasim()"
-                                 eval_error = .true.; f = [bad_value]; return
-                              end if
+                               else if (.not. have_noise) then
+                                  noise_sim = evaluate(tok)
+                                  if (eval_error) then
+                                     f = [bad_value]; return
+                                  end if
+                                  if (size(noise_sim) < 1) then
+                                     print *, "Error: positional noise argument must be non-empty"
+                                     eval_error = .true.; f = [bad_value]; return
+                                  end if
+                                  have_noise = .true.
+                               else
+                                  print *, "Error: too many positional arguments for arfimasim()"
+                                  eval_error = .true.; f = [bad_value]; return
+                               end if
                            else if (index(ltok, "phi") == 1) then
                               if (have_phi) then
                                  print *, "Error: duplicate phi= argument"
@@ -5139,11 +7471,26 @@ contains
                               end if
                               m_sim = nint(tmp(1))
                               have_m = .true.
-                           else
-                              print *, "Error: arfimasim() optional args are phi/theta and burn/m"
-                              eval_error = .true.; f = [bad_value]; return
-                           end if
-                        end do
+                            else if (index(ltok, "noise") == 1) then
+                               if (have_noise) then
+                                  print *, "Error: duplicate noise= argument"
+                                  eval_error = .true.; f = [bad_value]; return
+                               end if
+                               rval = adjustl(tok(eqpos + 1:))
+                               noise_sim = evaluate(rval)
+                               if (eval_error) then
+                                  f = [bad_value]; return
+                               end if
+                               if (size(noise_sim) < 1) then
+                                  print *, "Error: noise must be non-empty"
+                                  eval_error = .true.; f = [bad_value]; return
+                               end if
+                               have_noise = .true.
+                            else
+                               print *, "Error: arfimasim() optional args are phi/theta, burn/m, and noise"
+                               eval_error = .true.; f = [bad_value]; return
+                            end if
+                         end do
                         if (have_burn .and. burn_sim < 0) then
                            print *, "Error: burn must be >= 0"
                            eval_error = .true.; f = [bad_value]; return
@@ -5152,12 +7499,20 @@ contains
                            print *, "Error: m must be >= 0"
                            eval_error = .true.; f = [bad_value]; return
                         end if
-                        if (have_burn .and. have_m) then
+                        if (have_burn .and. have_m .and. have_noise) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim, m=m_sim, noise=noise_sim)
+                        else if (have_burn .and. have_m) then
                            f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim, m=m_sim)
+                        else if (have_burn .and. have_noise) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim, noise=noise_sim)
+                        else if (have_m .and. have_noise) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, m=m_sim, noise=noise_sim)
                         else if (have_burn) then
                            f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, burn=burn_sim)
                         else if (have_m) then
                            f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, m=m_sim)
+                        else if (have_noise) then
+                           f = arfimasim(n_sim, d_sim, phi_sim, theta_sim, noise=noise_sim)
                         else
                            f = arfimasim(n_sim, d_sim, phi_sim, theta_sim)
                         end if
@@ -5243,6 +7598,164 @@ contains
                            call armafit(arg1, p, q, niter=iter_arg)
                         else
                            call armafit(arg1, p, q)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("armasimfit")
+                     block
+                        integer :: n_sim, iter_arg, eqpos
+                        logical :: have_pvec, have_qvec, have_iter
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:), ar_v(:), ma_v(:), p_ord(:), q_ord(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 3) then
+                           print *, "Error: function needs three arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        tmp = evaluate(labels(1))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(tmp) /= 1) then
+                           print *, "Error: first argument of armasimfit() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        n_sim = nint(tmp(1))
+                        if (n_sim < 1) then
+                           print *, "Error: armasimfit() requires n > 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        ar_v = evaluate(labels(2))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(ar_v) < 1) then
+                           print *, "Error: armasimfit() requires non-empty AR coefficients"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        ma_v = evaluate(labels(3))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(ma_v) < 1) then
+                           print *, "Error: armasimfit() requires non-empty MA coefficients"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        have_pvec = .false.
+                        have_qvec = .false.
+                        have_iter = .false.
+                        iter_arg = 5
+
+                        do i_arg = 4, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              rval = adjustl(tok(eqpos + 1:))
+                              if (index(ltok, "pvec") == 1) then
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) < 1) then
+                                    print *, "Error: pvec must be non-empty"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 if (allocated(p_ord)) deallocate (p_ord)
+                                 allocate (p_ord(size(tmp)))
+                                 p_ord = tmp
+                                 have_pvec = .true.
+                              else if (index(ltok, "qvec") == 1) then
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) < 1) then
+                                    print *, "Error: qvec must be non-empty"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 if (allocated(q_ord)) deallocate (q_ord)
+                                 allocate (q_ord(size(tmp)))
+                                 q_ord = tmp
+                                 have_qvec = .true.
+                              else if (index(ltok, "iter") == 1) then
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: iter must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 iter_arg = nint(tmp(1))
+                                 have_iter = .true.
+                              else
+                                 print *, "Error: unknown named argument in armasimfit()"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           else if (.not. have_pvec) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: pvec must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              if (allocated(p_ord)) deallocate (p_ord)
+                              allocate (p_ord(size(tmp)))
+                              p_ord = tmp
+                              have_pvec = .true.
+                           else if (.not. have_qvec) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: qvec must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              if (allocated(q_ord)) deallocate (q_ord)
+                              allocate (q_ord(size(tmp)))
+                              q_ord = tmp
+                              have_qvec = .true.
+                           else if (.not. have_iter) then
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else
+                              print *, "Error: armasimfit() takes at most 6 arguments"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+
+                        if (iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        if (have_pvec .and. have_qvec) then
+                           call armasimfit(n_sim, ar_v, ma_v, pvec=p_ord, qvec=q_ord, niter=iter_arg)
+                        else if (have_pvec) then
+                           call armasimfit(n_sim, ar_v, ma_v, pvec=p_ord, niter=iter_arg)
+                        else if (have_qvec) then
+                           call armasimfit(n_sim, ar_v, ma_v, qvec=q_ord, niter=iter_arg)
+                        else
+                           call armasimfit(n_sim, ar_v, ma_v, niter=iter_arg)
                         end if
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
@@ -5504,6 +8017,142 @@ contains
                            call armafitaic(arg1, pmax, qmax, niter=iter_arg)
                         else
                            call armafitaic(arg1, pmax, qmax)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("araic")
+                     block
+                        integer :: pmax, iter_arg, eqpos
+                        logical :: have_iter, have_pmax
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pmax = 5
+                        have_pmax = .false.
+                        have_iter = .false.; iter_arg = 0
+                        if (n_args > 1) then
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              if (len_trim(tok) > 0) then
+                                 if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                              end if
+                              ltok = lower_str(tok)
+                              if (index(ltok, "iter") == 1) then
+                                 eqpos = index(tok, "=")
+                                 if (eqpos == 0) then
+                                    print *, "Error: iter must be given as iter=..."
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: iter must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 iter_arg = nint(tmp(1))
+                                 have_iter = .true.
+                              else if (.not. have_pmax) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: second argument of araic() must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 pmax = nint(tmp(1))
+                                 have_pmax = .true.
+                              else
+                                 print *, "Error: araic() takes one max-order arg plus iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           end do
+                        end if
+                        if (pmax < 0) then
+                           print *, "Error: araic() max AR order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call araic(arg1, pmax, niter=iter_arg)
+                        else
+                           call araic(arg1, pmax)
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("maaic")
+                     block
+                        integer :: qmax, iter_arg, eqpos
+                        logical :: have_iter, have_qmax
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        qmax = 5
+                        have_qmax = .false.
+                        have_iter = .false.; iter_arg = 0
+                        if (n_args > 1) then
+                           do i_arg = 2, n_args
+                              tok = adjustl(labels(i_arg))
+                              if (len_trim(tok) > 0) then
+                                 if (tok(len_trim(tok):len_trim(tok)) == ")") tok = tok(:len_trim(tok) - 1)
+                              end if
+                              ltok = lower_str(tok)
+                              if (index(ltok, "iter") == 1) then
+                                 eqpos = index(tok, "=")
+                                 if (eqpos == 0) then
+                                    print *, "Error: iter must be given as iter=..."
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 rval = adjustl(tok(eqpos + 1:))
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: iter must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 iter_arg = nint(tmp(1))
+                                 have_iter = .true.
+                              else if (.not. have_qmax) then
+                                 tmp = evaluate(tok)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: second argument of maaic() must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 qmax = nint(tmp(1))
+                                 have_qmax = .true.
+                              else
+                                 print *, "Error: maaic() takes one max-order arg plus iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           end do
+                        end if
+                        if (qmax < 0) then
+                           print *, "Error: maaic() max MA order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter) then
+                           call maaic(arg1, qmax, niter=iter_arg)
+                        else
+                           call maaic(arg1, qmax)
                         end if
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
@@ -5860,8 +8509,8 @@ contains
                   case ("cpsim")
                      block
                         integer :: nobs, seedi, eqpos, pos_idx, ploti, verbosei
-                        logical :: have_mu, have_sd, have_seed, have_plot, have_verbose
-                        real(kind=dp), allocatable :: cpv(:), muv(:), sdv(:), tmp(:)
+                        logical :: have_mu, have_sd, have_seed, have_noise
+                        real(kind=dp), allocatable :: cpv(:), muv(:), sdv(:), noisev(:), tmp(:)
                         character(len=:), allocatable :: tok, ltok, rval
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
                         if (n_args < 2) then
@@ -5882,7 +8531,7 @@ contains
                            eval_error = .true.; f = [bad_value]
                            return
                         end if
-                        have_mu = .false.; have_sd = .false.; have_seed = .false.; have_plot = .false.; have_verbose = .false.
+                        have_mu = .false.; have_sd = .false.; have_seed = .false.; have_noise = .false.
                         ploti = 0
                         verbosei = 0
                         pos_idx = 0
@@ -5915,19 +8564,21 @@ contains
                                     eval_error = .true.; f = [bad_value]
                                     return
                                  end if
-                                 ploti = merge(1, 0, tmp(1) /= 0.0_dp); have_plot = .true.
-                              else if (trim(ltok) == "verbose") then
-                                 if (size(tmp) /= 1) then
-                                    print *, "Error: verbose must be scalar"
-                                    eval_error = .true.; f = [bad_value]
-                                    return
-                                 end if
-                                 verbosei = merge(1, 0, tmp(1) /= 0.0_dp); have_verbose = .true.
-                              else
-                                 print *, "Error: unknown named argument in cpsim()"
-                                 eval_error = .true.; f = [bad_value]
-                                 return
-                              end if
+                                  ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                               else if (trim(ltok) == "verbose") then
+                                  if (size(tmp) /= 1) then
+                                     print *, "Error: verbose must be scalar"
+                                     eval_error = .true.; f = [bad_value]
+                                     return
+                                  end if
+                                  verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                               else if (trim(ltok) == "noise") then
+                                  noisev = tmp; have_noise = .true.
+                               else
+                                  print *, "Error: unknown named argument in cpsim()"
+                                  eval_error = .true.; f = [bad_value]
+                                  return
+                               end if
                            else
                               tmp = evaluate(tok)
                               if (eval_error .or. size(tmp) < 1) then
@@ -5954,39 +8605,40 @@ contains
                                     eval_error = .true.; f = [bad_value]
                                     return
                                  end if
-                                 ploti = merge(1, 0, tmp(1) /= 0.0_dp); have_plot = .true.
-                              case (5)
-                                 if (size(tmp) /= 1) then
-                                    print *, "Error: verbose must be scalar"
-                                    eval_error = .true.; f = [bad_value]
-                                    return
-                                 end if
-                                 verbosei = merge(1, 0, tmp(1) /= 0.0_dp); have_verbose = .true.
-                              case default
-                                 print *, "Error: too many arguments for cpsim()"
-                                 eval_error = .true.; f = [bad_value]
-                                 return
-                              end select
+                                  ploti = merge(1, 0, tmp(1) /= 0.0_dp)
+                               case (5)
+                                  if (size(tmp) /= 1) then
+                                     print *, "Error: verbose must be scalar"
+                                     eval_error = .true.; f = [bad_value]
+                                     return
+                                  end if
+                                  verbosei = merge(1, 0, tmp(1) /= 0.0_dp)
+                               case (6)
+                                  noisev = tmp; have_noise = .true.
+                               case default
+                                  print *, "Error: too many arguments for cpsim()"
+                                  eval_error = .true.; f = [bad_value]
+                                  return
+                               end select
                            end if
                         end do
                         if (.not. have_mu) muv = [0.0_dp]
                         if (.not. have_sd) sdv = [1.0_dp]
-                        if (have_seed .and. have_plot .and. have_verbose) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti, verbose=verbosei)
-                        else if (have_seed .and. have_plot) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti)
-                        else if (have_seed .and. have_verbose) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, verbose=verbosei)
-                        else if (have_plot .and. have_verbose) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti, verbose=verbosei)
+                        if (have_noise) then
+                           if (size(noisev) < nobs) then
+                              print *, "Error: cpsim() noise must have size >= n"
+                              eval_error = .true.; f = [bad_value]
+                              return
+                           end if
+                        end if
+                        if (have_seed .and. have_noise) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti, verbose=verbosei, noise=noisev)
                         else if (have_seed) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi)
-                        else if (have_plot) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti)
-                        else if (have_verbose) then
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, verbose=verbosei)
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, seed=seedi, plot=ploti, verbose=verbosei)
+                        else if (have_noise) then
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti, verbose=verbosei, noise=noisev)
                         else
-                           f = cpsim(nobs, cpv, mu=muv, sd=sdv)
+                           f = cpsim(nobs, cpv, mu=muv, sd=sdv, plot=ploti, verbose=verbosei)
                         end if
                      end block
 
@@ -6240,26 +8892,95 @@ contains
                   case ("distaicscan")
                      block
                         logical :: do_verbose
+                        logical :: do_nct
                         integer :: verbose_i
+                        character(len=:), allocatable :: labels(:), tok, aexpr
+                        character(len=len_name) :: aname
+                        logical :: is_named, ok_named
+                        integer :: n_args, i_arg, peq
                         do_verbose = .true.
-                        call skip_spaces()
-                        if (curr_char == ",") then
-                           call next_char()
-                           call skip_spaces()
-                           arg2 = parse_expression()
-                           if (eval_error .or. size(arg2) /= 1) then
-                              print *, "Error: verbose must be scalar"
+                        do_nct = .false.
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 1) then
+                           print *, "Error: distaicscan() requires a data argument"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        arg1 = evaluate(adjustl(labels(1)))
+                        if (eval_error .or. size(arg1) < 1) then
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           call parse_call_actual(tok, is_named, aname, aexpr, ok_named)
+                           if (.not. is_named) then
+                              peq = index(tok, "=")
+                              if (peq == 0) peq = top_level_keyword_eq_pos(tok)
+                              if (peq > 0) then
+                                 is_named = .true.
+                                 ok_named = .true.
+                                 aname = adjustl(trim(tok(1:peq - 1)))
+                                 aexpr = adjustl(trim(tok(peq + 1:)))
+                              end if
+                           end if
+                           if (.not. ok_named) then
                               eval_error = .true.; f = [bad_value]
                               return
                            end if
-                           do_verbose = (arg2(1) /= 0.0_dp)
-                        end if
+                           if (is_named) then
+                              select case (trim(aname))
+                              case ("verbose")
+                                 arg2 = evaluate(adjustl(aexpr))
+                                 if (eval_error .or. size(arg2) /= 1) then
+                                    print *, "Error: verbose must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_verbose = (arg2(1) /= 0.0_dp)
+                              case ("nct")
+                                 arg2 = evaluate(adjustl(aexpr))
+                                 if (eval_error .or. size(arg2) /= 1) then
+                                    print *, "Error: nct must be scalar logical"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_nct = (arg2(1) /= 0.0_dp)
+                              case default
+                                 print *, "Error: unknown argument for distaicscan: ", trim(aname)
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end select
+                           else
+                              if (i_arg == 2) then
+                                 arg2 = evaluate(adjustl(tok))
+                                 if (eval_error .or. size(arg2) /= 1) then
+                                    print *, "Error: verbose must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_verbose = (arg2(1) /= 0.0_dp)
+                              else if (i_arg == 3) then
+                                 arg2 = evaluate(adjustl(tok))
+                                 if (eval_error .or. size(arg2) /= 1) then
+                                    print *, "Error: nct must be scalar logical"
+                                    eval_error = .true.; f = [bad_value]
+                                    return
+                                 end if
+                                 do_nct = (arg2(1) /= 0.0_dp)
+                              else
+                                 print *, "Error: unexpected positional argument for distaicscan"
+                                 eval_error = .true.; f = [bad_value]
+                                 return
+                              end if
+                           end if
+                        end do
                         if (do_verbose) then
                            verbose_i = 1
                         else
                            verbose_i = 0
                         end if
-                        call distaicscan(arg1, verbose=verbose_i)
+                        call distaicscan(arg1, verbose=verbose_i, nct=do_nct)
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
                      end block
@@ -6370,9 +9091,11 @@ contains
 
                   case ("arfit")
                      block
-                        logical :: have_k1, have_k2, have_acf, have_lb
-                        integer :: acf_lags, lb_lags, eqpos
-                        character(len=:), allocatable :: tok, ltok, rval
+                        logical :: have_k1, have_k2, have_acf, have_lb, have_kvec
+                        integer :: acf_lags, lb_lags, eqpos, j
+                        integer, allocatable :: kvec(:)
+                        character(len=:), allocatable :: tok, ltok, rval, sval
+                        character(len=16) :: method_s
                         real(kind=dp), allocatable :: tmp(:)
 
                         call split_by_comma(expr(pstart:pend - 1), n_args, labels)
@@ -6382,10 +9105,12 @@ contains
                         end if
                         have_k1 = .false.
                         have_k2 = .false.
+                        have_kvec = .false.
                         have_acf = .false.
                         have_lb = .false.
                         acf_lags = 0
                         lb_lags = 0
+                        method_s = "ls"
                         do i_arg = 2, n_args
                            tok = adjustl(labels(i_arg))
                            ltok = lower_str(tok)
@@ -6423,18 +9148,43 @@ contains
                               end if
                               lb_lags = nint(tmp(1))
                               have_lb = .true.
+                           else if (index(ltok, "method") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: method must be given as method=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              sval = trim(tok(eqpos + 1:))
+                              if (len_trim(sval) >= 2) then
+                                 if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                 if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                    sval = sval(:len_trim(sval) - 1)
+                                 end if
+                              end if
+                              method_s = lower_str(trim(sval))
                            else if (.not. have_k1) then
                               tmp = evaluate(tok)
                               if (eval_error) then
                                  f = [bad_value]; return
                               end if
-                              if (size(tmp) /= 1) then
-                                 print *, "Error: second argument of arfit() must be scalar"
+                              if (size(tmp) < 1) then
+                                 print *, "Error: second argument of arfit() must be non-empty"
                                  eval_error = .true.; f = [bad_value]; return
                               end if
-                              n1 = nint(tmp(1))
+                              if (size(tmp) == 1) then
+                                 n1 = nint(tmp(1))
+                              else
+                                 allocate (kvec(size(tmp)))
+                                 kvec = nint(tmp)
+                                 n1 = kvec(1)
+                                 have_kvec = .true.
+                              end if
                               have_k1 = .true.
-                           else if (.not. have_k2) then
+                            else if (.not. have_k2) then
+                              if (have_kvec) then
+                                 print *, "Error: arfit() with vector order does not allow a third positional argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
                               tmp = evaluate(tok)
                               if (eval_error) then
                                  f = [bad_value]; return
@@ -6454,31 +9204,487 @@ contains
                            print *, "Error: arfit() requires a lag order"
                            eval_error = .true.; f = [bad_value]; return
                         end if
-                        if (n1 < 0 .or. (have_k2 .and. n2 < 0) .or. acf_lags < 0 .or. lb_lags < 0) then
+                        if ((.not. have_kvec .and. (n1 < 0 .or. (have_k2 .and. n2 < 0))) .or. acf_lags < 0 .or. lb_lags < 0) then
                            print *, "Error: arfit() lag order must be >= 0"
                            eval_error = .true.; f = [bad_value]; return
                         end if
-                        if (have_k2) then
-                           if (have_acf .and. have_lb) then
-                              call arfit(arg1, n1, n2, nacf=acf_lags, nlb=lb_lags)
-                           else if (have_acf) then
-                              call arfit(arg1, n1, n2, nacf=acf_lags)
-                           else if (have_lb) then
-                              call arfit(arg1, n1, n2, nlb=lb_lags)
+                        if (have_kvec) then
+                           if (any(kvec < 0)) then
+                              print *, "Error: arfit() lag order must be >= 0"
+                              eval_error = .true.; f = [bad_value]
                            else
-                              call arfit(arg1, n1, n2)
-                           end if
-                        else
-                           if (have_acf .and. have_lb) then
-                              call arfit(arg1, n1, nacf=acf_lags, nlb=lb_lags)
-                           else if (have_acf) then
-                              call arfit(arg1, n1, nacf=acf_lags)
-                           else if (have_lb) then
-                              call arfit(arg1, n1, nlb=lb_lags)
+                              do j = 1, size(kvec)
+                                 if (have_acf .and. have_lb) then
+                                    call arfit(arg1, kvec(j), nacf=acf_lags, nlb=lb_lags, method=trim(method_s), header=(j == 1))
+                                 else if (have_acf) then
+                                    call arfit(arg1, kvec(j), nacf=acf_lags, method=trim(method_s), header=(j == 1))
+                                 else if (have_lb) then
+                                    call arfit(arg1, kvec(j), nlb=lb_lags, method=trim(method_s), header=(j == 1))
+                                  else
+                                    call arfit(arg1, kvec(j), method=trim(method_s), header=(j == 1))
+                                  end if
+                               end do
+                            end if
+                         else
+                            if (have_k2) then
+                               if (have_acf .and. have_lb) then
+                                 call arfit(arg1, n1, n2, nacf=acf_lags, nlb=lb_lags, method=trim(method_s))
+                               else if (have_acf) then
+                                 call arfit(arg1, n1, n2, nacf=acf_lags, method=trim(method_s))
+                               else if (have_lb) then
+                                 call arfit(arg1, n1, n2, nlb=lb_lags, method=trim(method_s))
+                               else
+                                 call arfit(arg1, n1, n2, method=trim(method_s))
+                               end if
+                            else
+                               if (have_acf .and. have_lb) then
+                                 call arfit(arg1, n1, nacf=acf_lags, nlb=lb_lags, method=trim(method_s))
+                               else if (have_acf) then
+                                 call arfit(arg1, n1, nacf=acf_lags, method=trim(method_s))
+                               else if (have_lb) then
+                                 call arfit(arg1, n1, nlb=lb_lags, method=trim(method_s))
+                               else
+                                 call arfit(arg1, n1, method=trim(method_s))
+                               end if
+                            end if
+                         end if
+                        if (allocated(kvec)) deallocate (kvec)
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("arsimfit")
+                     block
+                        logical :: have_k2, have_acf, have_lb, have_kvec, parse_k_arg
+                        integer :: acf_lags, lb_lags, eqpos, j, n_sim
+                        integer :: first_opt_arg
+                        integer, allocatable :: kvec(:)
+                        character(len=:), allocatable :: tok, ltok, rval, sval
+                        character(len=16) :: method_s
+                        real(kind=dp), allocatable :: tmp(:), phi(:), xsim(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        tmp = evaluate(labels(1))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(tmp) /= 1) then
+                           print *, "Error: first argument of arsimfit() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        n_sim = nint(tmp(1))
+                        if (n_sim < 1) then
+                           print *, "Error: arsimfit() requires n > 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        phi = evaluate(labels(2))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(phi) < 1) then
+                           print *, "Error: arsimfit() requires non-empty AR coefficients"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        have_k2 = .false.
+                        have_kvec = .false.
+                        have_acf = .false.
+                        have_lb = .false.
+                        acf_lags = 0
+                        lb_lags = 0
+                        method_s = "ls"
+                        n1 = size(phi)
+                        first_opt_arg = 3
+                        parse_k_arg = .false.
+                        if (n_args >= 3) then
+                           tok = adjustl(labels(3))
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                              if (.not. (index(ltok, "acf") == 1 .or. index(ltok, "lb") == 1 .or. index(ltok, "method") == 1)) then
+                                 parse_k_arg = .true.
+                              end if
                            else
-                              call arfit(arg1, n1)
+                              parse_k_arg = .true.
                            end if
                         end if
+                        if (parse_k_arg) then
+                           tmp = evaluate(labels(3))
+                           if (eval_error) then
+                              f = [bad_value]; return
+                           end if
+                           if (size(tmp) < 1) then
+                              print *, "Error: third argument of arsimfit() must be non-empty"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           if (size(tmp) == 1) then
+                              n1 = nint(tmp(1))
+                           else
+                              allocate (kvec(size(tmp)))
+                              kvec = nint(tmp)
+                              n1 = kvec(1)
+                              have_kvec = .true.
+                           end if
+                           first_opt_arg = 4
+                        end if
+
+                        do i_arg = first_opt_arg, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "acf") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: acf must be given as acf=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: acf must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              acf_lags = nint(tmp(1))
+                              have_acf = .true.
+                           else if (index(ltok, "lb") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: lb must be given as lb=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: lb must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              lb_lags = nint(tmp(1))
+                              have_lb = .true.
+                           else if (index(ltok, "method") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: method must be given as method=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              sval = trim(tok(eqpos + 1:))
+                              if (len_trim(sval) >= 2) then
+                                 if (sval(1:1) == "'" .or. sval(1:1) == '"') sval = sval(2:)
+                                 if (sval(len_trim(sval):len_trim(sval)) == "'" .or. sval(len_trim(sval):len_trim(sval)) == '"') then
+                                    sval = sval(:len_trim(sval) - 1)
+                                 end if
+                              end if
+                              method_s = lower_str(trim(sval))
+                           else if (.not. have_k2) then
+                              if (have_kvec) then
+                                 print *, "Error: arsimfit() with vector order does not allow a fourth positional argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: fourth argument of arsimfit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n2 = nint(tmp(1))
+                              have_k2 = .true.
+                           else
+                              print *, "Error: arsimfit() takes at most 4 arguments plus acf=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+
+                        if ((.not. have_kvec .and. (n1 < 0 .or. (have_k2 .and. n2 < 0))) .or. acf_lags < 0 .or. lb_lags < 0) then
+                           print *, "Error: arsimfit() lag order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_kvec) then
+                           if (any(kvec < 0)) then
+                              print *, "Error: arsimfit() lag order must be >= 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              xsim = arsim(n_sim, phi)
+                              do j = 1, size(kvec)
+                                 if (have_acf .and. have_lb) then
+                                    call arfit(xsim, kvec(j), nacf=acf_lags, nlb=lb_lags, method=trim(method_s), header=(j == 1), true_phi=phi)
+                                 else if (have_acf) then
+                                    call arfit(xsim, kvec(j), nacf=acf_lags, method=trim(method_s), header=(j == 1), true_phi=phi)
+                                 else if (have_lb) then
+                                    call arfit(xsim, kvec(j), nlb=lb_lags, method=trim(method_s), header=(j == 1), true_phi=phi)
+                                 else
+                                    call arfit(xsim, kvec(j), method=trim(method_s), header=(j == 1), true_phi=phi)
+                                 end if
+                              end do
+                           end if
+                        else
+                           if (have_k2) then
+                              if (have_acf .and. have_lb) then
+                                 call arsimfit(n_sim, phi, n1, n2, nacf=acf_lags, nlb=lb_lags, method=trim(method_s))
+                              else if (have_acf) then
+                                 call arsimfit(n_sim, phi, n1, n2, nacf=acf_lags, method=trim(method_s))
+                              else if (have_lb) then
+                                 call arsimfit(n_sim, phi, n1, n2, nlb=lb_lags, method=trim(method_s))
+                              else
+                                 call arsimfit(n_sim, phi, n1, n2, method=trim(method_s))
+                              end if
+                           else
+                              if (have_acf .and. have_lb) then
+                                 call arsimfit(n_sim, phi, n1, nacf=acf_lags, nlb=lb_lags, method=trim(method_s))
+                              else if (have_acf) then
+                                 call arsimfit(n_sim, phi, n1, nacf=acf_lags, method=trim(method_s))
+                              else if (have_lb) then
+                                 call arsimfit(n_sim, phi, n1, nlb=lb_lags, method=trim(method_s))
+                              else
+                                 call arsimfit(n_sim, phi, n1, method=trim(method_s))
+                              end if
+                           end if
+                        end if
+
+                        if (allocated(kvec)) deallocate (kvec)
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("masimfit")
+                     block
+                        logical :: have_k2, have_acf, have_lb, have_iter, have_kvec, parse_k_arg
+                        integer :: acf_lags, lb_lags, iter_arg, eqpos, n_sim
+                        integer :: first_opt_arg
+                        integer, allocatable :: kvec(:)
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:), theta(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        tmp = evaluate(labels(1))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(tmp) /= 1) then
+                           print *, "Error: first argument of masimfit() must be scalar"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        n_sim = nint(tmp(1))
+                        if (n_sim < 1) then
+                           print *, "Error: masimfit() requires n > 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        theta = evaluate(labels(2))
+                        if (eval_error) then
+                           f = [bad_value]; return
+                        end if
+                        if (size(theta) < 1) then
+                           print *, "Error: masimfit() requires non-empty MA coefficients"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        have_k2 = .false.
+                        have_kvec = .false.
+                        have_acf = .false.
+                        have_lb = .false.
+                        have_iter = .false.
+                        acf_lags = 0
+                        lb_lags = 0
+                        iter_arg = 5
+                        n1 = size(theta)
+                        first_opt_arg = 3
+                        parse_k_arg = .false.
+                        if (n_args >= 3) then
+                           tok = adjustl(labels(3))
+                           eqpos = index(tok, "=")
+                           if (eqpos > 0) then
+                              ltok = lower_str(adjustl(tok(:eqpos - 1)))
+                              if (.not. (index(ltok, "acf") == 1 .or. index(ltok, "lb") == 1 .or. index(ltok, "iter") == 1)) then
+                                 parse_k_arg = .true.
+                              end if
+                           else
+                              parse_k_arg = .true.
+                           end if
+                        end if
+                        if (parse_k_arg) then
+                           tmp = evaluate(labels(3))
+                           if (eval_error) then
+                              f = [bad_value]; return
+                           end if
+                           if (size(tmp) < 1) then
+                              print *, "Error: third argument of masimfit() must be non-empty"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                           if (size(tmp) == 1) then
+                              n1 = nint(tmp(1))
+                           else
+                              allocate (kvec(size(tmp)))
+                              kvec = nint(tmp)
+                              n1 = kvec(1)
+                              have_kvec = .true.
+                           end if
+                           first_opt_arg = 4
+                        end if
+
+                        do i_arg = first_opt_arg, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "acf") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: acf must be given as acf=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: acf must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              acf_lags = nint(tmp(1))
+                              have_acf = .true.
+                           else if (index(ltok, "lb") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: lb must be given as lb=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: lb must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              lb_lags = nint(tmp(1))
+                              have_lb = .true.
+                           else if (index(ltok, "iter") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: iter must be given as iter=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: iter must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              iter_arg = nint(tmp(1))
+                              have_iter = .true.
+                           else if (.not. have_k2) then
+                              if (have_kvec) then
+                                 print *, "Error: masimfit() with vector order does not allow a fourth positional argument"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: fourth argument of masimfit() must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n2 = nint(tmp(1))
+                              have_k2 = .true.
+                           else
+                              print *, "Error: masimfit() takes at most 4 arguments plus acf=..."
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+
+                        if ((.not. have_kvec .and. (n1 < 0 .or. (have_k2 .and. n2 < 0))) .or. acf_lags < 0 .or. lb_lags < 0) then
+                           print *, "Error: masimfit() lag order must be >= 0"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_iter .and. iter_arg < 1) then
+                           print *, "Error: iter must be >= 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (have_kvec) then
+                           if (any(kvec < 0)) then
+                              print *, "Error: masimfit() lag order must be >= 0"
+                              eval_error = .true.; f = [bad_value]
+                           else
+                              if (have_acf .and. have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, kvec, nacf=acf_lags, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf .and. have_lb) then
+                                 call masimfit(n_sim, theta, kvec, nacf=acf_lags, nlb=lb_lags)
+                              else if (have_acf .and. have_iter) then
+                                 call masimfit(n_sim, theta, kvec, nacf=acf_lags, niter=iter_arg)
+                              else if (have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, kvec, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf) then
+                                 call masimfit(n_sim, theta, kvec, nacf=acf_lags)
+                              else if (have_lb) then
+                                 call masimfit(n_sim, theta, kvec, nlb=lb_lags)
+                              else if (have_iter) then
+                                 call masimfit(n_sim, theta, kvec, niter=iter_arg)
+                              else
+                                 call masimfit(n_sim, theta, kvec)
+                              end if
+                           end if
+                        else
+                           if (have_k2) then
+                              if (have_acf .and. have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, n2, nacf=acf_lags, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf .and. have_lb) then
+                                 call masimfit(n_sim, theta, n1, n2, nacf=acf_lags, nlb=lb_lags)
+                              else if (have_acf .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, n2, nacf=acf_lags, niter=iter_arg)
+                              else if (have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, n2, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf) then
+                                 call masimfit(n_sim, theta, n1, n2, nacf=acf_lags)
+                              else if (have_lb) then
+                                 call masimfit(n_sim, theta, n1, n2, nlb=lb_lags)
+                              else if (have_iter) then
+                                 call masimfit(n_sim, theta, n1, n2, niter=iter_arg)
+                              else
+                                 call masimfit(n_sim, theta, n1, n2)
+                              end if
+                           else
+                              if (have_acf .and. have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, nacf=acf_lags, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf .and. have_lb) then
+                                 call masimfit(n_sim, theta, n1, nacf=acf_lags, nlb=lb_lags)
+                              else if (have_acf .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, nacf=acf_lags, niter=iter_arg)
+                              else if (have_lb .and. have_iter) then
+                                 call masimfit(n_sim, theta, n1, nlb=lb_lags, niter=iter_arg)
+                              else if (have_acf) then
+                                 call masimfit(n_sim, theta, n1, nacf=acf_lags)
+                              else if (have_lb) then
+                                 call masimfit(n_sim, theta, n1, nlb=lb_lags)
+                              else if (have_iter) then
+                                 call masimfit(n_sim, theta, n1, niter=iter_arg)
+                              else
+                                 call masimfit(n_sim, theta, n1)
+                              end if
+                           end if
+                        end if
+
+                        if (allocated(kvec)) deallocate (kvec)
                         suppress_result = .true.
                         f = [real(kind=dp) ::]
                      end block
@@ -7332,9 +10538,9 @@ contains
                         f = kde(arg1, nsize)
                      end if
 
-                  case ("runif", "rnorm", "rsech", "arange", "zeros", "ones") ! one-arg
+                  case ("runif", "rnorm", "rsech", "zeros", "ones") ! one-arg
                      if (have_second) then
-                        print *, "Error: function takes one argument"
+                        print *, "Error: function ", trim(id), " takes one argument"
                         eval_error = .true.; f = [bad_value]
                      else
                         nsize = nint(arg1(1))
@@ -7342,11 +10548,57 @@ contains
                         case ("runif"); f = runif(nsize)
                         case ("rnorm"); f = random_normal(nsize)
                         case ("rsech"); f = rsech(nsize)
-                        case ("arange"); f = arange(nsize)
                         case ("zeros"); f = zeros(nsize)
                         case ("ones"); f = ones(nsize)
                         end select
                     end if
+
+                  case ("arange", "irange")
+                     block
+                        real(kind=dp), allocatable :: a1(:), a2(:), a3(:)
+                        integer :: n_args_local
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local < 1 .or. n_args_local > 3) then
+                           print *, "Error: function ", trim(id), " takes one, two, or three arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           a1 = evaluate(labels(1))
+                           if (eval_error .or. size(a1) /= 1) then
+                              print *, "Error: first argument of ", trim(id), "() must be scalar"
+                              eval_error = .true.; f = [bad_value]
+                           else if (n_args_local == 1) then
+                              if (trim(id) == "arange") then
+                                 f = arange(nint(a1(1)))
+                              else
+                                 f = real(irange(nint(a1(1))), kind=dp)
+                              end if
+                           else
+                              a2 = evaluate(labels(2))
+                              if (eval_error .or. size(a2) /= 1) then
+                                 print *, "Error: second argument of ", trim(id), "() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else if (n_args_local == 2) then
+                                 if (trim(id) == "arange") then
+                                    f = arange(a1(1), a2(1))
+                                 else
+                                    f = real(irange(nint(a1(1)), nint(a2(1))), kind=dp)
+                                 end if
+                              else
+                                 a3 = evaluate(labels(3))
+                                 if (eval_error .or. size(a3) /= 1) then
+                                    print *, "Error: third argument of ", trim(id), "() must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    if (trim(id) == "arange") then
+                                       f = arange(a1(1), a2(1), a3(1))
+                                    else
+                                       f = real(irange(nint(a1(1)), nint(a2(1)), nint(a3(1))), kind=dp)
+                                    end if
+                                 end if
+                              end if
+                           end if
+                        end if
+                     end block
 
                   case ("grid") ! grid(n,x0,xh)
                      if (.not. have_second) then
@@ -7380,12 +10632,20 @@ contains
                         end if
                      end if
 
+                  case ("polyroots")
+                     if (have_second) then
+                        print "(a)", "Error: function '"//trim(id)//"' takes one argument"
+                        eval_error = .true.; f = [bad_value]
+                     else
+                        f = polyroots(arg1)
+                     end if
+
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
                         "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", "iqr_scale", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
-                        "unique", "stdz", "reverse", "median", "mssk", "jb_test", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_t", "fit_nct", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
+                        "unique", "stdz", "reverse", "median", "mssk", "jb_test", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
                         "bessel_y0", "bessel_y1", "gamma", "log_gamma", "cosd", "sind", "tand", &
                         "acosd", "asind", "atand", "spacing", "skew", "kurt", "print_stats")
                      if (have_second) then
@@ -7429,14 +10689,14 @@ contains
                   case ("plot")
                      if (.not. have_second) then
                         call plot(arg1, title=plot_to_label(line_cp))
-                        allocate (f(0))
+                        f = [real(kind=dp) ::]
                      else if (size(arg1) /= size(arg2)) then
                         print *, "Error: plot() arguments must have same size"
                         eval_error = .true.
                         f = [bad_value]
                      else
                         call plot(arg1, arg2, title=plot_to_label(line_cp))         ! <-- actual drawing
-                        allocate (f(0))                ! return “nothing”
+                        f = [real(kind=dp) ::] ! return “nothing”
                      end if
 
                   case default ! subscript  x(i)
@@ -7457,7 +10717,7 @@ contains
                                  print *, "Error: index out of bounds for '"//trim(id)//"'"
                                  eval_error = .true.; f = [bad_value]
                               else
-                                 allocate (f(size(idxv))); f = vvar(idxv)
+                                 f = vvar(idxv)
                               end if
                            end if
                         else
@@ -7497,6 +10757,13 @@ contains
             end if
          end if
       end function parse_factor
+
+      logical function starts_decimal_literal()
+         starts_decimal_literal = .false.
+         if (curr_char /= ".") return
+         if (pos > lenstr) return
+         starts_decimal_literal = is_numeral(expr(pos:pos))
+      end function starts_decimal_literal
 
       recursive function parse_term() result(t)
          ! Parse and evaluate a sequence of factors joined by "*" or "/"
@@ -7779,13 +11046,21 @@ contains
       integer                       :: p, repeat_count
       integer                       :: prev_loop_exec_base
       logical :: print_array_as_int, run_then, had_error, in_quote, comment_only, consumed_loop_line, ok_for, prev_exec, ok_plotout
+      character(len=1) :: quote_char
       character(len=*), parameter :: fmt_real_array = '("[",*(i0,:,", "))'
       character(len=:), allocatable :: lhs, rhs, rhs_tail
       integer :: p_lpar, p_rpar, depth, len_adj, comment_pos, i_c
       integer :: n_names
       character(len=:), allocatable :: cond_txt, then_txt, low_adj
       line_eval = line
+      if (len(line_eval) >= 3) then
+         if (iachar(line_eval(1:1)) == 239 .and. iachar(line_eval(2:2)) == 187 .and. &
+             iachar(line_eval(3:3)) == 191) then
+            line_eval = line_eval(4:)
+         end if
+      end if
       in_quote = .false.
+      quote_char = " "
       comment_pos = 0
       comment_only = .false.
       do i_c = 1, len_trim(line)
@@ -7795,7 +11070,17 @@ contains
          end if
       end do
       do i_c = 1, len_trim(line_eval)
-         if (line_eval(i_c:i_c) == '"') in_quote = .not. in_quote
+         if (.not. in_quote) then
+            if (line_eval(i_c:i_c) == '"' .or. line_eval(i_c:i_c) == "'") then
+               in_quote = .true.
+               quote_char = line_eval(i_c:i_c)
+            end if
+         else
+            if (line_eval(i_c:i_c) == quote_char) then
+               in_quote = .false.
+               quote_char = " "
+            end if
+         end if
          if (.not. in_quote .and. line_eval(i_c:i_c) == comment_char) then
             comment_pos = i_c
             exit
@@ -8009,7 +11294,8 @@ contains
          print*
          goto 9000
       else if (len_adj > 2) then
-         if (adj_line(1:1) == '"' .and. adj_line(len_adj:len_adj) == '"') then
+         if ((adj_line(1:1) == '"' .and. adj_line(len_adj:len_adj) == '"') .or. &
+             (adj_line(1:1) == "'" .and. adj_line(len_adj:len_adj) == "'")) then
             ! if a line just contains a quoted non-empty string, print it after a blank line
             print "(/,a)",adj_line(2:len_adj-1)
             goto 9000
@@ -8741,7 +12027,7 @@ contains
             cycle
          end if
 
-         if (index(part_eval, '"') > 0) then
+         if (index(part_eval, '"') > 0 .and. index(part_eval, "(") == 0 .and. index(part_eval, "[") == 0) then
             block
                character(len=:), allocatable :: seg
                integer :: p1, p2, posq
@@ -8909,6 +12195,11 @@ contains
          if (eval_error) then
             if (stop_if_error) stop "stopped with evaluation error"
             had_error = .true.; cycle
+         end if
+         if (.not. allocated(r)) then
+            print *, "Error: internal evaluator returned no value"
+            had_error = .true.
+            cycle
          end if
          const_assign = .false.
          if (suppress_result) then
@@ -9212,9 +12503,14 @@ contains
    contains
       subroutine append_part(txt)
          character(len=*), intent(in) :: txt
-         integer :: newlen
+         integer :: newlen, oldlen
 
-         newlen = max(len_trim(txt), merge(0, len(parts(1)), allocated(parts)))
+         if (allocated(parts)) then
+            oldlen = len(parts(1))
+         else
+            oldlen = 0
+         end if
+         newlen = max(len_trim(txt), oldlen)
 
          if (.not. allocated(parts)) then
             allocate (character(len=newlen) :: parts(1))
@@ -9243,7 +12539,7 @@ contains
       character(len=*), intent(in) :: line_in
       integer, intent(out) :: n
       character(len=:), allocatable :: parts(:)
-      integer :: i, start, len_line, newlen, nlen_tail
+      integer :: i, start, len_line, newlen, nlen_tail, oldlen
 
       n = 0
       len_line = len_trim(line_in)
@@ -9263,7 +12559,12 @@ contains
          end do
          nlen_tail = min(i - 1, len_line)
          if (nlen_tail < start) cycle
-         newlen = max(nlen_tail - start + 1, merge(0, len(parts(1)), allocated(parts)))
+         if (allocated(parts)) then
+            oldlen = len(parts(1))
+         else
+            oldlen = 0
+         end if
+         newlen = max(nlen_tail - start + 1, oldlen)
          if (.not. allocated(parts)) then
             allocate (character(len=newlen) :: parts(1))
          else if (len(parts(1)) < newlen) then
@@ -9332,9 +12633,14 @@ contains
          ! growing the buffer as needed
          character(len=*), intent(in) :: txt
          logical, intent(in) :: semi
-         integer :: newlen
+         integer :: newlen, oldlen
 
-         newlen = max(len_trim(txt), merge(0, len(parts(1)), allocated(parts)))
+         if (allocated(parts)) then
+            oldlen = len(parts(1))
+         else
+            oldlen = 0
+         end if
+         newlen = max(len_trim(txt), oldlen)
 
          ! ---- grow / (re)allocate PARTS ------------------------------------
          if (.not. allocated(parts)) then
