@@ -1,4 +1,4 @@
-executables = xinterpret_ifx.exe
+executables = fcalc.exe
 FC     = ifx
 FFLAGS = /nologo /Zi /Od /check:all /traceback /fpe-all:0 /warn:all /assume:protect_parens /implicitnone /stand:f23
 LDFLAGS = /link /STACK:134217728
@@ -10,11 +10,11 @@ all: $(executables)
 %.obj: %.f90
 	$(FC) $(FFLAGS) -c $<
 
-xinterpret_ifx.exe: kind.obj util.obj gnuplot.obj constants.obj qsort.obj random.obj stats.obj interpret.obj xinterpret.obj
-	$(FC) -o xinterpret_ifx.exe kind.obj util.obj gnuplot.obj constants.obj qsort.obj random.obj stats.obj interpret.obj xinterpret.obj $(FFLAGS) $(LDFLAGS)
+fcalc.exe: kind.obj util.obj gnuplot.obj constants.obj qsort.obj random.obj stats.obj interpret.obj xinterpret.obj
+	$(FC) -o fcalc.exe kind.obj util.obj gnuplot.obj constants.obj qsort.obj random.obj stats.obj interpret.obj xinterpret.obj $(FFLAGS) $(LDFLAGS)
 
 run: $(executables)
-	./xinterpret_ifx.exe
+	./fcalc.exe
 
 clean:
 	rm -f $(executables) $(obj)
