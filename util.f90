@@ -1,4 +1,4 @@
-module util_mod
+﻿module util_mod
 use kind_mod, only: dp
 implicit none
 private
@@ -31,14 +31,14 @@ end interface polyroots
 contains
 
 function runif1() result(y)
+! draw one U(0,1) random variate.
 real(kind=dp) :: y
 call random_number(y)
 end function runif1
 
 function polyroots_real(a) result(r)
-! roots of polynomial a(1) + a(2)*x + ... + a(n)*x^(n-1)
-! returned as [Re(z1), Im(z1), Re(z2), Im(z2), ...]
-real(kind=dp), intent(in) :: a(:)
+! compute all roots of a real-coefficient polynomial via Durand-Kerner.
+real(kind=dp), intent(in) :: a(:)   ! polynomial coefficients [a0, a1, ..., an].
 real(kind=dp), allocatable :: r(:)
 complex(kind=dp), allocatable :: coef(:), z(:), znew(:)
 complex(kind=dp) :: pval, denom, delta
@@ -133,15 +133,17 @@ end do
 end function polyroots_real
 
 function polyroots_int(a) result(r)
-integer, intent(in) :: a(:)
+! compute roots of an integer-coefficient polynomial.
+integer, intent(in) :: a(:)   ! polynomial coefficients [a0, a1, ..., an].
 real(kind=dp), allocatable :: r(:)
 r = polyroots_real(real(a, kind=dp))
 end function polyroots_int
 
 pure function poly_eval_complex(c, n, z) result(v)
-complex(kind=dp), intent(in) :: c(0:)
-integer, intent(in) :: n
-complex(kind=dp), intent(in) :: z
+! evaluate a complex polynomial using Horner's method.
+complex(kind=dp), intent(in) :: c(0:)   ! polynomial coefficients from degree 0 upward.
+integer, intent(in) :: n   ! highest polynomial degree to include.
+complex(kind=dp), intent(in) :: z   ! complex point where polynomial is evaluated.
 complex(kind=dp) :: v
 integer :: i
 v = c(n)
@@ -187,8 +189,8 @@ elemental logical function matched_brackets(s) result(is_valid)
 end function matched_brackets
 
 pure function arange1(n) result(vec)
-! return an array of 1.0 through n inclusive
-integer, intent(in) :: n
+! return a real sequence from 1 to n inclusive.
+integer, intent(in) :: n   ! last value in the sequence.
 real(kind=dp) :: vec(n)
 integer :: i
 do i=1,n
@@ -197,15 +199,18 @@ end do
 end function arange1
 
 pure function arange2(start, stop) result(vec)
-! return an array from start to stop inclusive with step 1.0
-real(kind=dp), intent(in) :: start, stop
+! return a real sequence from start to stop inclusive with unit step.
+real(kind=dp), intent(in) :: start   ! first value in the sequence.
+real(kind=dp), intent(in) :: stop   ! final value in the sequence.
 real(kind=dp), allocatable :: vec(:)
 vec = arange3(start, stop, 1.0_dp)
 end function arange2
 
 pure function arange3(start, stop, step) result(vec)
-! return an array from start to stop inclusive with given step
-real(kind=dp), intent(in) :: start, stop, step
+! return a real sequence from start to stop inclusive with a specified step.
+real(kind=dp), intent(in) :: start   ! first value in the sequence.
+real(kind=dp), intent(in) :: stop   ! terminal value for inclusion test.
+real(kind=dp), intent(in) :: step   ! increment between consecutive values.
 real(kind=dp), allocatable :: vec(:)
 real(kind=dp) :: val, eps
 integer :: n, i
@@ -243,8 +248,8 @@ end do
 end function arange3
 
 pure function irange1(n) result(vec)
-! return an integer array of 1 through n inclusive
-integer, intent(in) :: n
+! return an integer sequence from 1 to n inclusive.
+integer, intent(in) :: n   ! last value in the sequence.
 integer :: vec(n)
 integer :: i
 do i = 1, n
@@ -253,15 +258,18 @@ end do
 end function irange1
 
 pure function irange2(start, stop) result(vec)
-! return an integer array from start to stop inclusive with step 1
-integer, intent(in) :: start, stop
+! return an integer sequence from start to stop inclusive with unit step.
+integer, intent(in) :: start   ! first value in the sequence.
+integer, intent(in) :: stop   ! final value in the sequence.
 integer, allocatable :: vec(:)
 vec = irange3(start, stop, 1)
 end function irange2
 
 pure function irange3(start, stop, step) result(vec)
-! return an integer array from start to stop inclusive with given step
-integer, intent(in) :: start, stop, step
+! return an integer sequence from start to stop inclusive with a specified step.
+integer, intent(in) :: start   ! first value in the sequence.
+integer, intent(in) :: stop   ! terminal value for inclusion test.
+integer, intent(in) :: step   ! increment between consecutive values.
 integer, allocatable :: vec(:)
 integer :: val, n, i
 
@@ -298,10 +306,11 @@ end function irange3
 
 
 pure function grid(n, x0, xh) result(vec)
-! return a grid of n values starting at x0 with increment of xh
-integer, intent(in) :: n
+! build an evenly spaced grid using a start value and fixed increment.
+integer, intent(in) :: n   ! number of grid points to produce.
 real(kind=dp) :: vec(n)
-real(kind=dp), intent(in) :: x0, xh
+real(kind=dp), intent(in) :: x0   ! first grid value.
+real(kind=dp), intent(in) :: xh   ! increment between adjacent values.
 integer :: i
 if (n < 1) return
 vec(1) = x0
@@ -311,10 +320,10 @@ end do
 end function grid
 
 pure function head(x, n) result(y)
-!  First n (default 5) elements of a real(kind=dp) vector
-   real(kind=dp), intent(in)          :: x(:)
-   integer,        intent(in), optional :: n
-   real(kind=dp), allocatable         :: y(:)
+! return the first n elements of a vector (default n=5).
+   real(kind=dp), intent(in) :: x(:)   ! input vector.
+   integer, intent(in), optional :: n   ! requested number of leading elements.
+   real(kind=dp), allocatable :: y(:)
    integer :: n_                       ! number of elements to return
    if (present(n)) then
       n_ = n
@@ -328,10 +337,10 @@ pure function head(x, n) result(y)
 end function head
 
 pure function tail(x, n) result(y)
-!  Last n (default 5) elements of a real(kind=dp) vector
-   real(kind=dp), intent(in)          :: x(:)
-   integer,        intent(in), optional :: n
-   real(kind=dp), allocatable         :: y(:)
+! return the last n elements of a vector (default n=5).
+   real(kind=dp), intent(in) :: x(:)   ! input vector.
+   integer, intent(in), optional :: n   ! requested number of trailing elements.
+   real(kind=dp), allocatable :: y(:)
    integer :: n_, first                 ! number to return and first index
    if (present(n)) then
       n_ = n
@@ -345,9 +354,8 @@ pure function tail(x, n) result(y)
 end function tail
 
 impure elemental subroutine print_real(x)
-! print real x with leading zero for abs(x) < 1, and use
-! scientific notation for very large numbers
-real(kind=dp), intent(in) :: x
+! print one real value with stable fixed/scientific formatting.
+real(kind=dp), intent(in) :: x   ! value to print.
 if (abs(x) < 1.0_dp) then
    if (x >= 0) then
       print "(F8.6)", x
@@ -366,12 +374,14 @@ end if
 end subroutine print_real
 
 pure function replace(string, old, new) result(string_new)
-! replace – return a copy of string with every occurrence of old replaced by new
-character(len=*), intent(in) :: string, old, new
+! return a copy of string with every occurrence of old replaced by new.
+character(len=*), intent(in) :: string   ! source text to modify.
+character(len=*), intent(in) :: old   ! substring to be replaced.
+character(len=*), intent(in) :: new   ! replacement text.
 character(len=:), allocatable :: string_new
 integer :: current, pos, len_old
 len_old = len_trim(old)
-! nothing to replace – return the original string
+! nothing to replace - return the original string.
 if (len_old == 0) then
    string_new = string
    return
@@ -389,53 +399,53 @@ string_new = string_new // string(current:)
 end function replace
 
 elemental function is_numeral(xchar) result(tf)
-! return .true. if xchar is a numeral '0', '1', ..., '9'
-character (len=1), intent(in) :: xchar
+! test whether a character is an ASCII digit.
+character(len=1), intent(in) :: xchar   ! character to classify.
 logical                       :: tf
 tf = xchar >= '0' .and. xchar <= '9'
 end function is_numeral
 
 elemental function is_letter(xchar) result(tf)
-! return .true. if xchar is a lower or upper case letter
-character (len=1), intent(in) :: xchar
+! test whether a character is an ASCII letter.
+character(len=1), intent(in) :: xchar   ! character to classify.
 logical                       :: tf
 tf = (xchar >= 'a' .and. xchar <= 'z') .or. &
      (xchar >= 'A' .and. xchar <= 'Z')
 end function is_letter
 
 elemental function is_alphanumeric(xchar) result(tf)
-! return .true. if xchar is a numeral or letter
-character (len=1), intent(in) :: xchar
+! test whether a character is an ASCII letter or digit.
+character(len=1), intent(in) :: xchar   ! character to classify.
 logical                       :: tf
 tf = is_letter(xchar) .or. is_numeral(xchar)
 end function is_alphanumeric
 
 pure function zeros(n) result(v)
-! return a vector of n zeros
-integer, intent(in) :: n
+! allocate a real vector initialized to zeros.
+integer, intent(in) :: n   ! length of the output vector.
 real(kind=dp), allocatable :: v(:)
 allocate (v(n), source=0.0_dp)
 end function zeros
 
 pure function ones(n) result(v)
-! return a vector of n ones
-integer, intent(in) :: n
+! allocate a real vector initialized to ones.
+integer, intent(in) :: n   ! length of the output vector.
 real(kind=dp), allocatable :: v(:)
 allocate (v(n), source=1.0_dp)
 end function ones
 
 function windows() result(tf)
-! test if the operating system is Windows by checking if the path starts with /
+! detect whether the current platform is Windows.
 logical :: tf
-character (len=1000) :: pathstring
+character(len=1000) :: pathstring   ! PATH environment variable value.
 call get_environment_variable("PATH", pathstring)
 tf = pathstring(1:1) /= "/"
 end function windows
 
 pure function rep_vec(x, n) result(y)
-! repeat a 1D array to get a new 1D array
-real(kind=dp), intent(in)  :: x(:)  ! array to copy
-integer      , intent(in)  :: n     ! number of copies
+! repeat a vector n times into one concatenated vector.
+real(kind=dp), intent(in) :: x(:)   ! source vector to repeat.
+integer, intent(in) :: n   ! number of repetitions.
 real(kind=dp), allocatable :: y(:)
 integer :: i, j, nx, ny
 nx = size(x)
@@ -453,22 +463,23 @@ end do
 end function rep_vec
 
 pure function matrix(x) result(xmat)
-! convert scalar to 1x1 matrix
-real(kind=dp), intent(in) :: x
-real(kind=dp)             :: xmat(1,1)
+! wrap a scalar as a 1x1 matrix.
+real(kind=dp), intent(in) :: x   ! scalar value to wrap.
+real(kind=dp) :: xmat(1,1)
 xmat = x
 end function matrix
 
 subroutine read_vec(file, x, icol)
-!─────────────────────────────────────────────────────────────────────────────
+! read one numeric column from a text file into a real vector.
+!â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 !  Read the real-valued ICOL-th column of text file FILE into X(:).
 !  Leading "header" lines that cannot be read as reals are ignored.
 !  Reading stops when, after data have started, a record is encountered
 !  from which the ICOL-th real value cannot be obtained.
 !
-   character(len=*),               intent(in)  :: file
-   real   (kind=dp), allocatable,  intent(out) :: x(:)
-   integer,               optional, intent(in) :: icol
+   character(len=*), intent(in) :: file   ! input file path.
+   real(kind=dp), allocatable, intent(out) :: x(:)   ! values read from selected column.
+   integer, intent(in), optional :: icol   ! 1-based column index to read (default 1).
 
    integer            :: u, ios, j, ic, n
    character(len=1000) :: line          ! complete input record
@@ -478,31 +489,31 @@ subroutine read_vec(file, x, icol)
    real(dp), allocatable :: tmp(:)
    integer            :: comment_pos
 
-!–––– column choice ––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+!â€“â€“â€“â€“ column choice â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
    if (present(icol)) then
       ic = icol
    else
       ic = 1
    end if
    allocate(x(0))
-!–––– open the file ––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+!â€“â€“â€“â€“ open the file â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
    open(newunit=u, file=trim(file), action='read', status='old', iostat=ios)
    if (ios /= 0) then
       write(*,'("Error: cannot open file ''",a,"'' (iostat=",i0,")")') trim(file), ios
       return
    end if
 
-!–––– initialise ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+!â€“â€“â€“â€“ initialise â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
    n          = 0
    found_data = .false.
 
-!–––– main loop ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+!â€“â€“â€“â€“ main loop â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
    do
       read(u,'(A)', iostat=ios) line
-      if (ios /= 0) exit                         ! EOF / read error → done
+      if (ios /= 0) exit                         ! EOF / read error â†’ done
       if (line == '') cycle                      ! skip blank lines
 
-      ! strip “!” comments
+      ! strip â€œ!â€ comments
       comment_pos = index(line,'!')
       if (comment_pos > 0) line = line(:comment_pos-1)
       if (len_trim(line) == 0) cycle
@@ -513,11 +524,11 @@ subroutine read_vec(file, x, icol)
          if (.not. found_data) then
             cycle                                ! still in the header part
          else
-            exit                                 ! data had started → stop
+            exit                                 ! data had started â†’ stop
          end if
       end if
 
-      ! got a value – store it
+      ! got a value â€“ store it
       found_data = .true.
       n = n + 1
       if (allocated(tmp)) deallocate(tmp) 
@@ -534,17 +545,18 @@ subroutine read_vec(file, x, icol)
 end subroutine read_vec
 
 pure function reverse(arr) result(res)
-    real(kind=dp), intent(in) :: arr(:)
-    real(kind=dp), allocatable :: res(:)
-    integer :: n
-    n = size(arr)
-    allocate(res(n))
-    if (n > 0) res = arr(n:1:-1)
+! return a reversed copy of a vector.
+real(kind=dp), intent(in) :: arr(:)   ! input vector.
+real(kind=dp), allocatable :: res(:)
+integer :: n
+n = size(arr)
+allocate(res(n))
+if (n > 0) res = arr(n:1:-1)
 end function reverse
 
 pure function lowercase(s) result(out)
-! convert ASCII letters to lowercase
-character(len=*), intent(in) :: s
+! convert ASCII uppercase letters in a string to lowercase.
+character(len=*), intent(in) :: s   ! input text.
 character(len=len(s)) :: out
 integer :: i, c
 do i = 1, len(s)
@@ -558,3 +570,4 @@ end do
 end function lowercase
 
 end module util_mod
+

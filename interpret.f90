@@ -1,6 +1,6 @@
 module interpret_mod
    use kind_mod, only: dp
-  use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, armastab, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, skew_gamma, skew_lnorm, skew_nct, skew_chisq, skew_f, skew_beta, kurt_gamma, kurt_lnorm, kurt_t, kurt_nct, kurt_chisq, kurt_f, kurt_beta, kurt_ged, kurt_hyperb, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
+  use stats_mod, only: mean, sd, cor, cov, trimmean, winsor_mean, huber_mean, bisquare_mean, mad, iqr, iqr_scale, jb_test, ttest1, ttest2, ks2_test, adf_stat, adf, phillips_perron_stat, phillips_perron, kernelreg, lowess, lowesscv, knnreg, knnregcv, acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, fiacf, fracdiff, arcoef, aracf, maacf, arpacf, mapacf, armaacf, arfimaacf, armapacf, armastab, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, resample, regress, huber_regress, bisquare_regress, dist_regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, skew_gamma, skew_lnorm, skew_nct, skew_chisq, skew_f, skew_beta, kurt_gamma, kurt_lnorm, kurt_t, kurt_nct, kurt_chisq, kurt_f, kurt_beta, kurt_ged, kurt_hyperb, dunif, dexp, dgamma, dlnorm, dnorm, dmixnorm, dt, dnct, dchisq, df, dbeta, dlogis, dsech, dlaplace, dcauchy, dged, dhyperb, punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, rhyperb, kde, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, cumsum, cumprod, diff, standardize, &
                         print_stats, skew, kurtosis, cummean, cummin, cummax, &
                         geomean, harmean
   use util_mod, only: matched_brackets, matched_parentheses, arange, irange, &
@@ -9,7 +9,7 @@ module interpret_mod
                        rep, read_vec, reverse, runif1, polyroots
    use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged, random_seed_init
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
-   use iso_fortran_env, only: compiler_options, compiler_version
+   use iso_fortran_env, only: compiler_options, compiler_version, int64
    use plot_mod, only: plot, plot_to_label, set_plotout, get_plotout
    implicit none
    private
@@ -244,11 +244,15 @@ contains
       sub_collect_defaults = ""
    end subroutine clear
 
-   subroutine print_cor_matrix_args(args, labels)
+   subroutine print_cor_matrix_args(args, labels, methods)
       type(arr_t), intent(in) :: args(:)
       character(len=*), intent(in) :: labels(:)
+      integer, intent(in), optional :: methods(:)
       integer :: i, j, n, nsize, max_name, col_width, pad
       real(kind=dp) :: cval
+      integer, allocatable :: mlist(:)
+      integer :: im, mcode
+      character(len=16) :: mname
 
       n = size(args)
       if (n < 2) then
@@ -277,23 +281,44 @@ contains
       end do
       col_width = max(10, max_name)
 
-      write (*, "(a,i0,a)") "Correlation matrix (n=", nsize, "):"
-      write (*, "(a)", advance="no") repeat(" ", max_name)//" "
-      do j = 1, n
-         call write_padded(trim(labels(j)), col_width)
-      end do
-      print *
+      if (present(methods)) then
+         if (size(methods) < 1) then
+            allocate (mlist(1)); mlist = [1]
+         else
+            allocate (mlist(size(methods))); mlist = methods
+         end if
+      else
+         allocate (mlist(1)); mlist = [1]
+      end if
 
-      do i = 1, n
-         call write_padded(trim(labels(i)), max_name)
+      do im = 1, size(mlist)
+         mcode = mlist(im)
+         select case (mcode)
+         case (1); mname = "pearson"
+         case (2); mname = "spearman"
+         case (3); mname = "kendall"
+         case default; mname = "pearson"
+         end select
+
+         write (*, "(a,a,a,i0,a)") "Correlation matrix (method=", trim(mname), ", n=", nsize, "):"
+         write (*, "(a)", advance="no") repeat(" ", max_name)//" "
          do j = 1, n
-            cval = cor(args(i)%v, args(j)%v)
-            write (*, "(f10.6)", advance="no") cval
-            pad = col_width - 10
-            if (pad < 0) pad = 0
-            write (*, "(a)", advance="no") repeat(" ", pad + 1)
+            call write_padded(trim(labels(j)), col_width)
          end do
          print *
+
+         do i = 1, n
+            call write_padded(trim(labels(i)), max_name)
+            do j = 1, n
+               cval = cor_by_method_xy(args(i)%v, args(j)%v, mcode)
+               write (*, "(f10.6)", advance="no") cval
+               pad = col_width - 10
+               if (pad < 0) pad = 0
+               write (*, "(a)", advance="no") repeat(" ", pad + 1)
+            end do
+            print *
+         end do
+         if (im < size(mlist)) print *
       end do
    contains
       subroutine write_padded(str, width)
@@ -305,6 +330,23 @@ contains
          write (*, "(a)", advance="no") trim(str)//repeat(" ", nsp + 1)
       end subroutine write_padded
    end subroutine print_cor_matrix_args
+
+   pure function cor_by_method_xy(x, y, mcode) result(cval)
+      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp), intent(in) :: y(:)
+      integer, intent(in) :: mcode
+      real(kind=dp) :: cval
+      select case (mcode)
+      case (1)
+         cval = cor(x, y)
+      case (2)
+         cval = cor_spearman_xy(x, y)
+      case (3)
+         cval = cor_kendall_xy(x, y)
+      case default
+         cval = bad_value
+      end select
+   end function cor_by_method_xy
 
    subroutine print_cor_matrices()
       integer, allocatable :: sizes(:), idx(:)
@@ -392,6 +434,167 @@ contains
          write (*, "(a)", advance="no") trim(str)//repeat(" ", nsp + 1)
       end subroutine write_padded
    end subroutine print_cor_matrices
+
+   pure function cor_spearman_xy(x, y) result(rho)
+      ! Spearman correlation: Pearson correlation of average ranks.
+      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp), intent(in) :: y(:)
+      real(kind=dp) :: rho
+      real(kind=dp), allocatable :: rx(:), ry(:)
+      if (size(x) /= size(y) .or. size(x) < 2) then
+         rho = bad_value
+         return
+      end if
+      rx = average_ranks(x)
+      ry = average_ranks(y)
+      rho = cor(rx, ry)
+   end function cor_spearman_xy
+
+   pure function cor_kendall_xy(x, y) result(tau)
+      ! Kendall tau-b with tie correction.
+      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp), intent(in) :: y(:)
+      real(kind=dp) :: tau
+      integer :: i, j, n
+      real(kind=dp) :: dx, dy, den
+      integer(kind=int64) :: ncon, ndis, ntx, nty, ntxy
+
+      n = size(x)
+      if (n /= size(y) .or. n < 2) then
+         tau = bad_value
+         return
+      end if
+
+      ncon = 0; ndis = 0; ntx = 0; nty = 0; ntxy = 0
+      do i = 1, n - 1
+         do j = i + 1, n
+            dx = x(i) - x(j)
+            dy = y(i) - y(j)
+            if (dx == 0.0_dp .and. dy == 0.0_dp) then
+               ntxy = ntxy + 1
+            else if (dx == 0.0_dp) then
+               ntx = ntx + 1
+            else if (dy == 0.0_dp) then
+               nty = nty + 1
+            else if (dx*dy > 0.0_dp) then
+               ncon = ncon + 1
+            else
+               ndis = ndis + 1
+            end if
+         end do
+      end do
+      den = sqrt(real(ncon + ndis + ntx, dp) * real(ncon + ndis + nty, dp))
+      if (den <= 0.0_dp) then
+         tau = bad_value
+      else
+         tau = real(ncon - ndis, dp) / den
+      end if
+   end function cor_kendall_xy
+
+   pure function average_ranks(x) result(r)
+      ! Average ranks for ties (1-based).
+      real(kind=dp), intent(in) :: x(:)
+      real(kind=dp), allocatable :: r(:)
+      integer, allocatable :: ord(:)
+      integer :: n, i, j, k
+      n = size(x)
+      allocate (r(n))
+      if (n < 1) return
+      ord = indexx(x)
+      i = 1
+      do while (i <= n)
+         j = i
+         do while (j < n)
+            if (x(ord(j + 1)) /= x(ord(i))) exit
+            j = j + 1
+         end do
+         do k = i, j
+            r(ord(k)) = 0.5_dp * real(i + j, dp)
+         end do
+         i = j + 1
+      end do
+   end function average_ranks
+
+   subroutine parse_cor_methods_spec(spec, methods, ok, errmsg)
+      character(len=*), intent(in) :: spec
+      integer, allocatable, intent(out) :: methods(:)
+      logical, intent(out) :: ok
+      character(len=*), intent(out) :: errmsg
+      character(len=:), allocatable :: t, inside, tok
+      character(len=:), allocatable :: parts(:)
+      integer :: n, i
+
+      ok = .false.
+      errmsg = ""
+      t = adjustl(trim(spec))
+      if (len_trim(t) < 1) then
+         errmsg = "Error: method must be provided"
+         allocate (methods(0))
+         return
+      end if
+
+      if (t(1:1) == "[" .and. t(len_trim(t):len_trim(t)) == "]") then
+         if (len_trim(t) <= 2) then
+            errmsg = "Error: method vector must be non-empty"
+            allocate (methods(0))
+            return
+         end if
+         inside = t(2:len_trim(t) - 1)
+         call split_by_comma(inside, n, parts)
+         if (n < 1) then
+            errmsg = "Error: method vector must be non-empty"
+            allocate (methods(0))
+            return
+         end if
+         allocate (methods(n))
+         do i = 1, n
+            tok = normalize_method_token(parts(i))
+            select case (tok)
+            case ("pearson")
+               methods(i) = 1
+            case ("spearman")
+               methods(i) = 2
+            case ("kendall")
+               methods(i) = 3
+            case default
+               errmsg = "Error: unknown cor() method '"//trim(tok)//"'"
+               return
+            end select
+         end do
+      else
+         allocate (methods(1))
+         tok = normalize_method_token(t)
+         select case (tok)
+         case ("pearson")
+            methods(1) = 1
+         case ("spearman")
+            methods(1) = 2
+         case ("kendall")
+            methods(1) = 3
+         case default
+            errmsg = "Error: unknown cor() method '"//trim(tok)//"'"
+            return
+         end select
+      end if
+
+      ok = .true.
+   contains
+      pure function normalize_method_token(s) result(out)
+         character(len=*), intent(in) :: s
+         character(len=:), allocatable :: out
+         character(len=:), allocatable :: t1
+         integer :: n
+         t1 = adjustl(trim(s))
+         n = len_trim(t1)
+         if (n >= 2) then
+            if ((t1(1:1) == '"' .and. t1(n:n) == '"') .or. (t1(1:1) == "'" .and. t1(n:n) == "'")) then
+               out = lower_str(adjustl(trim(t1(2:n - 1))))
+               return
+            end if
+         end if
+         out = lower_str(t1)
+      end function normalize_method_token
+   end subroutine parse_cor_methods_spec
 
    subroutine read_vars_from_file(fname)
       character(len=*), intent(in) :: fname
@@ -616,7 +819,10 @@ contains
       case ("sd"); r = sd(arr)
       case ("trimmean"); r = trimmean(arr)
       case ("winsor_mean"); r = winsor_mean(arr)
+      case ("huber_mean"); r = huber_mean(arr)
+      case ("bisquare_mean"); r = bisquare_mean(arr)
       case ("mad"); r = mad(arr)
+      case ("iqr"); r = iqr(arr)
       case ("iqr_scale"); r = iqr_scale(arr)
       case ("skew"); r = skew(arr)
       case ("kurt"); r = kurtosis(arr)
@@ -1636,7 +1842,7 @@ contains
 
    pure logical function is_op_char(ch) result(ok)
       character(len=1), intent(in) :: ch
-      ok = (index("+-*/^<>=:&|", ch) > 0)
+      ok = (index("+-*/^<>=:&|,", ch) > 0)
    end function is_op_char
 
    pure subroutine split_expr_tail(rem, expr_part, tail_part)
@@ -1715,7 +1921,9 @@ contains
       character(len=:), allocatable, intent(out) :: lhs, start_expr, end_expr, step_expr, rhs_tail
       logical, intent(out) :: ok
       character(len=:), allocatable :: s, low, rem, rhs
-      integer :: p_eq, p_com1, p_com2
+      integer :: p_eq, p_com1, p_com2, i, n_rhs, dpar, dbr
+      logical :: in_quote
+      character(len=1) :: qchar, ch
 
       lhs = ""
       start_expr = ""
@@ -1735,10 +1943,46 @@ contains
       rem = adjustl(s(p_eq + 1:))
       if (len_trim(rem) == 0) return
       call split_expr_tail(rem, rhs, rhs_tail)
-      p_com1 = index(rhs, ",")
+      n_rhs = len_trim(rhs)
+      p_com1 = 0
+      p_com2 = 0
+      dpar = 0
+      dbr = 0
+      in_quote = .false.
+      qchar = char(0)
+      do i = 1, n_rhs
+         ch = rhs(i:i)
+         if (in_quote) then
+            if (ch == qchar) in_quote = .false.
+            cycle
+         end if
+         if (ch == '"' .or. ch == "'") then
+            in_quote = .true.
+            qchar = ch
+            cycle
+         end if
+         select case (ch)
+         case ("(")
+            dpar = dpar + 1
+         case (")")
+            if (dpar > 0) dpar = dpar - 1
+         case ("[")
+            dbr = dbr + 1
+         case ("]")
+            if (dbr > 0) dbr = dbr - 1
+         case (",")
+            if (dpar == 0 .and. dbr == 0) then
+               if (p_com1 == 0) then
+                  p_com1 = i
+               else if (p_com2 == 0) then
+                  p_com2 = i
+               else
+                  return
+               end if
+            end if
+         end select
+      end do
       if (p_com1 == 0) return
-      p_com2 = index(rhs(p_com1 + 1:), ",")
-      if (p_com2 > 0) p_com2 = p_com1 + p_com2
       start_expr = adjustl(rhs(1:p_com1 - 1))
       if (p_com2 == 0) then
          end_expr = adjustl(rhs(p_com1 + 1:))
@@ -2812,6 +3056,9 @@ contains
                   if (trim(id) == "distaicscan") then
                      skip_positional = .true.
                   end if
+                  if (trim(id) == "dist_regress") then
+                     skip_positional = .true.
+                  end if
                   if (trim(id) == "armastab") then
                      skip_positional = .true.
                   end if
@@ -2889,7 +3136,7 @@ contains
                            curr_char = expr(pos:pos); pos = pos + 1
                         end if
                         have_second = .false.
-                     else if (trim(id) == "armafitaic" .or. trim(id) == "araic" .or. trim(id) == "maaic" .or. trim(id) == "arspecaic" .or. trim(id) == "armaspec" .or. trim(id) == "armaspecaic" .or. trim(id) == "arma_mt_spec" .or. trim(id) == "armaaic_mt_spec" .or. trim(id) == "welchspec" .or. trim(id) == "pgramspec" .or. trim(id) == "mtspec" .or. trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic" .or. trim(id) == "fit_t" .or. trim(id) == "fit_nct") then
+                     else if (trim(id) == "armafitaic" .or. trim(id) == "araic" .or. trim(id) == "maaic" .or. trim(id) == "arspecaic" .or. trim(id) == "armaspec" .or. trim(id) == "armaspecaic" .or. trim(id) == "arma_mt_spec" .or. trim(id) == "armaaic_mt_spec" .or. trim(id) == "welchspec" .or. trim(id) == "pgramspec" .or. trim(id) == "mtspec" .or. trim(id) == "cpfit" .or. trim(id) == "cpfitaic" .or. trim(id) == "cpfit_aic" .or. trim(id) == "fit_t" .or. trim(id) == "fit_nct" .or. trim(id) == "huber_mean" .or. trim(id) == "bisquare_mean" .or. trim(id) == "mad") then
                         !------------------------------------------------------------
                         !  armafitaic/cpfit: allow keyword-only argument after first arg
                         !------------------------------------------------------------
@@ -2941,39 +3188,86 @@ contains
                   end if
 
                   if (trim(id) == "cor") then
-                     call split_by_comma(expr(pstart:pend - 1), n_args, labels)
-                     if (n_args > 2) then
-                        if (.not. have_second) then
-                           print *, "Error: function needs two arguments"
-                           eval_error = .true.; f = [bad_value]; return
-                        end if
-                        allocate (args(n_args))
-                        args(1)%v = arg1
-                        args(2)%v = arg2
-                        do i_arg = 3, n_args
-                           call skip_spaces()
-                           if (curr_char /= ",") then
-                              print *, "Error: cor() needs arguments separated by commas"
+                     block
+                        logical :: is_named_method, parse_ok
+                        integer :: i_m, i_tok, n_data
+                        integer, allocatable :: data_idx(:)
+                        character(len=len_name) :: method_name
+                        character(len=:), allocatable :: method_spec
+                        character(len=:), allocatable :: arg_expr
+                        integer, allocatable :: method_codes(:)
+                        character(len=128) :: method_err
+                        character(len=:), allocatable :: corr_labels(:)
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        allocate (method_codes(1))
+                        method_codes = [1]
+                        allocate (data_idx(max(1, n_args)))
+                        n_data = 0
+
+                        do i_tok = 1, n_args
+                           call parse_call_actual(labels(i_tok), is_named_method, method_name, method_spec, parse_ok)
+                           if (.not. parse_ok) then
+                              print *, "Error: invalid named argument in cor()"
                               eval_error = .true.; f = [bad_value]; return
                            end if
-                           call next_char()
-                           call skip_spaces()
-                           args(i_arg)%v = parse_expression()
+                           if (is_named_method) then
+                              if (trim(lower_str(method_name)) /= "method") then
+                                 print *, "Error: unknown named argument '"//trim(method_name)//"' in cor()"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              call parse_cor_methods_spec(method_spec, method_codes, parse_ok, method_err)
+                              if (.not. parse_ok) then
+                                 print *, trim(method_err)
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                           else
+                              n_data = n_data + 1
+                              data_idx(n_data) = i_tok
+                           end if
+                        end do
+
+                        if (n_data < 2) then
+                           print *, "Error: cor() needs at least two arguments"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        allocate (args(n_data))
+                        allocate (character(len=len(labels(1))) :: corr_labels(n_data))
+                        do i_tok = 1, n_data
+                           arg_expr = trim(labels(data_idx(i_tok)))
+                           args(i_tok)%v = evaluate(arg_expr)
                            if (eval_error) then
                               f = [bad_value]; return
                            end if
+                           corr_labels(i_tok) = trim(arg_expr)
                         end do
-                        call skip_spaces()
-                        if (curr_char == ")") call next_char()
-                        call print_cor_matrix_args(args, labels)
-                        if (eval_error) then
-                           f = [bad_value]
-                           return
+
+                        if (n_data == 2) then
+                           if (allocated(f)) deallocate (f)
+                           allocate (f(size(method_codes)))
+                           do i_m = 1, size(method_codes)
+                              f(i_m) = cor_by_method_xy(args(1)%v, args(2)%v, method_codes(i_m))
+                           end do
+                        else
+                           call print_cor_matrix_args(args, corr_labels, method_codes)
+                           if (eval_error) then
+                              f = [bad_value]
+                              return
+                           end if
+                           suppress_result = .true.
+                           f = [real(kind=dp) ::]
                         end if
-                        suppress_result = .true.
-                        f = [real(kind=dp) ::]
+
+                        call skip_spaces()
+                        if (curr_char == ",") then
+                           do while (curr_char /= ")" .and. pos <= len_trim(expr))
+                              call next_char()
+                           end do
+                        end if
+                        if (curr_char == ")") call next_char()
                         return
-                     end if
+                     end block
                   end if
 
                   if (curr_char == ")") call next_char()
@@ -5392,23 +5686,113 @@ contains
                         f = quantile(arg1, arg2)
                      end if
 
-                  case ("trimmean", "winsor_mean", "mad")
-                     if (.not. have_second) then
-                        select case (trim(id))
-                        case ("trimmean"); f = [trimmean(arg1)]
-                        case ("winsor_mean"); f = [winsor_mean(arg1)]
-                        case ("mad"); f = [mad(arg1)]
-                        end select
-                     else if (size(arg2) /= 1) then
-                        print *, "Error: second argument must be scalar"
-                        eval_error = .true.; f = [bad_value]
-                     else
-                        select case (trim(id))
-                        case ("trimmean"); f = [trimmean(arg1, arg2(1))]
-                        case ("winsor_mean"); f = [winsor_mean(arg1, arg2(1))]
-                        case ("mad"); f = [mad(arg1, arg2(1))]
-                        end select
-                     end if
+                  case ("trimmean", "winsor_mean", "huber_mean", "bisquare_mean", "mad")
+                     block
+                        logical :: is_named, parse_ok
+                        character(len=len_name) :: argname
+                        character(len=:), allocatable :: argexpr
+                        integer :: n_local
+
+                        call split_by_comma(expr(pstart:pend - 1), n_local, labels)
+                        if (n_local >= 2) then
+                           call parse_call_actual(labels(2), is_named, argname, argexpr, parse_ok)
+                        else
+                           is_named = .false.
+                           parse_ok = .true.
+                           argname = ""
+                           argexpr = ""
+                        end if
+
+                        if (.not. parse_ok) then
+                           print *, "Error: invalid named argument"
+                           eval_error = .true.; f = [bad_value]
+                        else if (is_named) then
+                           select case (trim(id))
+                           case ("huber_mean")
+                              if (trim(lower_str(argname)) /= "c") then
+                                 print *, "Error: huber_mean() named argument must be c"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 arg2 = evaluate(argexpr)
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg2) == 1) then
+                                    f = [huber_mean(arg1, arg2(1))]
+                                 else
+                                    f = huber_mean(arg1, arg2)
+                                 end if
+                              end if
+                           case ("bisquare_mean")
+                              if (trim(lower_str(argname)) /= "c") then
+                                 print *, "Error: bisquare_mean() named argument must be c"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 arg2 = evaluate(argexpr)
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg2) == 1) then
+                                    f = [bisquare_mean(arg1, arg2(1))]
+                                 else
+                                    f = bisquare_mean(arg1, arg2)
+                                 end if
+                              end if
+                           case ("mad")
+                              if (trim(lower_str(argname)) /= "center") then
+                                 print *, "Error: mad() named argument must be center"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 arg2 = evaluate(argexpr)
+                                 if (eval_error) then
+                                    f = [bad_value]
+                                 else if (size(arg2) /= 1) then
+                                    print *, "Error: center must be scalar"
+                                    eval_error = .true.; f = [bad_value]
+                                 else
+                                    f = [mad(arg1, arg2(1))]
+                                 end if
+                              end if
+                           case default
+                              print *, "Error: named arguments are not supported for this function"
+                              eval_error = .true.; f = [bad_value]
+                           end select
+                        else if (.not. have_second) then
+                           select case (trim(id))
+                           case ("trimmean"); f = [trimmean(arg1)]
+                           case ("winsor_mean"); f = [winsor_mean(arg1)]
+                           case ("huber_mean"); f = [huber_mean(arg1)]
+                           case ("bisquare_mean"); f = [bisquare_mean(arg1)]
+                           case ("mad"); f = [mad(arg1)]
+                           end select
+                        else if (trim(id) /= "huber_mean" .and. trim(id) /= "bisquare_mean" .and. size(arg2) /= 1) then
+                           print *, "Error: second argument must be scalar"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           select case (trim(id))
+                           case ("trimmean"); f = [trimmean(arg1, arg2(1))]
+                           case ("winsor_mean"); f = [winsor_mean(arg1, arg2(1))]
+                           case ("huber_mean")
+                              if (size(arg2) == 1) then
+                                 f = [huber_mean(arg1, arg2(1))]
+                              else
+                                 f = huber_mean(arg1, arg2)
+                              end if
+                           case ("bisquare_mean")
+                              if (size(arg2) == 1) then
+                                 f = [bisquare_mean(arg1, arg2(1))]
+                              else
+                                 f = bisquare_mean(arg1, arg2)
+                              end if
+                           case ("mad"); f = [mad(arg1, arg2(1))]
+                           end select
+                        end if
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos)
+                           pos = pos + 1
+                        end if
+                     end block
 
                   case ("ttest1")
                      if (.not. have_second) then
@@ -9270,7 +9654,7 @@ contains
                         else
                            curr_char = expr(pos:pos); pos = pos + 1
                         end if
-                        if (n_args < 2 .or. .not. have_second) then
+                        if (n_args < 2) then
                            print *, "Error: function needs two arguments"
                            eval_error = .true.; f = [bad_value]
                            return
@@ -9358,6 +9742,308 @@ contains
                         end if
                        suppress_result = .true.
                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("dist_regress")
+                     block
+                        logical :: use_intcp
+                        integer :: n_pred, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval, dist_s
+                       real(kind=dp), allocatable :: tmp(:), df_vals(:), beta_vals(:)
+                       logical :: have_df, have_beta
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 2) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+
+                        dist_s = adjustl(trim(labels(1)))
+                        if (len_trim(dist_s) >= 2) then
+                           if ((dist_s(1:1) == '"' .and. dist_s(len_trim(dist_s):len_trim(dist_s)) == '"') .or. &
+                               (dist_s(1:1) == "'" .and. dist_s(len_trim(dist_s):len_trim(dist_s)) == "'")) then
+                              dist_s = dist_s(2:len_trim(dist_s) - 1)
+                           end if
+                        end if
+                        dist_s = lower_str(adjustl(trim(dist_s)))
+                        if (dist_s /= "normal" .and. dist_s /= "t" .and. dist_s /= "laplace" .and. dist_s /= "ged" .and. dist_s /= "sech") then
+                           print *, "Error: dist_regress() dist must be normal, laplace, ged, sech, or t"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        arg1 = evaluate(adjustl(labels(2)))
+                        if (eval_error .or. size(arg1) < 1) then
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+
+                        use_intcp = .true.
+                        have_df = .false.
+                        have_beta = .false.
+                       allocate (beta_vals(0))
+                        allocate (args(max(1, n_args - 2)))
+                        n_pred = 0
+                        do i_arg = 3, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "intcp") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: intcp must be given as intcp=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              rval = lower_str(rval)
+                              if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                 use_intcp = .false.
+                              else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                 use_intcp = .true.
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 use_intcp = (tmp(1) /= 0.0_dp)
+                              end if
+                           else if (index(ltok, "df") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: df must be given as df=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: df must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              df_vals = tmp
+                              have_df = .true.
+                           else if (index(ltok, "beta") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: beta must be given as beta=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: beta must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              beta_vals = tmp
+                              have_beta = .true.
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: predictor must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n_pred = n_pred + 1
+                              args(n_pred)%v = tmp
+                           end if
+                        end do
+                        if (eval_error) return
+
+                        n1 = size(arg1)
+                        if (n1 < 2) then
+                           print *, "Error: function array arguments must have sizes > 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        do i_arg = 1, n_pred
+                           if (size(args(i_arg)%v) /= n1) then
+                              print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
+                                 n1, size(args(i_arg)%v), " must be equal"
+                              eval_error = .true.; f = [bad_value]; return
+                           end if
+                        end do
+
+                        if (n_pred == 0) then
+                           if (have_df) then
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, intcp=use_intcp, df=df_vals, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, intcp=use_intcp, df=df_vals)
+                              end if
+                           else
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, intcp=use_intcp, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, intcp=use_intcp)
+                              end if
+                           end if
+                        else if (n_pred == 1) then
+                           if (have_df) then
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, args(1)%v, intcp=use_intcp, df=df_vals, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, args(1)%v, intcp=use_intcp, df=df_vals)
+                              end if
+                           else
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, args(1)%v, intcp=use_intcp, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, args(1)%v, intcp=use_intcp)
+                              end if
+                           end if
+                        else
+                           allocate (xmat(n1, n_pred))
+                           do i_arg = 1, n_pred
+                              xmat(:, i_arg) = args(i_arg)%v
+                           end do
+                           if (have_df) then
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, xmat, intcp=use_intcp, df=df_vals, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, xmat, intcp=use_intcp, df=df_vals)
+                              end if
+                           else
+                              if (have_beta) then
+                                 call dist_regress(trim(dist_s), arg1, xmat, intcp=use_intcp, beta=beta_vals)
+                              else
+                                 call dist_regress(trim(dist_s), arg1, xmat, intcp=use_intcp)
+                              end if
+                           end if
+                        end if
+
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
+                     end block
+
+                  case ("huber_regress", "bisquare_regress")
+                     block
+                        logical :: use_intcp
+                        integer :: n_pred, eqpos
+                        character(len=:), allocatable :: tok, ltok, rval
+                        real(kind=dp), allocatable :: tmp(:)
+                        real(kind=dp) :: cval
+                        logical :: have_c
+
+                        call split_by_comma(expr(pstart:pend - 1), n_args, labels)
+                        pos = pend + 1
+                        if (pos > lenstr) then
+                           curr_char = char(0)
+                        else
+                           curr_char = expr(pos:pos); pos = pos + 1
+                        end if
+                        if (n_args < 2 .or. .not. have_second) then
+                           print *, "Error: function needs two arguments"
+                           eval_error = .true.; f = [bad_value]
+                           return
+                        end if
+                        use_intcp = .true.
+                        have_c = .false.
+                        cval = 1.345_dp
+                        allocate (args(n_args - 1))
+                        n_pred = 0
+                        do i_arg = 2, n_args
+                           tok = adjustl(labels(i_arg))
+                           ltok = lower_str(tok)
+                           if (index(ltok, "intcp") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: intcp must be given as intcp=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              rval = lower_str(rval)
+                              if (rval == ".false." .or. rval == "false" .or. rval == "f") then
+                                 use_intcp = .false.
+                              else if (rval == ".true." .or. rval == "true" .or. rval == "t") then
+                                 use_intcp = .true.
+                              else
+                                 tmp = evaluate(rval)
+                                 if (eval_error) then
+                                    f = [bad_value]; return
+                                 end if
+                                 if (size(tmp) /= 1) then
+                                    print *, "Error: intcp must be scalar"
+                                    eval_error = .true.; f = [bad_value]; return
+                                 end if
+                                 use_intcp = (tmp(1) /= 0.0_dp)
+                              end if
+                           else if (index(ltok, "c") == 1) then
+                              eqpos = index(tok, "=")
+                              if (eqpos == 0) then
+                                 print *, "Error: c must be given as c=..."
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              rval = adjustl(tok(eqpos + 1:))
+                              tmp = evaluate(rval)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) /= 1) then
+                                 print *, "Error: c must be scalar"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              cval = tmp(1)
+                              have_c = .true.
+                           else
+                              tmp = evaluate(tok)
+                              if (eval_error) then
+                                 f = [bad_value]; return
+                              end if
+                              if (size(tmp) < 1) then
+                                 print *, "Error: predictor must be non-empty"
+                                 eval_error = .true.; f = [bad_value]; return
+                              end if
+                              n_pred = n_pred + 1
+                              args(n_pred)%v = tmp
+                           end if
+                        end do
+                        if (eval_error) return
+                        if (n_pred /= 1) then
+                           print "(a,a,a)", "Error: ", trim(id), "() currently supports one predictor"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        n1 = size(arg1)
+                        if (n1 < 2) then
+                           print *, "Error: function array arguments must have sizes > 1"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+                        if (size(args(1)%v) /= n1) then
+                           print "(a,i0,1x,i0,a)", "Error: function array arguments have sizes ", &
+                              n1, size(args(1)%v), " must be equal"
+                           eval_error = .true.; f = [bad_value]; return
+                        end if
+
+                        if (trim(id) == "huber_regress") then
+                           if (have_c) then
+                              call huber_regress(arg1, args(1)%v, c=cval, intcp=use_intcp)
+                           else
+                              call huber_regress(arg1, args(1)%v, intcp=use_intcp)
+                           end if
+                        else
+                           if (have_c) then
+                              call bisquare_regress(arg1, args(1)%v, c=cval, intcp=use_intcp)
+                           else
+                              call bisquare_regress(arg1, args(1)%v, intcp=use_intcp)
+                           end if
+                        end if
+                        suppress_result = .true.
+                        f = [real(kind=dp) ::]
                      end block
 
                   case ("arfit")
@@ -10911,9 +11597,149 @@ contains
                         f = polyroots(arg1)
                      end if
 
+                  case ("adf_stat")
+                     block
+                        integer :: n_args_local
+                        real(kind=dp), allocatable :: t1(:), t2(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local == 1 .and. len_trim(adjustl(labels(1))) == 0) n_args_local = 0
+                        if (n_args_local < 1 .or. n_args_local > 2) then
+                           print *, "Error: function adf_stat takes one or two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           t1 = evaluate(labels(1))
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (n_args_local == 1) then
+                              f = [adf_stat(t1)]
+                           else
+                              t2 = evaluate(labels(2))
+                              if (eval_error .or. size(t2) /= 1) then
+                                 print *, "Error: second argument of adf_stat() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = [adf_stat(t1, max(0, nint(t2(1))))]
+                              end if
+                           end if
+                        end if
+                     end block
+                     pos = pend + 1
+                     if (pos > lenstr) then
+                        curr_char = char(0)
+                     else
+                        curr_char = expr(pos:pos); pos = pos + 1
+                     end if
+
+                  case ("phillips_perron_stat")
+                     block
+                        integer :: n_args_local
+                        real(kind=dp), allocatable :: t1(:), t2(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local == 1 .and. len_trim(adjustl(labels(1))) == 0) n_args_local = 0
+                        if (n_args_local < 1 .or. n_args_local > 2) then
+                           print *, "Error: function phillips_perron_stat takes one or two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           t1 = evaluate(labels(1))
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (n_args_local == 1) then
+                              f = [phillips_perron_stat(t1)]
+                           else
+                              t2 = evaluate(labels(2))
+                              if (eval_error .or. size(t2) /= 1) then
+                                 print *, "Error: second argument of phillips_perron_stat() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 f = [phillips_perron_stat(t1, max(0, nint(t2(1))))]
+                              end if
+                           end if
+                        end if
+                     end block
+                     pos = pend + 1
+                     if (pos > lenstr) then
+                        curr_char = char(0)
+                     else
+                        curr_char = expr(pos:pos); pos = pos + 1
+                     end if
+
+                  case ("adf")
+                     block
+                        integer :: n_args_local
+                        real(kind=dp), allocatable :: t1(:), t2(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local == 1 .and. len_trim(adjustl(labels(1))) == 0) n_args_local = 0
+                        if (n_args_local < 1 .or. n_args_local > 2) then
+                           print *, "Error: function adf takes one or two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           t1 = evaluate(labels(1))
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (n_args_local == 1) then
+                              call adf(t1)
+                              suppress_result = .true.
+                              f = [real(kind=dp) ::]
+                           else
+                              t2 = evaluate(labels(2))
+                              if (eval_error .or. size(t2) /= 1) then
+                                 print *, "Error: second argument of adf() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call adf(t1, max(0, nint(t2(1))))
+                                 suppress_result = .true.
+                                 f = [real(kind=dp) ::]
+                              end if
+                           end if
+                        end if
+                     end block
+                     pos = pend + 1
+                     if (pos > lenstr) then
+                        curr_char = char(0)
+                     else
+                        curr_char = expr(pos:pos); pos = pos + 1
+                     end if
+
+                  case ("phillips_perron")
+                     block
+                        integer :: n_args_local
+                        real(kind=dp), allocatable :: t1(:), t2(:)
+                        call split_by_comma(expr(pstart:pend - 1), n_args_local, labels)
+                        if (n_args_local == 1 .and. len_trim(adjustl(labels(1))) == 0) n_args_local = 0
+                        if (n_args_local < 1 .or. n_args_local > 2) then
+                           print *, "Error: function phillips_perron takes one or two arguments"
+                           eval_error = .true.; f = [bad_value]
+                        else
+                           t1 = evaluate(labels(1))
+                           if (eval_error) then
+                              f = [bad_value]
+                           else if (n_args_local == 1) then
+                              call phillips_perron(t1)
+                              suppress_result = .true.
+                              f = [real(kind=dp) ::]
+                           else
+                              t2 = evaluate(labels(2))
+                              if (eval_error .or. size(t2) /= 1) then
+                                 print *, "Error: second argument of phillips_perron() must be scalar"
+                                 eval_error = .true.; f = [bad_value]
+                              else
+                                 call phillips_perron(t1, max(0, nint(t2(1))))
+                                 suppress_result = .true.
+                                 f = [real(kind=dp) ::]
+                              end if
+                           end if
+                        end if
+                     end block
+                     pos = pend + 1
+                     if (pos > lenstr) then
+                        curr_char = char(0)
+                     else
+                        curr_char = expr(pos:pos); pos = pos + 1
+                     end if
+
                   case ("abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", &
                         "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "size", &
-                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", "iqr_scale", &
+                        "norm1", "norm2", "minloc", "maxloc", "count", "mean", "geomean", "iqr", "iqr_scale", &
                         "harmean", "sd", "cumsum", &
                         "cummin", "cummax", "cummean", "cumprod", "diff", "sort", "indexx", "rank", &
                         "unique", "stdz", "reverse", "median", "mssk", "jb_test", "fit_norm", "fit_exp", "fit_gamma", "fit_lnorm", "fit_chisq", "fit_f", "fit_beta", "fit_logis", "fit_sech", "fit_laplace", "fit_cauchy", "fit_ged", "fit_hyperb", "dsech", "psech", "qsech", "bessel_j0", "bessel_j1", &
@@ -10924,7 +11750,7 @@ contains
                         eval_error = .true.; f = [bad_value]
                      else
                         if (index("size sum product norm1 norm2 minval maxval minloc "// &
-                                  "maxloc count mean geomean iqr_scale harmean sd median print_stats skew kurt", &
+                                  "maxloc count mean geomean iqr iqr_scale harmean sd median print_stats skew kurt", &
                                trim(id)) > 0) then
                            f = [apply_scalar_func(id, arg1)] ! functions that take array and return scalar
                         else
@@ -11238,7 +12064,7 @@ contains
 
       ! ---- split "var( … )" into name and index string ---------------------
       p_lpar = index(lhs, "(")
-      p_rpar = index(lhs, ")")
+      p_rpar = scan(lhs, ")", back=.true.)
       name = adjustl(lhs(1:p_lpar - 1))
       idx_txt = lhs(p_lpar + 1:p_rpar - 1)
 

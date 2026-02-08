@@ -3,13 +3,13 @@ use kind_mod, only: dp
 use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 use random_mod, only: random_normal, random_seed_init
-use qsort_mod, only: median, quantile, sorted
+use qsort_mod, only: median, quantile, sorted, indexx
 use util_mod, only: polyroots, lowercase
 implicit none
 private
-public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
+public :: mean, sd, cor, cor_spearman, cor_kendall, cor_matrix_print, cov, cumsum, cumprod, diff, standardize, &
           print_stats, skew, kurtosis, cummin, cummax, cummean, &
-          geomean, harmean, trimmean, winsor_mean, mad, iqr_scale, jb_test, ttest1, ttest2, ks2_test, kernelreg, lowess, lowesscv, knnreg, knnregcv, kde, &
+          geomean, harmean, trimmean, winsor_mean, huber_mean, bisquare_mean, mad, iqr, iqr_scale, jb_test, ttest1, ttest2, ks2_test, adf_stat, adf, phillips_perron_stat, phillips_perron, kernelreg, lowess, lowesscv, knnreg, knnregcv, kde, &
           acf, pacf, arspec, arspecaic, armaspec, armaspecaic, arma_mt_spec, armaaic_mt_spec, welchspec, pgramspec, acfspec, mtspec, acfpacf, acfpacfar, fiacf, fracdiff, arcoef, arsim, arsimfit, masim, masimfit, armasim, armasimfit, arfimasim, cpsim, cpfit, cpfitaic, cpfit_aic, resample, regress, regress_multi, poly1reg, splinereg, naturalspline, distaicscan, arfit, mafit, armafit, armafitgrid, armafitaic, araic, maaic, arfimafit, aracf, maacf, arpacf, mapacf, &
           armaacf, arfimaacf, armapacf, armastab, mssk, mssk_unif, mssk_norm, mssk_exp, mssk_gamma, mssk_lnorm, mssk_t, mssk_nct, mssk_mixnorm, mssk_chisq, mssk_f, mssk_beta, mssk_logis, mssk_sech, mssk_laplace, mssk_cauchy, mssk_ged, mssk_hyperb, &
           skew_gamma, skew_lnorm, skew_nct, skew_chisq, skew_f, skew_beta, &
@@ -18,7 +18,7 @@ public :: mean, sd, cor, cov, cumsum, cumprod, diff, standardize, &
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
           qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
           rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, &
-          fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb
+          fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, huber_regress, bisquare_regress, dist_regress
 
 interface kernelreg
    module procedure kernelreg_scalar
@@ -95,6 +95,24 @@ interface kurt_nct
    module procedure kurt_nct
    module procedure kurt_nctn
 end interface kurt_nct
+
+interface huber_mean
+   module procedure huber_mean_scalar
+   module procedure huber_mean_vec
+end interface huber_mean
+
+interface bisquare_mean
+   module procedure bisquare_mean_scalar
+   module procedure bisquare_mean_vec
+end interface bisquare_mean
+
+interface dist_regress
+   module procedure dist_regress0
+   module procedure dist_regress1
+   module procedure dist_regressm
+   module procedure dist_regress1v
+   module procedure dist_regressmv
+end interface dist_regress
 
 interface skew_nct
    module procedure skew_nct
@@ -264,8 +282,133 @@ v = median(ad)
 deallocate (ad)
 end function mad
 
+pure function huber_mean_scalar(x, c) result(m)
+! Huber M-estimator of location with robust scaling.
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in), optional :: c   ! Huber threshold in standardized units
+real(kind=dp) :: m
+real(kind=dp) :: cc, s, m_new, denom, r, tol
+real(kind=dp), allocatable :: u(:), w(:)
+integer :: iter, max_iter
+
+if (size(x) < 1) then
+   m = nanv()
+   return
+end if
+
+cc = 1.345_dp
+if (present(c)) cc = c
+if (cc <= 0.0_dp) then
+   m = median(x)
+   return
+end if
+
+m = median(x)
+s = mad(x, m)
+if (s <= 1.0e-12_dp) s = sd(x)
+if (s <= 1.0e-12_dp) return
+
+max_iter = 50
+tol = 1.0e-8_dp
+allocate (u(size(x)), w(size(x)))
+do iter = 1, max_iter
+   u = (x - m) / s
+   w = 1.0_dp
+   where (abs(u) > cc)
+      w = cc / abs(u)
+   end where
+   denom = sum(w)
+   if (denom <= 0.0_dp) exit
+   m_new = sum(w * x) / denom
+   r = abs(m_new - m)
+   m = m_new
+   if (r <= tol * (s + abs(m))) exit
+end do
+deallocate (u, w)
+end function huber_mean_scalar
+
+pure function huber_mean_vec(x, c) result(m)
+! Huber M-estimator for multiple threshold values.
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in) :: c(:)   ! Huber thresholds
+real(kind=dp), allocatable :: m(:)
+integer :: i
+allocate (m(size(c)))
+do i = 1, size(c)
+   m(i) = huber_mean_scalar(x, c(i))
+end do
+end function huber_mean_vec
+
+pure function bisquare_mean_scalar(x, c) result(m)
+! Tukey bisquare (biweight) M-estimator of location with robust scaling.
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in), optional :: c   ! bisquare threshold in standardized units
+real(kind=dp) :: m
+real(kind=dp) :: cc, s, m_new, denom, r, tol, ui
+real(kind=dp), allocatable :: u(:), w(:)
+integer :: iter, max_iter, i
+
+if (size(x) < 1) then
+   m = nanv()
+   return
+end if
+
+cc = 4.685_dp
+if (present(c)) cc = c
+if (cc <= 0.0_dp) then
+   m = nanv()
+   return
+end if
+
+m = median(x)
+s = mad(x, m)
+if (s <= 1.0e-12_dp) s = sd(x)
+if (s <= 1.0e-12_dp) return
+
+max_iter = 50
+tol = 1.0e-8_dp
+allocate (u(size(x)), w(size(x)))
+do iter = 1, max_iter
+   u = (x - m) / s
+   w = 0.0_dp
+   do i = 1, size(x)
+      ui = abs(u(i)) / cc
+      if (ui < 1.0_dp) w(i) = (1.0_dp - ui*ui)**2
+   end do
+   denom = sum(w)
+   if (denom <= 0.0_dp) exit
+   m_new = sum(w * x) / denom
+   r = abs(m_new - m)
+   m = m_new
+   if (r <= tol * (s + abs(m))) exit
+end do
+deallocate (u, w)
+end function bisquare_mean_scalar
+
+pure function bisquare_mean_vec(x, c) result(m)
+! Tukey bisquare M-estimator for multiple threshold values.
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), intent(in) :: c(:)   ! bisquare thresholds
+real(kind=dp), allocatable :: m(:)
+integer :: i
+allocate (m(size(c)))
+do i = 1, size(c)
+   m(i) = bisquare_mean_scalar(x, c(i))
+end do
+end function bisquare_mean_vec
+
 pure function iqr_scale(x) result(v)
 ! IQR-based robust scale estimate (IQR/1.349).
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp) :: v
+if (size(x) < 1) then
+   v = nanv(); return
+end if
+v = iqr(x) / 1.349_dp
+end function iqr_scale
+
+pure function iqr(x) result(v)
+! Interquartile range (Q3-Q1).
 real(kind=dp), intent(in) :: x(:)   ! input data vector
 real(kind=dp) :: v
 real(kind=dp), allocatable :: q(:)
@@ -273,8 +416,8 @@ if (size(x) < 1) then
    v = nanv(); return
 end if
 q = quantile(x, [0.25_dp, 0.75_dp])
-v = (q(2) - q(1)) / 1.349_dp
-end function iqr_scale
+v = q(2) - q(1)
+end function iqr
 
 pure function sd(x) result(sd_val)
 ! return the standard deviation of x
@@ -309,6 +452,181 @@ else
    corr_xy = cov_xy / sqrt(var_x * var_y)
 end if
 end function cor
+
+pure function cor_spearman(x, y) result(rho)
+! Spearman correlation (Pearson correlation of average ranks).
+real(kind=dp), intent(in) :: x(:)   ! first data vector
+real(kind=dp), intent(in) :: y(:)   ! second data vector
+real(kind=dp) :: rho
+real(kind=dp), allocatable :: rx(:), ry(:)
+if (size(x) /= size(y) .or. size(x) < 2) then
+   rho = -2.0_dp
+   return
+end if
+rx = average_ranks(x)
+ry = average_ranks(y)
+rho = cor(rx, ry)
+end function cor_spearman
+
+pure function cor_kendall(x, y) result(tau)
+! Kendall tau-b correlation with tie correction.
+real(kind=dp), intent(in) :: x(:)   ! first data vector
+real(kind=dp), intent(in) :: y(:)   ! second data vector
+real(kind=dp) :: tau
+integer :: i, j, n
+real(kind=dp) :: dx, dy, den
+integer(kind=8) :: ncon, ndis, ntx, nty, ntxy
+
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   tau = -2.0_dp
+   return
+end if
+
+ncon = 0_8; ndis = 0_8; ntx = 0_8; nty = 0_8; ntxy = 0_8
+do i = 1, n - 1
+   do j = i + 1, n
+      dx = x(i) - x(j)
+      dy = y(i) - y(j)
+      if (dx == 0.0_dp .and. dy == 0.0_dp) then
+         ntxy = ntxy + 1_8
+      else if (dx == 0.0_dp) then
+         ntx = ntx + 1_8
+      else if (dy == 0.0_dp) then
+         nty = nty + 1_8
+      else if (dx*dy > 0.0_dp) then
+         ncon = ncon + 1_8
+      else
+         ndis = ndis + 1_8
+      end if
+   end do
+end do
+
+den = sqrt(real(ncon + ndis + ntx, dp) * real(ncon + ndis + nty, dp))
+if (den <= 0.0_dp) then
+   tau = -3.0_dp
+else
+   tau = real(ncon - ndis, dp) / den
+end if
+end function cor_kendall
+
+pure function average_ranks(x) result(r)
+! Average ranks for ties (1-based).
+real(kind=dp), intent(in) :: x(:)   ! input data vector
+real(kind=dp), allocatable :: r(:)
+integer, allocatable :: ord(:)
+integer :: n, i, j, k
+n = size(x)
+allocate (r(n))
+if (n < 1) return
+ord = indexx(x)
+i = 1
+do while (i <= n)
+   j = i
+   do while (j < n)
+      if (x(ord(j + 1)) /= x(ord(i))) exit
+      j = j + 1
+   end do
+   do k = i, j
+      r(ord(k)) = 0.5_dp * real(i + j, dp)
+   end do
+   i = j + 1
+end do
+end function average_ranks
+
+subroutine cor_matrix_print(x, labels, methods)
+! Print labeled correlation matrix for one or more correlation methods.
+real(kind=dp), intent(in) :: x(:,:)   ! columns are variables
+character(len=*), intent(in) :: labels(:)   ! column labels
+character(len=*), intent(in), optional :: methods(:)   ! methods: pearson/spearman/kendall
+integer :: i, j, n, p, im, mcode, pad, col_width, max_name
+real(kind=dp) :: cval
+character(len=16), allocatable :: mlist(:)
+character(len=16) :: mname
+
+n = size(x, 1)
+p = size(x, 2)
+if (n < 2 .or. p < 2) then
+   print *, "Error: cor() matrix mode needs at least two vectors with size > 1"
+   return
+end if
+if (size(labels) /= p) then
+   print *, "Error: cor_matrix_print() labels size must match number of vectors"
+   return
+end if
+
+if (present(methods)) then
+   if (size(methods) < 1) then
+      allocate (mlist(1))
+      mlist(1) = "pearson"
+   else
+      allocate (mlist(size(methods)))
+      do i = 1, size(methods)
+         mlist(i) = lower_ascii(trim(adjustl(methods(i))))
+      end do
+   end if
+else
+   allocate (mlist(1))
+   mlist(1) = "pearson"
+end if
+
+max_name = 1
+do i = 1, p
+   max_name = max(max_name, len_trim(labels(i)))
+end do
+col_width = max(10, max_name)
+
+do im = 1, size(mlist)
+   mname = trim(mlist(im))
+   select case (mname)
+   case ("pearson")
+      mcode = 1
+   case ("spearman")
+      mcode = 2
+   case ("kendall")
+      mcode = 3
+   case default
+      print "(3a)", "Error: unknown cor() method '", trim(mname), "'"
+      cycle
+   end select
+
+   write (*, "(3a,i0,a)") "Correlation matrix (method=", trim(mname), ", n=", n, "):"
+   write (*, "(a)", advance="no") repeat(" ", max_name + 10)
+   do j = 1, p
+      call write_padded(trim(labels(j)), col_width)
+   end do
+   print *
+   do i = 1, p
+      call write_padded(trim(labels(i)), max_name)
+      do j = 1, p
+         select case (mcode)
+         case (1)
+            cval = cor(x(:, i), x(:, j))
+         case (2)
+            cval = cor_spearman(x(:, i), x(:, j))
+         case (3)
+            cval = cor_kendall(x(:, i), x(:, j))
+         end select
+         write (*, "(f10.6)", advance="no") cval
+         pad = col_width - 10
+         if (pad < 0) pad = 0
+         write (*, "(a)", advance="no") repeat(" ", pad + 1)
+      end do
+      print *
+   end do
+   if (im < size(mlist)) print *
+end do
+
+contains
+   subroutine write_padded(str, width)
+      character(len=*), intent(in) :: str
+      integer, intent(in) :: width
+      integer :: nsp
+      nsp = width - len_trim(str)
+      if (nsp < 0) nsp = 0
+      write (*, "(a)", advance="no") trim(str)//repeat(" ", nsp + 1)
+   end subroutine write_padded
+end subroutine cor_matrix_print
 
 pure function cov(x, y) result(cov_xy)
 ! Returns the covariance of two 1D arrays
@@ -7602,6 +7920,322 @@ v(1) = d
 v(2) = p
 end function ks2_test
 
+pure function adf_stat(x, lag) result(tau)
+! Augmented Dickey-Fuller tau statistic for unit-root testing with drift.
+real(kind=dp), intent(in) :: x(:)   ! input time series.
+integer, intent(in), optional :: lag   ! number of lagged differences.
+real(kind=dp) :: tau
+real(kind=dp), allocatable :: dx(:), ydep(:), xmat(:,:), xtx(:,:), xty(:), beta(:), resid(:), e(:), c2(:)
+real(kind=dp) :: s2, var_b2
+integer :: n, k, m, p, j, df
+logical :: ok
+
+tau = nanv()
+n = size(x)
+if (n < 6) return
+
+if (present(lag)) then
+   k = max(0, lag)
+else
+   k = int(12.0_dp*(real(n, dp)/100.0_dp)**0.25_dp)
+end if
+k = min(k, max(0, (n - 4)/2))
+
+dx = diff(x)
+m = n - 1 - k
+p = 2 + k
+if (m <= p) return
+
+allocate (ydep(m), xmat(m, p), xtx(p, p), xty(p), beta(p), resid(m), e(p), c2(p))
+ydep = dx(k + 1:n - 1)
+xmat(:, 1) = 1.0_dp
+xmat(:, 2) = x(k + 1:n - 1)
+do j = 1, k
+   xmat(:, 2 + j) = dx(k + 1 - j:n - 1 - j)
+end do
+
+xtx = matmul(transpose(xmat), xmat)
+xty = matmul(transpose(xmat), ydep)
+call solve_linear(xtx, xty, beta, ok)
+if (.not. ok) return
+
+resid = ydep - matmul(xmat, beta)
+df = m - p
+if (df <= 0) return
+s2 = sum(resid*resid) / real(df, dp)
+
+e = 0.0_dp
+e(2) = 1.0_dp
+call solve_linear(xtx, e, c2, ok)
+if (.not. ok) return
+var_b2 = s2*c2(2)
+if (var_b2 <= 0.0_dp) return
+
+tau = beta(2) / sqrt(var_b2)
+end function adf_stat
+
+subroutine adf(x, lag)
+! print Augmented Dickey-Fuller test summary (drift case).
+real(kind=dp), intent(in) :: x(:)   ! input time series.
+integer, intent(in), optional :: lag   ! number of lagged differences.
+real(kind=dp) :: tau, pval, cv1, cv5, cv10
+integer :: n, k
+character(len=20) :: dec1, dec5, dec10
+
+n = size(x)
+if (present(lag)) then
+   k = max(0, lag)
+else
+   k = int(12.0_dp*(real(max(1, n), dp)/100.0_dp)**0.25_dp)
+end if
+
+tau = adf_stat(x, k)
+if (tau /= tau) then
+   print *, "Error: adf() could not compute statistic (series too short or singular regression)"
+   return
+end if
+
+call adf_crit_drift(n, cv1, cv5, cv10)
+pval = adf_pvalue_drift(tau)
+
+if (tau <= cv1) then
+   dec1 = "reject"
+else
+   dec1 = "fail_to_reject"
+end if
+if (tau <= cv5) then
+   dec5 = "reject"
+else
+   dec5 = "fail_to_reject"
+end if
+if (tau <= cv10) then
+   dec10 = "reject"
+else
+   dec10 = "fail_to_reject"
+end if
+
+print "(a)", "adf (drift)"
+print "(a,i0)", "#obs: ", n
+print "(a,i0)", "lag: ", k
+print "(a,f12.6)", "stat: ", tau
+print "(a,f12.6)", "p_value: ", pval
+print *
+print "(a10,a14,a18)", "level", "critical", "decision"
+print "(a10,f14.6,a18)", "1%", cv1, trim(dec1)
+print "(a10,f14.6,a18)", "5%", cv5, trim(dec5)
+print "(a10,f14.6,a18)", "10%", cv10, trim(dec10)
+
+contains
+   pure subroutine adf_crit_drift(nobs, c1, c5, c10)
+      integer, intent(in) :: nobs
+      real(kind=dp), intent(out) :: c1
+      real(kind=dp), intent(out) :: c5
+      real(kind=dp), intent(out) :: c10
+      real(kind=dp) :: n1
+      ! Simple finite-sample adjustment to asymptotic drift critical values.
+      n1 = real(max(25, nobs), dp)
+      c1 = -3.43_dp - 6.0_dp/n1
+      c5 = -2.86_dp - 3.0_dp/n1
+      c10 = -2.57_dp - 2.0_dp/n1
+   end subroutine adf_crit_drift
+
+   pure function adf_pvalue_drift(t) result(p)
+      real(kind=dp), intent(in) :: t
+      real(kind=dp) :: p
+      real(kind=dp), parameter :: tx(8) = [-4.50_dp, -3.43_dp, -2.86_dp, -2.57_dp, -1.95_dp, -1.61_dp, -1.28_dp, 0.0_dp]
+      real(kind=dp), parameter :: px(8) = [0.001_dp, 0.010_dp, 0.050_dp, 0.100_dp, 0.250_dp, 0.500_dp, 0.750_dp, 0.980_dp]
+      integer :: j
+
+      if (t <= tx(1)) then
+         p = px(1)
+         return
+      end if
+      if (t >= tx(8)) then
+         p = px(8)
+         return
+      end if
+      do j = 1, 7
+         if (t <= tx(j + 1)) then
+            p = px(j) + (px(j + 1) - px(j))*(t - tx(j))/(tx(j + 1) - tx(j))
+            return
+         end if
+      end do
+      p = 0.5_dp
+   end function adf_pvalue_drift
+end subroutine adf
+
+pure function phillips_perron_stat(x, bw) result(stat)
+! Phillips-Perron unit-root statistic (drift case) using HAC variance.
+real(kind=dp), intent(in) :: x(:)   ! input time series.
+integer, intent(in), optional :: bw   ! Bartlett bandwidth for HAC covariance.
+real(kind=dp) :: stat
+real(kind=dp), allocatable :: dx(:), ydep(:), z(:,:), xtx(:,:), xty(:), beta(:), resid(:)
+real(kind=dp) :: invxtx(2, 2), s(2, 2), vbeta(2, 2), se
+real(kind=dp) :: w
+real(kind=dp) :: xt(2), xl(2)
+integer :: n, m, i, l, band
+logical :: ok
+real(kind=dp) :: e1(2), e2(2)
+real(kind=dp), allocatable :: c1(:), c2(:)
+
+stat = nanv()
+n = size(x)
+if (n < 6) return
+
+if (present(bw)) then
+   band = max(0, bw)
+else
+   band = int(4.0_dp*(real(n, dp)/100.0_dp)**(2.0_dp/9.0_dp))
+end if
+
+dx = diff(x)
+m = n - 1
+if (m < 5) return
+band = min(band, m - 1)
+
+allocate (ydep(m), z(m, 2), xtx(2, 2), xty(2), beta(2), resid(m))
+ydep = dx
+z(:, 1) = 1.0_dp
+z(:, 2) = x(1:n - 1)
+
+xtx = matmul(transpose(z), z)
+xty = matmul(transpose(z), ydep)
+call solve_linear(xtx, xty, beta, ok)
+if (.not. ok) return
+
+resid = ydep - matmul(z, beta)
+
+e1 = [1.0_dp, 0.0_dp]
+e2 = [0.0_dp, 1.0_dp]
+allocate (c1(2), c2(2))
+call solve_linear(xtx, e1, c1, ok)
+if (.not. ok) return
+call solve_linear(xtx, e2, c2, ok)
+if (.not. ok) return
+invxtx(:, 1) = c1
+invxtx(:, 2) = c2
+
+s = 0.0_dp
+do i = 1, m
+   xt = z(i, :)
+   s = s + resid(i)*resid(i)*outer2(xt, xt)
+end do
+
+do l = 1, band
+   w = 1.0_dp - real(l, dp)/real(band + 1, dp)
+   do i = l + 1, m
+      xt = z(i, :)
+      xl = z(i - l, :)
+      s = s + w*resid(i)*resid(i - l)*(outer2(xt, xl) + outer2(xl, xt))
+   end do
+end do
+
+vbeta = matmul(invxtx, matmul(s, invxtx))
+se = sqrt(max(vbeta(2, 2), 0.0_dp))
+if (se <= 0.0_dp) return
+stat = beta(2)/se
+
+contains
+   pure function outer2(a, b) result(o)
+      real(kind=dp), intent(in) :: a(2)
+      real(kind=dp), intent(in) :: b(2)
+      real(kind=dp) :: o(2, 2)
+      o(1, 1) = a(1)*b(1)
+      o(1, 2) = a(1)*b(2)
+      o(2, 1) = a(2)*b(1)
+      o(2, 2) = a(2)*b(2)
+   end function outer2
+end function phillips_perron_stat
+
+subroutine phillips_perron(x, bw)
+! print Phillips-Perron test summary (drift case).
+real(kind=dp), intent(in) :: x(:)   ! input time series.
+integer, intent(in), optional :: bw   ! Bartlett bandwidth for HAC covariance.
+real(kind=dp) :: stat, pval, cv1, cv5, cv10
+integer :: n, band
+character(len=20) :: dec1, dec5, dec10
+
+n = size(x)
+if (present(bw)) then
+   band = max(0, bw)
+else
+   band = int(4.0_dp*(real(max(1, n), dp)/100.0_dp)**(2.0_dp/9.0_dp))
+end if
+
+stat = phillips_perron_stat(x, band)
+if (stat /= stat) then
+   print *, "Error: phillips_perron() could not compute statistic (series too short or singular regression)"
+   return
+end if
+
+call pp_crit_drift(n, cv1, cv5, cv10)
+pval = pp_pvalue_drift(stat)
+
+if (stat <= cv1) then
+   dec1 = "reject"
+else
+   dec1 = "fail_to_reject"
+end if
+if (stat <= cv5) then
+   dec5 = "reject"
+else
+   dec5 = "fail_to_reject"
+end if
+if (stat <= cv10) then
+   dec10 = "reject"
+else
+   dec10 = "fail_to_reject"
+end if
+
+print "(a)", "phillips_perron (drift)"
+print "(a,i0)", "#obs: ", n
+print "(a,i0)", "bw: ", band
+print "(a,f12.6)", "stat: ", stat
+print "(a,f12.6)", "p_value: ", pval
+print *
+print "(a10,a14,a18)", "level", "critical", "decision"
+print "(a10,f14.6,a18)", "1%", cv1, trim(dec1)
+print "(a10,f14.6,a18)", "5%", cv5, trim(dec5)
+print "(a10,f14.6,a18)", "10%", cv10, trim(dec10)
+
+contains
+   pure subroutine pp_crit_drift(nobs, c1, c5, c10)
+      integer, intent(in) :: nobs
+      real(kind=dp), intent(out) :: c1
+      real(kind=dp), intent(out) :: c5
+      real(kind=dp), intent(out) :: c10
+      real(kind=dp) :: n1
+      n1 = real(max(25, nobs), dp)
+      c1 = -3.43_dp - 6.0_dp/n1
+      c5 = -2.86_dp - 3.0_dp/n1
+      c10 = -2.57_dp - 2.0_dp/n1
+   end subroutine pp_crit_drift
+
+   pure function pp_pvalue_drift(t) result(p)
+      real(kind=dp), intent(in) :: t
+      real(kind=dp) :: p
+      real(kind=dp), parameter :: tx(8) = [-4.50_dp, -3.43_dp, -2.86_dp, -2.57_dp, -1.95_dp, -1.61_dp, -1.28_dp, 0.0_dp]
+      real(kind=dp), parameter :: px(8) = [0.001_dp, 0.010_dp, 0.050_dp, 0.100_dp, 0.250_dp, 0.500_dp, 0.750_dp, 0.980_dp]
+      integer :: j
+
+      if (t <= tx(1)) then
+         p = px(1)
+         return
+      end if
+      if (t >= tx(8)) then
+         p = px(8)
+         return
+      end if
+      do j = 1, 7
+         if (t <= tx(j + 1)) then
+            p = px(j) + (px(j + 1) - px(j))*(t - tx(j))/(tx(j + 1) - tx(j))
+            return
+         end if
+      end do
+      p = 0.5_dp
+   end function pp_pvalue_drift
+end subroutine phillips_perron
+
 function kernelreg_scalar(y, x, bw, order, points) result(yhat)
 ! Nadaraya-Watson Gaussian-kernel regression evaluated at x.
 use plot_mod, only: gplot => plot
@@ -8655,6 +9289,806 @@ if (use_intcp) then
    print "(a10,4f13.6)", lbl, b, se_b, t_b, p_b
 end if
 end subroutine regress
+
+subroutine huber_regress(y, x, c, intcp)
+! robust simple linear regression using Huber loss via IRLS
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+real(kind=dp), intent(in), optional :: c   ! Huber threshold in standardized residual units
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp) :: a, b
+real(kind=dp) :: a_old, b_old
+real(kind=dp) :: cc, x_mean, y_mean
+real(kind=dp) :: sxx, sxy, sst, sse, mse, r2
+real(kind=dp) :: sw, sx, sy, sxx_w, sxy_w, den
+real(kind=dp) :: s, tol, rchange
+real(kind=dp), allocatable :: resid(:), u(:), w(:)
+integer :: n, df, iter, max_iter
+character(len=10) :: lbl
+logical :: use_intcp
+
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   print *, "Error: huber_regress() requires equal-size arrays with size > 1"
+   return
+end if
+
+cc = 1.345_dp
+if (present(c)) cc = c
+if (cc <= 0.0_dp) then
+   print *, "Error: huber_regress() requires c > 0"
+   return
+end if
+
+if (present(intcp)) then
+   use_intcp = intcp
+else
+   use_intcp = .true.
+end if
+
+x_mean = mean(x)
+y_mean = mean(y)
+sxx = sum((x - x_mean)**2)
+if (use_intcp) then
+   if (sxx == 0.0_dp) then
+      print *, "Error: huber_regress() requires non-constant x"
+      return
+   end if
+   sxy = sum((x - x_mean) * (y - y_mean))
+   a = sxy / sxx
+   b = y_mean - a * x_mean
+else
+   sxx = sum(x**2)
+   if (sxx == 0.0_dp) then
+      print *, "Error: huber_regress() requires non-zero x for no-intercept fit"
+      return
+   end if
+   sxy = sum(x * y)
+   a = sxy / sxx
+   b = 0.0_dp
+end if
+
+max_iter = 50
+tol = 1.0e-8_dp
+allocate (resid(n), u(n), w(n))
+do iter = 1, max_iter
+   resid = y - (a * x + b)
+   s = mad(resid)
+   if (s <= 1.0e-12_dp) s = sd(resid)
+   if (s <= 1.0e-12_dp) exit
+
+   u = resid / s
+   w = 1.0_dp
+   where (abs(u) > cc)
+      w = cc / abs(u)
+   end where
+
+   a_old = a
+   b_old = b
+
+   if (use_intcp) then
+      sw = sum(w)
+      sx = sum(w * x)
+      sy = sum(w * y)
+      sxx_w = sum(w * x * x)
+      sxy_w = sum(w * x * y)
+      den = sw * sxx_w - sx * sx
+      if (abs(den) <= 1.0e-18_dp .or. sw <= 0.0_dp) exit
+      a = (sw * sxy_w - sx * sy) / den
+      b = (sy - a * sx) / sw
+   else
+      den = sum(w * x * x)
+      if (abs(den) <= 1.0e-18_dp) exit
+      a = sum(w * x * y) / den
+      b = 0.0_dp
+   end if
+
+   rchange = max(abs(a - a_old), abs(b - b_old))
+   if (rchange <= tol * (1.0_dp + abs(a) + abs(b))) exit
+end do
+
+resid = y - (a * x + b)
+sse = sum(resid**2)
+sst = sum((y - mean(y))**2)
+if (.not. use_intcp) sst = sum(y**2)
+if (use_intcp) then
+   df = n - 2
+else
+   df = n - 1
+end if
+if (df > 0) then
+   mse = sse / real(df, dp)
+else
+   mse = 0.0_dp
+end if
+if (sst > 0.0_dp) then
+   r2 = 1.0_dp - sse / sst
+else
+   r2 = 0.0_dp
+end if
+
+print "(a12,a12,a12,a12,a12,a12)", "n", "r2", "sse", "mse", "iter", "c"
+print "(i12,3f12.6,i12,f12.6)", n, r2, sse, mse, iter, cc
+print *
+print "(a10,2a13)", "coef", "estimate", "robust"
+lbl = "slope"
+print "(a10,f13.6,a13)", lbl, a, "huber"
+if (use_intcp) then
+   lbl = "intcp"
+   print "(a10,f13.6,a13)", lbl, b, "huber"
+end if
+
+deallocate (resid, u, w)
+end subroutine huber_regress
+
+subroutine bisquare_regress(y, x, c, intcp)
+! robust simple linear regression using Tukey bisquare loss via IRLS
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! single predictor values
+real(kind=dp), intent(in), optional :: c   ! bisquare threshold in standardized residual units
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp) :: a, b
+real(kind=dp) :: a_old, b_old
+real(kind=dp) :: cc, x_mean, y_mean
+real(kind=dp) :: sxx, sxy, sst, sse, mse, r2
+real(kind=dp) :: sw, sx, sy, sxx_w, sxy_w, den
+real(kind=dp) :: s, tol, rchange
+real(kind=dp), allocatable :: resid(:), u(:), w(:)
+integer :: n, df, iter, max_iter
+character(len=10) :: lbl
+logical :: use_intcp
+
+n = size(x)
+if (n /= size(y) .or. n < 2) then
+   print *, "Error: bisquare_regress() requires equal-size arrays with size > 1"
+   return
+end if
+
+cc = 4.685_dp
+if (present(c)) cc = c
+if (cc <= 0.0_dp) then
+   print *, "Error: bisquare_regress() requires c > 0"
+   return
+end if
+
+if (present(intcp)) then
+   use_intcp = intcp
+else
+   use_intcp = .true.
+end if
+
+x_mean = mean(x)
+y_mean = mean(y)
+sxx = sum((x - x_mean)**2)
+if (use_intcp) then
+   if (sxx == 0.0_dp) then
+      print *, "Error: bisquare_regress() requires non-constant x"
+      return
+   end if
+   sxy = sum((x - x_mean) * (y - y_mean))
+   a = sxy / sxx
+   b = y_mean - a * x_mean
+else
+   sxx = sum(x**2)
+   if (sxx == 0.0_dp) then
+      print *, "Error: bisquare_regress() requires non-zero x for no-intercept fit"
+      return
+   end if
+   sxy = sum(x * y)
+   a = sxy / sxx
+   b = 0.0_dp
+end if
+
+max_iter = 50
+tol = 1.0e-8_dp
+allocate (resid(n), u(n), w(n))
+do iter = 1, max_iter
+   resid = y - (a * x + b)
+   s = mad(resid)
+   if (s <= 1.0e-12_dp) s = sd(resid)
+   if (s <= 1.0e-12_dp) exit
+
+   u = resid / s
+   w = 0.0_dp
+   where (abs(u) < cc)
+      w = (1.0_dp - (u / cc)**2)**2
+   end where
+
+   a_old = a
+   b_old = b
+
+   if (use_intcp) then
+      sw = sum(w)
+      sx = sum(w * x)
+      sy = sum(w * y)
+      sxx_w = sum(w * x * x)
+      sxy_w = sum(w * x * y)
+      den = sw * sxx_w - sx * sx
+      if (abs(den) <= 1.0e-18_dp .or. sw <= 0.0_dp) exit
+      a = (sw * sxy_w - sx * sy) / den
+      b = (sy - a * sx) / sw
+   else
+      den = sum(w * x * x)
+      if (abs(den) <= 1.0e-18_dp) exit
+      a = sum(w * x * y) / den
+      b = 0.0_dp
+   end if
+
+   rchange = max(abs(a - a_old), abs(b - b_old))
+   if (rchange <= tol * (1.0_dp + abs(a) + abs(b))) exit
+end do
+
+resid = y - (a * x + b)
+sse = sum(resid**2)
+sst = sum((y - mean(y))**2)
+if (.not. use_intcp) sst = sum(y**2)
+if (use_intcp) then
+   df = n - 2
+else
+   df = n - 1
+end if
+if (df > 0) then
+   mse = sse / real(df, dp)
+else
+   mse = 0.0_dp
+end if
+if (sst > 0.0_dp) then
+   r2 = 1.0_dp - sse / sst
+else
+   r2 = 0.0_dp
+end if
+
+print "(a12,a12,a12,a12,a12,a12)", "n", "r2", "sse", "mse", "iter", "c"
+print "(i12,3f12.6,i12,f12.6)", n, r2, sse, mse, iter, cc
+print *
+print "(a10,2a13)", "coef", "estimate", "robust"
+lbl = "slope"
+print "(a10,f13.6,a13)", lbl, a, "bisquare"
+if (use_intcp) then
+   lbl = "intcp"
+   print "(a10,f13.6,a13)", lbl, b, "bisquare"
+end if
+
+deallocate (resid, u, w)
+end subroutine bisquare_regress
+
+subroutine dist_regress0(dist, y, intcp, df, beta, niter)
+! distributional regression with no predictors (intercept-only or zero-mean)
+character(len=*), intent(in) :: dist   ! error distribution: normal or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: df(:)   ! t df candidates to try (>2)
+real(kind=dp), intent(in), optional :: beta(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+real(kind=dp), allocatable :: x(:,:)
+allocate (x(size(y), 0))
+call dist_regress_core(dist, y, x, intcp=intcp, df_grid=df, beta_grid=beta, niter=niter)
+end subroutine dist_regress0
+
+subroutine dist_regress1(dist, y, x, intcp, df, beta, niter)
+! distributional regression with one predictor
+character(len=*), intent(in) :: dist   ! error distribution: normal or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: df   ! fixed t degrees of freedom
+real(kind=dp), intent(in), optional :: beta(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+real(kind=dp), allocatable :: xm(:,:)
+if (size(x) /= size(y)) then
+   print *, "Error: dist_regress() requires equal-size arrays with size > 1"
+   return
+end if
+allocate (xm(size(y), 1))
+xm(:, 1) = x
+call dist_regress_core(dist, y, xm, intcp=intcp, df_scalar=df, beta_grid=beta, niter=niter)
+end subroutine dist_regress1
+
+subroutine dist_regressm(dist, y, x, intcp, df, beta, niter)
+! distributional regression with multiple predictors
+character(len=*), intent(in) :: dist   ! error distribution: normal or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:,:)   ! predictor matrix (rows=observations)
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: df   ! fixed t degrees of freedom
+real(kind=dp), intent(in), optional :: beta(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+if (size(x, 1) /= size(y)) then
+   print *, "Error: dist_regress() requires equal-size arrays with size > 1"
+   return
+end if
+call dist_regress_core(dist, y, x, intcp=intcp, df_scalar=df, beta_grid=beta, niter=niter)
+end subroutine dist_regressm
+
+subroutine dist_regress1v(dist, y, x, df, intcp, beta, niter)
+! distributional regression with one predictor and df candidate grid
+character(len=*), intent(in) :: dist   ! error distribution: normal or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:)   ! predictor values
+real(kind=dp), intent(in) :: df(:)   ! t df candidates to try (>2)
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: beta(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+real(kind=dp), allocatable :: xm(:,:)
+if (size(x) /= size(y)) then
+   print *, "Error: dist_regress() requires equal-size arrays with size > 1"
+   return
+end if
+allocate (xm(size(y), 1))
+xm(:, 1) = x
+call dist_regress_core(dist, y, xm, intcp=intcp, df_grid=df, beta_grid=beta, niter=niter)
+end subroutine dist_regress1v
+
+subroutine dist_regressmv(dist, y, x, df, intcp, beta, niter)
+! distributional regression with multiple predictors and df candidate grid
+character(len=*), intent(in) :: dist   ! error distribution: normal or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:,:)   ! predictor matrix (rows=observations)
+real(kind=dp), intent(in) :: df(:)   ! t df candidates to try (>2)
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: beta(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+if (size(x, 1) /= size(y)) then
+   print *, "Error: dist_regress() requires equal-size arrays with size > 1"
+   return
+end if
+call dist_regress_core(dist, y, x, intcp=intcp, df_grid=df, beta_grid=beta, niter=niter)
+end subroutine dist_regressmv
+
+subroutine dist_regress_core(dist, y, x, intcp, df_scalar, df_grid, beta_grid, niter)
+! distributional regression for normal, Laplace, GED, sech, or Student-t errors
+character(len=*), intent(in) :: dist   ! error distribution: normal, laplace, ged, sech, or t
+real(kind=dp), intent(in) :: y(:)   ! response values
+real(kind=dp), intent(in) :: x(:,:)   ! predictor matrix
+logical, intent(in), optional :: intcp   ! include intercept term when true
+real(kind=dp), intent(in), optional :: df_scalar   ! fixed t degrees of freedom
+real(kind=dp), intent(in), optional :: df_grid(:)   ! t df candidates to try (>2)
+real(kind=dp), intent(in), optional :: beta_grid(:)   ! GED beta candidates to try (>0)
+integer, intent(in), optional :: niter   ! maximum IRLS iterations for t fit
+real(kind=dp), allocatable :: z(:,:), beta(:), beta_best(:), beta0(:), yhat(:), resid(:), w(:), xtwx(:,:), xtwy(:), sol(:), dfcand(:)
+real(kind=dp), allocatable :: betacand(:)
+real(kind=dp) :: nu, nu_best, sigma2, sigma2_best, sigma, loglik, aic, bic, tol, bchg, sw, beta_shape, beta_shape_best, sb
+real(kind=dp) :: llc, ll0, ll_best, ll_cur, sig2_cur
+character(len=16) :: dname
+integer :: n, p, kbeta, i, jj, kk, max_iter, it, it_best, npar
+logical :: use_intcp, ok, ok_fit, df_is_estimated, beta_is_estimated
+character(len=16) :: lbl
+
+n = size(y)
+p = size(x, 2)
+if (n < 2) then
+   print *, "Error: dist_regress() requires size(y) > 1"
+   return
+end if
+if (size(x, 1) /= n) then
+   print *, "Error: dist_regress() requires equal-size arrays with size > 1"
+   return
+end if
+
+if (present(intcp)) then
+   use_intcp = intcp
+else
+   use_intcp = .true.
+end if
+
+dname = lower_ascii(trim(adjustl(dist)))
+if (dname /= "normal" .and. dname /= "t" .and. dname /= "laplace" .and. dname /= "ged" .and. dname /= "sech") then
+   print *, "Error: dist_regress() dist must be normal, laplace, ged, sech, or t"
+   return
+end if
+
+if (present(niter)) then
+   max_iter = max(1, niter)
+else
+   max_iter = 60
+end if
+tol = 1.0e-8_dp
+
+kbeta = p
+if (use_intcp) kbeta = kbeta + 1
+
+if (kbeta > 0) then
+   allocate (z(n, kbeta), beta(kbeta), beta0(kbeta), beta_best(kbeta))
+   if (use_intcp) then
+      z(:, 1) = 1.0_dp
+      if (p > 0) z(:, 2:) = x
+   else
+      z = x
+   end if
+   allocate (xtwx(kbeta, kbeta), xtwy(kbeta), sol(kbeta))
+   xtwx = matmul(transpose(z), z)
+   xtwy = matmul(transpose(z), y)
+   call solve_linear(xtwx, xtwy, beta0, ok)
+   if (.not. ok) then
+      print *, "Error: dist_regress() singular design matrix"
+      return
+   end if
+else
+   allocate (z(n, 0), beta(0), beta0(0), beta_best(0))
+   allocate (xtwx(0, 0), xtwy(0), sol(0))
+end if
+
+allocate (yhat(n), resid(n), w(n))
+
+if (dname == "normal") then
+   beta_is_estimated = .false.
+   beta = beta0
+   if (kbeta > 0) then
+      yhat = matmul(z, beta)
+   else
+      yhat = 0.0_dp
+   end if
+   resid = y - yhat
+   sigma2 = max(sum(resid**2) / real(n, dp), 1.0e-18_dp)
+   loglik = -0.5_dp * real(n, dp) * (log(2.0_dp*pi*sigma2) + 1.0_dp)
+   nu = 0.0_dp
+   it = 0
+else if (dname == "laplace") then
+   beta_is_estimated = .false.
+   beta = beta0
+   if (kbeta > 0) then
+      yhat = matmul(z, beta)
+   else
+      yhat = 0.0_dp
+   end if
+   resid = y - yhat
+   sigma2 = max((sum(abs(resid)) / real(n, dp))**2, 1.0e-18_dp)
+   it = 0
+   do it = 1, max_iter
+      if (kbeta > 0) then
+         w = 1.0_dp / max(abs(resid), 1.0e-8_dp)
+         xtwx = 0.0_dp
+         xtwy = 0.0_dp
+         do i = 1, n
+            do jj = 1, kbeta
+               xtwy(jj) = xtwy(jj) + w(i) * z(i, jj) * y(i)
+               do kk = 1, kbeta
+                  xtwx(jj, kk) = xtwx(jj, kk) + w(i) * z(i, jj) * z(i, kk)
+               end do
+            end do
+         end do
+         call solve_linear(xtwx, xtwy, sol, ok)
+         if (.not. ok) exit
+         bchg = maxval(abs(sol - beta))
+         beta = sol
+         yhat = matmul(z, beta)
+      else
+         bchg = 0.0_dp
+         if (use_intcp) then
+            yhat = median(y)
+         else
+            yhat = 0.0_dp
+         end if
+      end if
+      resid = y - yhat
+      if (kbeta == 0 .or. bchg <= tol * (1.0_dp + maxval(abs(beta)))) exit
+   end do
+   resid = y - yhat
+   sigma = max(sum(abs(resid)) / real(n, dp), 1.0e-12_dp)
+   sigma2 = sigma*sigma
+   loglik = -real(n, dp)*log(2.0_dp*sigma) - sum(abs(resid))/sigma
+else if (dname == "ged") then
+   if (present(beta_grid)) then
+      betacand = pack(beta_grid, beta_grid > 0.0_dp)
+      beta_is_estimated = .true.
+   else
+      betacand = [0.8_dp, 1.0_dp, 1.2_dp, 1.5_dp, 2.0_dp, 3.0_dp, 4.0_dp]
+      beta_is_estimated = .true.
+   end if
+   if (size(betacand) < 1) then
+      print *, "Error: dist_regress(ged) needs at least one beta > 0"
+      return
+   end if
+   if (size(betacand) == 1) beta_is_estimated = .false.
+
+   ll_best = -huge(1.0_dp)
+   sigma2_best = huge(1.0_dp)
+   beta_shape_best = betacand(1)
+   it_best = 0
+   do i = 1, size(betacand)
+      beta_shape = betacand(i)
+      call fit_ged_fixed_beta(beta_shape, beta0, beta, sig2_cur, ll_cur, it, ok_fit)
+      if (.not. ok_fit) cycle
+      if (ll_cur > ll_best) then
+         ll_best = ll_cur
+         sigma2_best = sig2_cur
+         beta_shape_best = beta_shape
+         it_best = it
+         beta_best = beta
+      end if
+   end do
+   if (ll_best <= -0.5_dp*huge(1.0_dp)) then
+      print *, "Error: dist_regress(ged) fit failed"
+      return
+   end if
+   beta = beta_best
+   sigma2 = sigma2_best
+   loglik = ll_best
+   beta_shape = beta_shape_best
+   it = it_best
+else if (dname == "sech") then
+   beta_is_estimated = .false.
+   call fit_sech_mle(beta0, beta, sig2_cur, ll_cur, ok_fit)
+   if (.not. ok_fit) then
+      print *, "Error: dist_regress(sech) fit failed"
+      return
+   end if
+   sigma2 = sig2_cur
+   loglik = ll_cur
+   it = 0
+else
+   beta_is_estimated = .false.
+   if (present(df_grid)) then
+      dfcand = pack(df_grid, df_grid > 2.0_dp)
+      df_is_estimated = .true.
+   else if (present(df_scalar)) then
+      if (df_scalar <= 2.0_dp) then
+         print *, "Error: dist_regress(t) requires df > 2"
+         return
+      end if
+      allocate (dfcand(1))
+      dfcand(1) = df_scalar
+      df_is_estimated = .false.
+   else
+      dfcand = [3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp, 8.0_dp, 10.0_dp, 15.0_dp, 20.0_dp, 30.0_dp, 50.0_dp]
+      df_is_estimated = .true.
+   end if
+   if (size(dfcand) < 1) then
+      print *, "Error: dist_regress(t) needs at least one df > 2"
+      return
+   end if
+   if (size(dfcand) == 1) df_is_estimated = .false.
+
+   ll_best = -huge(1.0_dp)
+   sigma2_best = huge(1.0_dp)
+   nu_best = dfcand(1)
+   it_best = 0
+   do i = 1, size(dfcand)
+      nu = dfcand(i)
+      call fit_t_fixed_df(nu, beta0, beta, sig2_cur, ll_cur, it, ok_fit)
+      if (.not. ok_fit) cycle
+      if (ll_cur > ll_best) then
+         ll_best = ll_cur
+         sigma2_best = sig2_cur
+         nu_best = nu
+         it_best = it
+         beta_best = beta
+      end if
+   end do
+   if (ll_best <= -0.5_dp*huge(1.0_dp)) then
+      print *, "Error: dist_regress(t) fit failed"
+      return
+   end if
+   beta = beta_best
+   sigma2 = sigma2_best
+   loglik = ll_best
+   nu = nu_best
+   it = it_best
+end if
+
+sigma = sqrt(max(sigma2, 1.0e-18_dp))
+npar = kbeta + 1
+aic = -2.0_dp*loglik + 2.0_dp*real(npar, dp)
+bic = -2.0_dp*loglik + log(real(n, dp))*real(npar, dp)
+
+print "(a,a)", "dist: ", trim(dname)
+print "(a,i0)", "#obs: ", n
+if (dname == "t") then
+   print "(a,f10.4)", "df: ", nu
+   if (df_is_estimated) print "(a)", "df_mode: estimated"
+end if
+if (dname == "ged") then
+   print "(a,f10.4)", "beta: ", beta_shape
+   if (beta_is_estimated) print "(a)", "beta_mode: estimated"
+end if
+print "(a10,a14,a14,a14,a14)", "model", "sigma", "loglik", "AIC", "BIC"
+print "(a10,4f14.6)", "fit", sigma, loglik, aic, bic
+if (dname == "t") print "(a,i0)", "iter: ", it
+
+if (kbeta > 0) then
+   print *
+   print "(a10,a14)", "coef", "estimate"
+   do i = 1, kbeta
+      if (use_intcp .and. i == 1) then
+         lbl = "intcp"
+      else
+         write (lbl, "(a,i0)") "x", i - merge(1, 0, use_intcp)
+      end if
+      print "(a10,f14.6)", trim(lbl), beta(i)
+   end do
+end if
+
+contains
+   subroutine fit_t_fixed_df(nu_in, beta_start, beta_out, sig2_out, ll_out, it_out, ok_out)
+      real(kind=dp), intent(in) :: nu_in
+      real(kind=dp), intent(in) :: beta_start(:)
+      real(kind=dp), intent(out) :: beta_out(:)
+      real(kind=dp), intent(out) :: sig2_out
+      real(kind=dp), intent(out) :: ll_out
+      integer, intent(out) :: it_out
+      logical, intent(out) :: ok_out
+      integer :: ii, jj, kk
+
+      beta_out = beta_start
+      ok_out = .true.
+      if (kbeta > 0) then
+         yhat = matmul(z, beta_out)
+      else
+         yhat = 0.0_dp
+      end if
+      resid = y - yhat
+      sig2_out = max(sum(resid**2) / real(n, dp), 1.0e-18_dp)
+      w = 1.0_dp
+
+      do it_out = 1, max_iter
+         if (kbeta > 0) then
+            xtwx = 0.0_dp
+            xtwy = 0.0_dp
+            do ii = 1, n
+               do jj = 1, kbeta
+                  xtwy(jj) = xtwy(jj) + w(ii) * z(ii, jj) * y(ii)
+                  do kk = 1, kbeta
+                     xtwx(jj, kk) = xtwx(jj, kk) + w(ii) * z(ii, jj) * z(ii, kk)
+                  end do
+               end do
+            end do
+            call solve_linear(xtwx, xtwy, sol, ok)
+            if (.not. ok) then
+               ok_out = .false.
+               ll_out = -huge(1.0_dp)
+               return
+            end if
+            bchg = maxval(abs(sol - beta_out))
+            beta_out = sol
+            yhat = matmul(z, beta_out)
+         else
+            bchg = 0.0_dp
+            yhat = 0.0_dp
+         end if
+
+         resid = y - yhat
+         sw = sum(w)
+         if (sw <= 0.0_dp) then
+            ok_out = .false.
+            ll_out = -huge(1.0_dp)
+            return
+         end if
+         sig2_out = max(sum(w * resid**2) / sw, 1.0e-18_dp)
+         w = (nu_in + 1.0_dp) / (nu_in + resid**2 / sig2_out)
+
+         if (kbeta == 0 .or. bchg <= tol * (1.0_dp + maxval(abs(beta_out)))) exit
+      end do
+
+      if (kbeta > 0) then
+         yhat = matmul(z, beta_out)
+      else
+         yhat = 0.0_dp
+      end if
+      resid = y - yhat
+      sig2_out = max(sum(resid**2) / real(n, dp), 1.0e-18_dp)
+      llc = log_gamma(0.5_dp*(nu_in + 1.0_dp)) - log_gamma(0.5_dp*nu_in) - 0.5_dp*log(nu_in*pi)
+      ll0 = llc - 0.5_dp*log(sig2_out)
+      ll_out = sum(ll0 - 0.5_dp*(nu_in + 1.0_dp) * log(1.0_dp + resid**2 / (nu_in*sig2_out)))
+   end subroutine fit_t_fixed_df
+
+   subroutine fit_ged_fixed_beta(beta_in, beta_start, beta_out, sig2_out, ll_out, it_out, ok_out)
+      real(kind=dp), intent(in) :: beta_in
+      real(kind=dp), intent(in) :: beta_start(:)
+      real(kind=dp), intent(out) :: beta_out(:)
+      real(kind=dp), intent(out) :: sig2_out
+      real(kind=dp), intent(out) :: ll_out
+      integer, intent(out) :: it_out
+      logical, intent(out) :: ok_out
+      integer :: ii, jj, kk
+      real(kind=dp) :: sig_loc
+
+      ok_out = .true.
+      beta_out = beta_start
+      if (kbeta > 0) then
+         yhat = matmul(z, beta_out)
+      else
+         if (use_intcp) then
+            yhat = median(y)
+         else
+            yhat = 0.0_dp
+         end if
+      end if
+      resid = y - yhat
+
+      do it_out = 1, max_iter
+         if (kbeta > 0) then
+            w = max(abs(resid), 1.0e-8_dp)**(beta_in - 2.0_dp)
+            xtwx = 0.0_dp
+            xtwy = 0.0_dp
+            do ii = 1, n
+               do jj = 1, kbeta
+                  xtwy(jj) = xtwy(jj) + w(ii) * z(ii, jj) * y(ii)
+                  do kk = 1, kbeta
+                     xtwx(jj, kk) = xtwx(jj, kk) + w(ii) * z(ii, jj) * z(ii, kk)
+                  end do
+               end do
+            end do
+            call solve_linear(xtwx, xtwy, sol, ok)
+            if (.not. ok) then
+               ok_out = .false.
+               ll_out = -huge(1.0_dp)
+               return
+            end if
+            bchg = maxval(abs(sol - beta_out))
+            beta_out = sol
+            yhat = matmul(z, beta_out)
+            resid = y - yhat
+            if (bchg <= tol * (1.0_dp + maxval(abs(beta_out)))) exit
+         else
+            if (use_intcp) then
+               yhat = median(y)
+            else
+               yhat = 0.0_dp
+            end if
+            resid = y - yhat
+            exit
+         end if
+      end do
+
+      sb = sum(abs(resid)**beta_in)
+      sig_loc = (max(beta_in * sb / real(n, dp), 1.0e-18_dp))**(1.0_dp / beta_in)
+      sig2_out = sig_loc * sig_loc
+      ll_out = real(n, dp) * (log(beta_in) - log(2.0_dp * sig_loc) - log_gamma(1.0_dp / beta_in)) - &
+         sum((abs(resid) / sig_loc)**beta_in)
+   end subroutine fit_ged_fixed_beta
+
+   subroutine fit_sech_mle(beta_start, beta_out, sig2_out, ll_out, ok_out)
+      real(kind=dp), intent(in) :: beta_start(:)
+      real(kind=dp), intent(out) :: beta_out(:)
+      real(kind=dp), intent(out) :: sig2_out
+      real(kind=dp), intent(out) :: ll_out
+      logical, intent(out) :: ok_out
+      real(kind=dp), allocatable :: u0(:), ub(:), r0(:)
+      real(kind=dp) :: s0
+      integer :: ku
+
+      if (kbeta > 0) then
+         ku = kbeta + 1
+      else
+         ku = 1
+      end if
+      allocate (u0(ku), ub(ku), r0(n))
+      if (kbeta > 0) then
+         u0(1:kbeta) = beta_start
+         r0 = y - matmul(z, beta_start)
+      else
+         r0 = y
+      end if
+      s0 = sd(r0)
+      if (s0 <= 0.0_dp) s0 = max(sqrt(sum(r0*r0) / max(1.0_dp, real(n, dp))), 1.0e-6_dp)
+      s0 = max(s0, 1.0e-6_dp)
+      u0(ku) = log(s0)
+      ub = nelder_mead(loglik_sech, u0, 0.1_dp, 300, 1.0e-6_dp)
+      if (kbeta > 0) beta_out = ub(1:kbeta)
+      sig2_out = exp(2.0_dp * ub(ku))
+      ll_out = loglik_sech(ub)
+      ok_out = sig2_out > 0.0_dp .and. ll_out > -huge(1.0_dp)
+   end subroutine fit_sech_mle
+
+   pure function loglik_sech(u) result(f)
+      real(kind=dp), intent(in) :: u(:)
+      real(kind=dp) :: f, sig
+      real(kind=dp), allocatable :: rr(:)
+
+      sig = exp(u(size(u)))
+      if (sig <= 0.0_dp) then
+         f = -huge(1.0_dp)
+         return
+      end if
+      allocate (rr(n))
+      if (kbeta > 0) then
+         rr = y - matmul(z, u(1:kbeta))
+      else
+         rr = y
+      end if
+      f = -real(n, dp) * log(2.0_dp * sig) - sum(log(cosh(0.5_dp * pi * rr / sig)))
+   end function loglik_sech
+end subroutine dist_regress_core
 
 subroutine regress_multi(y, x, labels, intcp)
 ! multiple linear regression y = b0 + b1*x1 + ...

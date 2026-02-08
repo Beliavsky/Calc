@@ -75,6 +75,11 @@ def main():
         help="Comma-separated list of .fi files to process (overrides glob).",
     )
     parser.add_argument(
+        "--recent",
+        action="store_true",
+        help="Process files from most recent to least recent (by modification time).",
+    )
+    parser.add_argument(
         "--hide-output",
         action="store_true",
         help="Hide output of compiled Fortran programs (current behavior).",
@@ -143,6 +148,8 @@ def main():
             print(f"Error: {e}")
             return 2
         fi_files = [p for p in fi_files if not matcher(p.name)]
+    if args.recent:
+        fi_files = sorted(fi_files, key=lambda p: p.stat().st_mtime, reverse=True)
     if args.limit and args.limit > 0:
         fi_files = fi_files[: args.limit]
 
@@ -154,6 +161,7 @@ def main():
         "include_re": args.include_re,
         "exclude_re": args.exclude_re,
         "files": args.files,
+        "recent": args.recent,
         "limit": args.limit,
         "hide_output": args.hide_output,
         "run_script": args.run_script,

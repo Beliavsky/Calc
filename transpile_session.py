@@ -79,12 +79,16 @@ ARRAY_FUNCS = {
     "quantile",
     "trimmean",
     "winsor_mean",
+    "huber_mean",
+    "bisquare_mean",
     "mad",
+    "iqr",
     "iqr_scale",
     "jb_test",
     "ttest1",
     "ttest2",
     "ks2_test",
+    "adf_stat",
     "kernelreg",
     "lowess",
     "lowesscv",
@@ -93,6 +97,18 @@ ARRAY_FUNCS = {
     "splinereg",
     "naturalspline",
     "mssk",
+    "mssk_normal",
+    "mssk_gaussian",
+    "mssk_uniform",
+    "mssk_exponential",
+    "mssk_lognormal",
+    "mssk_logistic",
+    "mssk_double_exponential",
+    "mssk_chi2",
+    "mssk_chisquare",
+    "mssk_hyperbolic",
+    "mssk_student_t",
+    "mssk_noncentral_t",
     "mssk_unif",
     "mssk_norm",
     "mssk_exp",
@@ -108,7 +124,23 @@ ARRAY_FUNCS = {
     "mssk_sech",
     "mssk_laplace",
     "mssk_cauchy",
+    "mssk_ged",
     "mssk_hyperb",
+    "skew_gamma",
+    "skew_lnorm",
+    "skew_nct",
+    "skew_chisq",
+    "skew_f",
+    "skew_beta",
+    "kurt_gamma",
+    "kurt_lnorm",
+    "kurt_t",
+    "kurt_nct",
+    "kurt_chisq",
+    "kurt_f",
+    "kurt_beta",
+    "kurt_ged",
+    "kurt_hyperb",
     "fit_norm",
     "fit_exp",
     "fit_gamma",
@@ -185,6 +217,7 @@ SCALAR_FUNCS = {
     "sum",
     "mean",
     "sd",
+    "iqr",
     "median",
     "minval",
     "maxval",
@@ -202,12 +235,34 @@ SCALAR_FUNCS = {
     "cor",
     "cov",
     "dot",
+    "skew_gamma",
+    "skew_lnorm",
+    "skew_nct",
+    "skew_chisq",
+    "skew_f",
+    "skew_beta",
+    "kurt_gamma",
+    "kurt_lnorm",
+    "kurt_t",
+    "kurt_nct",
+    "kurt_chisq",
+    "kurt_f",
+    "kurt_beta",
+    "kurt_ged",
+    "kurt_hyperb",
+    "adf_stat",
+    "phillips_perron_stat",
 }
 CALL_ONLY = {
     "plot",
     "plot_to_label",
     "print_stats",
     "regress",
+    "adf",
+    "phillips_perron",
+    "huber_regress",
+    "bisquare_regress",
+    "dist_regress",
     "regress_multi",
     "arsimfit",
     "masimfit",
@@ -233,6 +288,18 @@ REWRITE_FUNCS = {
     "stdz": "standardize",
     "read": "read_vec",
     "dot": "dot_product",
+    "mssk_normal": "mssk_norm",
+    "mssk_gaussian": "mssk_norm",
+    "mssk_uniform": "mssk_unif",
+    "mssk_exponential": "mssk_exp",
+    "mssk_lognormal": "mssk_lnorm",
+    "mssk_logistic": "mssk_logis",
+    "mssk_double_exponential": "mssk_laplace",
+    "mssk_chi2": "mssk_chisq",
+    "mssk_chisquare": "mssk_chisq",
+    "mssk_hyperbolic": "mssk_hyperb",
+    "mssk_student_t": "mssk_t",
+    "mssk_noncentral_t": "mssk_nct",
 }
 INT_VARS = set()
 CONST_PARAMS = {}
@@ -257,6 +324,9 @@ MODULE_EXPORTS = {
         "mean",
         "sd",
         "cor",
+        "cor_spearman",
+        "cor_kendall",
+        "cor_matrix_print",
         "cov",
         "cumsum",
         "cumprod",
@@ -308,12 +378,19 @@ MODULE_EXPORTS = {
         "resample",
         "trimmean",
         "winsor_mean",
+        "huber_mean",
+        "bisquare_mean",
         "mad",
+        "iqr",
         "iqr_scale",
         "jb_test",
         "ttest1",
         "ttest2",
         "ks2_test",
+        "adf_stat",
+        "phillips_perron_stat",
+        "adf",
+        "phillips_perron",
         "kernelreg",
         "lowess",
         "lowesscv",
@@ -322,6 +399,10 @@ MODULE_EXPORTS = {
         "splinereg",
         "naturalspline",
         "regress",
+        "dist_regress",
+        "huber_regress",
+        "bisquare_regress",
+        "dist_regress",
         "regress_multi",
         "poly1reg",
         "distaicscan",
@@ -349,7 +430,23 @@ MODULE_EXPORTS = {
         "mssk_sech",
         "mssk_laplace",
         "mssk_cauchy",
+        "mssk_ged",
         "mssk_hyperb",
+        "skew_gamma",
+        "skew_lnorm",
+        "skew_nct",
+        "skew_chisq",
+        "skew_f",
+        "skew_beta",
+        "kurt_gamma",
+        "kurt_lnorm",
+        "kurt_t",
+        "kurt_nct",
+        "kurt_chisq",
+        "kurt_f",
+        "kurt_beta",
+        "kurt_ged",
+        "kurt_hyperb",
         "fit_norm",
         "fit_exp",
         "fit_gamma",
@@ -536,9 +633,23 @@ def find_top_level_assign(s):
 
 def is_assignment_lhs(lhs):
     t = lhs.strip()
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+    m = re.match(r"^[A-Za-z_][A-Za-z0-9_]*", t)
+    if not m:
+        return False
+    rest = t[m.end() :].strip()
+    if not rest:
         return True
-    return re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*\([^()]*\)", t) is not None
+    if not (rest.startswith("(") and rest.endswith(")")):
+        return False
+    depth = 0
+    for ch in rest:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
 
 
 def has_top_level_relational(expr):
@@ -930,6 +1041,10 @@ def rewrite_default_optional_calls(expr):
             1: lambda a: [a[0], "0.0", "1.0"],
             2: lambda a: [a[0], a[1], "1.0"],
         },
+        "rcauchy": {
+            1: lambda a: [a[0], "0.0", "1.0"],
+            2: lambda a: [a[0], a[1], "1.0"],
+        },
         "mssk_exp": {
             0: lambda a: ["1.0"],
         },
@@ -940,7 +1055,52 @@ def rewrite_default_optional_calls(expr):
             0: lambda a: ["0.0", "1.0"],
             1: lambda a: [a[0], "1.0"],
         },
+        "mssk_norm": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_unif": {
+            0: lambda a: ["0.0", "1.0"],
+        },
+        "mssk_uniform": {
+            0: lambda a: ["0.0", "1.0"],
+        },
         "mssk_logis": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_laplace": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_cauchy": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_norm": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_normal": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_gaussian": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_exponential": {
+            0: lambda a: ["1.0"],
+        },
+        "mssk_lognormal": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_logistic": {
+            0: lambda a: ["0.0", "1.0"],
+            1: lambda a: [a[0], "1.0"],
+        },
+        "mssk_double_exponential": {
             0: lambda a: ["0.0", "1.0"],
             1: lambda a: [a[0], "1.0"],
         },
@@ -1478,7 +1638,7 @@ def rewrite_ttest_args(expr):
     return "".join(out)
 
 
-def rewrite_mssk_real_args(expr):
+def rewrite_moment_real_args(expr):
     def to_real_arg(a):
         t = a.strip()
         if not t:
@@ -1489,27 +1649,25 @@ def rewrite_mssk_real_args(expr):
                 return t
             parts = [p.strip() for p in split_top_level(inner, ",")]
             out = []
-            all_simple = True
             for p in parts:
                 if re.fullmatch(r"[+-]?[0-9]+", p):
                     out.append(f"{p}.0")
                 else:
-                    all_simple = False
-                    break
-            if all_simple:
-                return "[" + ", ".join(out) + "]"
-            return t
+                    out.append(p)
+            return "[" + ", ".join(out) + "]"
         if re.search(r"_dp\b", t, re.IGNORECASE):
             return t
         if re.fullmatch(r"[+-]?[0-9]+", t):
             return f"{t}.0"
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            return f"real({t}, kind=dp)"
         if is_int_expr(t) or t in INT_VARS or t.startswith(("nint(", "int(", "size(")):
             return f"real({t}, kind=dp)"
         return t
 
     out = []
     i = 0
-    pat = re.compile(r"\b(mssk_[A-Za-z0-9_]+)\s*\(", re.IGNORECASE)
+    pat = re.compile(r"\b((?:mssk|kurt|skew)_[A-Za-z0-9_]+)\s*\(", re.IGNORECASE)
     while i < len(expr):
         m = pat.search(expr, i)
         if not m:
@@ -2718,7 +2876,7 @@ def transpile_expr(expr):
     expr = rewrite_fit_t_args(expr)
     expr = rewrite_fit_nct_args(expr)
     expr = rewrite_ttest_args(expr)
-    expr = rewrite_mssk_real_args(expr)
+    expr = rewrite_moment_real_args(expr)
     expr = rewrite_arange_args(expr)
     expr = rewrite_int_args(expr)
     expr = convert_brackets(expr)
@@ -2741,6 +2899,35 @@ def infer_rank(rhs, known_arrays):
         return "array"
     if re.search(r"\b\w+\s*\([^)]*:\s*[^)]*\)", rhs):
         return "array"
+    # huber_mean is scalar for huber_mean(x) or scalar c, but array for vector c.
+    m_huber = re.match(r"^\s*huber_mean\s*\((.*)\)\s*$", rhs)
+    if m_huber:
+        args = split_top_level(m_huber.group(1), ",")
+        if len(args) <= 1:
+            return "scalar"
+        c_arg = args[1].strip()
+        if "[" in c_arg and "]" in c_arg:
+            return "array"
+        if re.search(r"\b\w+\s*\([^)]*:\s*[^)]*\)", c_arg):
+            return "array"
+        for name in extract_identifiers(c_arg):
+            if name in known_arrays and re.search(rf"\b{name}\b(?!\s*\()", c_arg):
+                return "array"
+        return "scalar"
+    m_bisquare = re.match(r"^\s*bisquare_mean\s*\((.*)\)\s*$", rhs)
+    if m_bisquare:
+        args = split_top_level(m_bisquare.group(1), ",")
+        if len(args) <= 1:
+            return "scalar"
+        c_arg = args[1].strip()
+        if "[" in c_arg and "]" in c_arg:
+            return "array"
+        if re.search(r"\b\w+\s*\([^)]*:\s*[^)]*\)", c_arg):
+            return "array"
+        for name in extract_identifiers(c_arg):
+            if name in known_arrays and re.search(rf"\b{name}\b(?!\s*\()", c_arg):
+                return "array"
+        return "scalar"
     # Common scalar reducers/tests should stay scalar even when their arguments
     # contain array variables.
     for fn in SCALAR_FUNCS:
@@ -2913,6 +3100,9 @@ def infer_from_lines(lines, seed_arrays=None):
                             expr = rhs
                         else:
                             expr = a.strip()
+                            if fname.lower() == "dist_regress" and idx_arg == 0:
+                                # distribution tag (e.g. t/normal) is not a variable
+                                continue
                             if fname.lower() == "welchspec" and idx_arg in {3, 5}:
                                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
                                     continue
@@ -2984,6 +3174,9 @@ def transpile_lines(lines):
                 out.append("! " + comment)
             else:
                 out.append("")
+            continue
+        if comment and "should error" in comment.lower():
+            out.append("! " + stripped + " ! " + comment)
             continue
         m_for = re.match(r"for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+)$", stripped, re.IGNORECASE)
         if m_for:
@@ -3191,6 +3384,36 @@ def comment_out_plot_calls(lines):
 def transpile_statement(stmt):
     s = stmt.strip()
     low = s.lower()
+    def parse_cor_methods(method_expr):
+        t = method_expr.strip()
+        if not t:
+            return None
+        if t.startswith("[") and t.endswith("]"):
+            inner = t[1:-1].strip()
+            if not inner:
+                return []
+            raw = [a.strip() for a in split_top_level(inner, ",") if a.strip()]
+        else:
+            raw = [t]
+        out = []
+        for tok in raw:
+            u = tok.strip()
+            if (u.startswith('"') and u.endswith('"')) or (u.startswith("'") and u.endswith("'")):
+                u = u[1:-1].strip()
+            u = u.lower()
+            if u in {"pearson", "spearman", "kendall"}:
+                out.append(u)
+            else:
+                return None
+        return out
+    def intcp_cond(expr):
+        e = expr.strip()
+        low_e = e.lower()
+        if low_e in {".true.", "true", "t"}:
+            return ".true."
+        if low_e in {".false.", "false", "f"}:
+            return ".false."
+        return f"({e} /= 0.0_dp)"
     if not s:
         return []
     if s.startswith("!"):
@@ -3205,6 +3428,66 @@ def transpile_statement(stmt):
         return []
     if low == "cor":
         return [f"! {s}"]
+    m_cor = re.match(r"^\s*cor\s*\((.*)\)\s*$", s, re.IGNORECASE)
+    if m_cor:
+        args = [a.strip() for a in split_top_level(m_cor.group(1), ",") if a.strip()]
+        if len(args) < 2:
+            return [f"! {s}"]
+        vec_args = []
+        method_expr = None
+        for a in args:
+            eq = find_top_level_assign(a)
+            if eq != -1 and a[:eq].strip().lower() == "method":
+                method_expr = a[eq + 1 :].strip()
+            else:
+                vec_args.append(transpile_expr(a))
+        methods = ["pearson"] if method_expr is None else parse_cor_methods(method_expr)
+        if methods is None or len(methods) < 1:
+            return [f"! {s}"]
+
+        if len(vec_args) == 2:
+            fx = vec_args[0]
+            fy = vec_args[1]
+            exprs = []
+            for mname in methods:
+                if mname == "pearson":
+                    exprs.append(f"cor({fx}, {fy})")
+                elif mname == "spearman":
+                    exprs.append(f"cor_spearman({fx}, {fy})")
+                else:
+                    exprs.append(f"cor_kendall({fx}, {fy})")
+            if len(exprs) == 1:
+                return [f"print *, {exprs[0]}"]
+            return ["print *, [" + ", ".join(exprs) + "]"]
+
+        ncol = len(vec_args)
+        out = [
+            "block",
+            "real(kind=dp), allocatable :: xcor_tmp(:,:)",
+            f"character(len=16) :: xcor_lbl({ncol})",
+            f"allocate(xcor_tmp(size({vec_args[0]}), {ncol}))",
+        ]
+        for j, xj in enumerate(vec_args, start=1):
+            out.append(f"xcor_tmp(:, {j}) = {xj}")
+
+        lbls = []
+        for j, src in enumerate(vec_args, start=1):
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", src):
+                lbls.append(f'"{src}"')
+            else:
+                lbls.append(f'"x{j}"')
+        out.append("xcor_lbl = [character(len=16) :: " + ", ".join(lbls) + "]")
+
+        if len(methods) == 1 and methods[0] == "pearson":
+            out.append("call cor_matrix_print(xcor_tmp, xcor_lbl)")
+        else:
+            mitems = ", ".join([f'"{m}"' for m in methods])
+            out.append(
+                "call cor_matrix_print(xcor_tmp, xcor_lbl, "
+                + f'methods=[character(len=8) :: {mitems}])'
+            )
+        out.append("end block")
+        return out
     for fn in ("acf", "pacf"):
         parsed = parse_top_call_with_plot(s, fn)
         if parsed is not None:
@@ -3291,7 +3574,7 @@ def transpile_statement(stmt):
         if len(x_exprs) == 1:
             if intcp_expr is None:
                 return [f"call regress({y_expr}, {x_exprs[0]})"]
-            return [f"call regress({y_expr}, {x_exprs[0]}, intcp=({intcp_expr} /= 0.0_dp))"]
+            return [f"call regress({y_expr}, {x_exprs[0]}, intcp={intcp_cond(intcp_expr)})"]
         ncol = len(x_exprs)
         out = [
             "block",
@@ -3306,7 +3589,107 @@ def transpile_statement(stmt):
         if intcp_expr is None:
             out.append(f"call regress_multi({y_expr}, xreg_tmp, xreg_lbl)")
         else:
-            out.append(f"call regress_multi({y_expr}, xreg_tmp, xreg_lbl, intcp=({intcp_expr} /= 0.0_dp))")
+            out.append(f"call regress_multi({y_expr}, xreg_tmp, xreg_lbl, intcp={intcp_cond(intcp_expr)})")
+        out.append("end block")
+        return out
+    m_rreg = re.match(r"(huber_regress|bisquare_regress)\s*\((.*)\)\s*$", s, re.IGNORECASE)
+    if m_rreg:
+        reg_name = m_rreg.group(1).lower()
+        args = [a.strip() for a in split_top_level(m_rreg.group(2), ",") if a.strip()]
+        if len(args) < 2:
+            return [f"! {s}"]
+        y_expr = transpile_expr(args[0])
+        x_exprs = []
+        intcp_expr = None
+        c_expr = None
+        for a in args[1:]:
+            eq = find_top_level_assign(a)
+            if eq != -1 and a[:eq].strip().lower() == "intcp":
+                intcp_expr = transpile_expr(a[eq + 1 :].strip())
+            elif eq != -1 and a[:eq].strip().lower() == "c":
+                c_expr = transpile_expr(a[eq + 1 :].strip())
+            else:
+                x_exprs.append(transpile_expr(a))
+        if len(x_exprs) != 1:
+            return [f"! {s}"]
+        call = f"call {reg_name}({y_expr}, {x_exprs[0]}"
+        if c_expr is not None:
+            call += f", c={c_expr}"
+        if intcp_expr is not None:
+            call += f", intcp={intcp_cond(intcp_expr)}"
+        call += ")"
+        return [call]
+    m_dreg = re.match(r"dist_regress\s*\((.*)\)\s*$", s, re.IGNORECASE)
+    if m_dreg:
+        def to_real_vec_expr(expr):
+            t = expr.strip()
+            if not t:
+                return t
+            if t.startswith("[") and t.endswith("]"):
+                inner = t[1:-1].strip()
+                if not inner:
+                    return t
+                parts = [p.strip() for p in split_top_level(inner, ",")]
+                out = []
+                for p in parts:
+                    if re.fullmatch(r"[+-]?[0-9]+", p):
+                        out.append(f"{p}.0_dp")
+                    else:
+                        out.append(transpile_expr(p))
+                return "[" + ", ".join(out) + "]"
+            t0 = transpile_expr(t)
+            if re.fullmatch(r"[+-]?[0-9]+", t0):
+                return f"[{t0}.0_dp]"
+            return "[" + t0 + "]"
+
+        args = [a.strip() for a in split_top_level(m_dreg.group(1), ",") if a.strip()]
+        if len(args) < 2:
+            return [f"! {s}"]
+
+        dist_raw = args[0].strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", dist_raw):
+            dist_expr = f'"{dist_raw}"'
+        else:
+            dist_expr = transpile_expr(dist_raw)
+        y_expr = transpile_expr(args[1])
+
+        x_exprs = []
+        intcp_expr = None
+        df_expr = None
+        beta_expr = None
+        for a in args[2:]:
+            eq = find_top_level_assign(a)
+            if eq != -1 and a[:eq].strip().lower() == "intcp":
+                intcp_expr = transpile_expr(a[eq + 1 :].strip())
+            elif eq != -1 and a[:eq].strip().lower() == "df":
+                df_expr = to_real_vec_expr(a[eq + 1 :].strip())
+            elif eq != -1 and a[:eq].strip().lower() == "beta":
+                beta_expr = to_real_vec_expr(a[eq + 1 :].strip())
+            else:
+                x_exprs.append(transpile_expr(a))
+
+        call_tail = ""
+        if intcp_expr is not None:
+            call_tail += f", intcp={intcp_cond(intcp_expr)}"
+        if df_expr is not None:
+            call_tail += f", df={df_expr}"
+        if beta_expr is not None:
+            call_tail += f", beta={beta_expr}"
+
+        if len(x_exprs) == 0:
+            return [f"call dist_regress({dist_expr}, {y_expr}{call_tail})"]
+        if len(x_exprs) == 1:
+            return [f"call dist_regress({dist_expr}, {y_expr}, {x_exprs[0]}{call_tail})"]
+
+        ncol = len(x_exprs)
+        out = [
+            "block",
+            "real(kind=dp), allocatable :: xreg_tmp(:,:)",
+            f"allocate(xreg_tmp(size({y_expr}), {ncol}))",
+        ]
+        for j, xj in enumerate(x_exprs, start=1):
+            out.append(f"xreg_tmp(:, {j}) = {xj}")
+        out.append(f"call dist_regress({dist_expr}, {y_expr}, xreg_tmp{call_tail})")
         out.append("end block")
         return out
     m_do = re.match(r"do\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$", s, re.IGNORECASE)
@@ -3348,6 +3731,8 @@ def transpile_statement(stmt):
     eqpos = find_top_level_assign(s)
     if eqpos != -1 and is_assignment_lhs(s[:eqpos]):
         lhs = s[:eqpos].strip()
+        # In assignment subscripts, prefer integer ranges.
+        lhs_out = re.sub(r"\barange\s*\(", "irange(", lhs, flags=re.IGNORECASE)
         rhs = s[eqpos + 1 :].strip()
         read_calls = find_named_call_spans(rhs, "read")
         if len(read_calls) == 1:
@@ -3367,14 +3752,14 @@ def transpile_statement(stmt):
                     return out_lines
                 rhs_norm = strip_outer_parens(rhs_repl)
                 if has_top_level_relational(rhs_norm):
-                    out_lines.append(f"{lhs} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs_repl)})")
+                    out_lines.append(f"{lhs_out} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs_repl)})")
                 else:
-                    out_lines.append(f"{lhs} = {transpile_expr(rhs_repl)}")
+                    out_lines.append(f"{lhs_out} = {transpile_expr(rhs_repl)}")
                 return out_lines
         rhs_norm = strip_outer_parens(rhs)
         if has_top_level_relational(rhs_norm):
-            return [f"{lhs} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs)})"]
-        return [f"{lhs} = {transpile_expr(rhs)}"]
+            return [f"{lhs_out} = merge(1.0_dp, 0.0_dp, {transpile_expr(rhs)})"]
+        return [f"{lhs_out} = {transpile_expr(rhs)}"]
     read_calls_stmt = find_named_call_spans(s, "read")
     if len(read_calls_stmt) == 1:
         start, end, args_raw = read_calls_stmt[0]
@@ -3708,6 +4093,9 @@ def main():
     args = ap.parse_args()
 
     path = Path(args.input)
+    if not path.exists():
+        print(f"Error: file not found: {args.input}")
+        return 1
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
     main_lines, proc_defs = collect_user_procedures(lines)
@@ -3749,7 +4137,8 @@ def main():
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
     else:
         print(rendered)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
