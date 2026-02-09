@@ -7,7 +7,10 @@ module interpret_mod
                        head, tail, grid, print_real, is_alphanumeric, &
                        is_numeral, is_letter, zeros, ones, replace, &
                        rep, read_vec, reverse, runif1, polyroots
-   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged, random_seed_init
+   use random_mod, only: random_normal, runif, rexp, rgamma, rlnorm, rt, rnct, &
+      rmixnorm, mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, &
+      rged, random_seed_init, str_normal, str_student_t, str_laplace, str_ged, &
+      str_sech
    use qsort_mod, only: sorted, indexx, rank, median, unique, quantile
    use iso_fortran_env, only: compiler_options, compiler_version, int64
    use plot_mod, only: plot, plot_to_label, set_plotout, get_plotout
@@ -9773,8 +9776,13 @@ contains
                            end if
                         end if
                         dist_s = lower_str(adjustl(trim(dist_s)))
-                        if (dist_s /= "normal" .and. dist_s /= "t" .and. dist_s /= "laplace" .and. dist_s /= "ged" .and. dist_s /= "sech") then
-                           print *, "Error: dist_regress() dist must be normal, laplace, ged, sech, or t"
+                        if (dist_s /= str_normal .and. dist_s /= str_student_t &
+                            .and. dist_s /= str_laplace .and. dist_s /= str_ged &
+                            .and. dist_s /= str_sech) then
+                           print *, "Error: dist_regress() dist must be one of " // &
+                             str_normal // " " // str_student_t // &
+                             " " // str_laplace // " " // str_ged // " " // &
+                             str_sech
                            eval_error = .true.; f = [bad_value]
                            return
                         end if

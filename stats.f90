@@ -2,7 +2,10 @@ module stats_mod
 use kind_mod, only: dp
 use constants_mod, only: pi
 use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-use random_mod, only: random_normal, random_seed_init
+use random_mod, only: random_normal, random_seed_init, str_normal, str_logistic, &
+   str_laplace, str_ged, str_sech, str_student_t, str_beta, &
+   str_cauchy, str_chisq, str_exp, str_f, str_gamma, str_hyperb, &
+   str_lognormal
 use qsort_mod, only: median, quantile, sorted, indexx
 use util_mod, only: polyroots, lowercase
 implicit none
@@ -18,7 +21,8 @@ public :: mean, sd, cor, cor_spearman, cor_kendall, cor_matrix_print, cov, cumsu
           punif, pexp, pgamma, plnorm, pnorm, pmixnorm, pt, pnct, pchisq, pf, pbeta, plogis, psech, plaplace, pcauchy, pged, phyperb, &
           qunif, qexp, qgamma, qlnorm, qnorm, qmixnorm, qt, qnct, qchisq, qf, qbeta, qlogis, qsech, qlaplace, qcauchy, qged, qhyperb, &
           rhyperb, fit_norm, fit_exp, fit_gamma, fit_lnorm, fit_t, fit_nct, fit_mixnorm, fit_mixnorm_aic, fix_mixnorm_aic, &
-          fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, huber_regress, bisquare_regress, dist_regress
+          fit_chisq, fit_f, fit_beta, fit_logis, fit_sech, fit_laplace, fit_cauchy, fit_ged, fit_hyperb, huber_regress, &
+          bisquare_regress, dist_regress, nelder_mead, kurt_sech, kurt_normal, kurt_dist
 
 interface kernelreg
    module procedure kernelreg_scalar
@@ -127,6 +131,8 @@ abstract interface
    end function obj_fun
 end interface
 
+real(kind=dp), parameter :: kurt_normal=0.0_dp, kurt_sech=2.0_dp, &
+   kurt_logistic=1.2_dp, kurt_laplace=3.0_dp
 contains
 
 pure function nanv() result(x)
@@ -6337,6 +6343,7 @@ contains
       end if
    end function loglik
 end function fit_beta
+
 function fit_logis(x) result(pars)
 ! Method-of-moments then MLE for logistic distribution.
 real(kind=dp), intent(in) :: x(:)   ! input sample vector
@@ -9653,6 +9660,8 @@ character(len=16) :: dname
 integer :: n, p, kbeta, i, jj, kk, max_iter, it, it_best, npar
 logical :: use_intcp, ok, ok_fit, df_is_estimated, beta_is_estimated
 character(len=16) :: lbl
+character (len=10), parameter :: dist_names(*) = [character (len=10) :: &
+   str_normal, str_student_t, str_laplace, str_ged, str_sech]
 
 n = size(y)
 p = size(x, 2)
@@ -9672,8 +9681,8 @@ else
 end if
 
 dname = lower_ascii(trim(adjustl(dist)))
-if (dname /= "normal" .and. dname /= "t" .and. dname /= "laplace" .and. dname /= "ged" .and. dname /= "sech") then
-   print *, "Error: dist_regress() dist must be normal, laplace, ged, sech, or t"
+if (all(dname /= dist_names)) then
+   print "(a)", "Error: dist_regress() dist must be one of", dist_names
    return
 end if
 
@@ -9710,7 +9719,7 @@ end if
 
 allocate (yhat(n), resid(n), w(n))
 
-if (dname == "normal") then
+if (dname == str_normal) then
    beta_is_estimated = .false.
    beta = beta0
    if (kbeta > 0) then
@@ -9806,7 +9815,7 @@ else if (dname == "ged") then
    loglik = ll_best
    beta_shape = beta_shape_best
    it = it_best
-else if (dname == "sech") then
+else if (dname == str_sech) then
    beta_is_estimated = .false.
    call fit_sech_mle(beta0, beta, sig2_cur, ll_cur, ok_fit)
    if (.not. ok_fit) then
@@ -9873,11 +9882,11 @@ bic = -2.0_dp*loglik + log(real(n, dp))*real(npar, dp)
 
 print "(a,a)", "dist: ", trim(dname)
 print "(a,i0)", "#obs: ", n
-if (dname == "t") then
+if (dname == str_student_t) then
    print "(a,f10.4)", "df: ", nu
    if (df_is_estimated) print "(a)", "df_mode: estimated"
 end if
-if (dname == "ged") then
+if (dname == str_ged) then
    print "(a,f10.4)", "beta: ", beta_shape
    if (beta_is_estimated) print "(a)", "beta_mode: estimated"
 end if
@@ -11377,7 +11386,7 @@ nan1 = nanv_tmp(1)
 ! normal
 call cpu_time(t0); p = fit_norm(x); fx = dnorm(x, p(1), p(2)); call cpu_time(t1)
 tm1 = p(1); tm2 = p(2); tm3 = 0.0_dp; tm4 = 0.0_dp
-call add_fit("norm", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
+call add_fit(str_normal, p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 ! t
 call cpu_time(t0); p = fit_t(x); fx = dt((x - p(1)) / p(2), p(3)) / p(2); call cpu_time(t1)
 ms = mssk_t(p(3))
@@ -11402,7 +11411,7 @@ end if
 ! logistic
 call cpu_time(t0); p = fit_logis(x); fx = dlogis(x, p(1), p(2)); call cpu_time(t1)
 ms = mssk_logis(p(1), p(2))
-call add_fit("logis", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+call add_fit(str_logistic, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! sech
 call cpu_time(t0); p = fit_sech(x); fx = dsech((x - p(1)) / p(2)) / p(2); call cpu_time(t1)
 tm1 = p(1)
@@ -11410,48 +11419,48 @@ ms = mssk_sech()
 tm2 = p(2) * ms(2)
 tm3 = ms(3)
 tm4 = ms(4)
-call add_fit("sech", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
+call add_fit(str_sech, p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 ! laplace
 call cpu_time(t0); p = fit_laplace(x); fx = dlaplace(x, p(1), p(2)); call cpu_time(t1)
 ms = mssk_laplace(p(1), p(2))
-call add_fit("laplace", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+call add_fit(str_laplace, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! cauchy
 call cpu_time(t0); p = fit_cauchy(x); fx = dcauchy(x, p(1), p(2)); call cpu_time(t1)
-call add_fit("cauchy", p, fx, t1 - t0, nan1, nan1, nan1, nan1)
+call add_fit(str_cauchy, p, fx, t1 - t0, nan1, nan1, nan1, nan1)
 ! ged
 call cpu_time(t0); p = fit_ged(x); fx = dged(x, p(1), p(2), p(3)); call cpu_time(t1)
 ms = mssk_ged(p(1), p(2), p(3))
-call add_fit("ged", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+call add_fit(str_ged, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 ! hyperbolic
 call cpu_time(t0); p = fit_hyperb(x); fx = dhyperb(x, p(1), p(2), p(3)); call cpu_time(t1)
 call hyperb_moments(p(1), p(2), p(3), tm1, tm2, tm3, tm4)
-call add_fit("hyperb", p, fx, t1 - t0, tm1, tm2, tm3, tm4)
+call add_fit(str_hyperb, p, fx, t1 - t0, tm1, tm2, tm3, tm4)
 
 if (all(x >= 0.0_dp)) then
    call cpu_time(t0); p = fit_exp(x); fx = dexp(x, p(1)); call cpu_time(t1)
    ms = mssk_exp(p(1))
-   call add_fit("exp", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_exp, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
    call cpu_time(t0); p = fit_gamma(x); fx = dgamma(x, p(1), p(2)); call cpu_time(t1)
    ms = mssk_gamma(p(1), p(2))
-   call add_fit("gamma", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_gamma, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
    call cpu_time(t0); p = fit_chisq(x); fx = dchisq(x, p(1)); call cpu_time(t1)
    ms = mssk_chisq(p(1))
-   call add_fit("chisq", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_chisq, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp)) then
    call cpu_time(t0); p = fit_lnorm(x); fx = dlnorm(x, p(1), p(2)); call cpu_time(t1)
    ms = mssk_lnorm(p(1), p(2))
-   call add_fit("lnorm", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_lognormal, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp .and. x < 1.0_dp)) then
    call cpu_time(t0); p = fit_beta(x); fx = dbeta(x, p(1), p(2)); call cpu_time(t1)
    ms = mssk_beta(p(1), p(2))
-   call add_fit("beta", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_beta, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 if (all(x > 0.0_dp)) then
    call cpu_time(t0); p = fit_f(x); fx = df(x, p(1), p(2)); call cpu_time(t1)
    ms = mssk_f(p(1), p(2))
-   call add_fit("f", p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
+   call add_fit(str_f, p, fx, t1 - t0, ms(1), ms(2), ms(3), ms(4))
 end if
 
 if (m < 1) then
@@ -12944,4 +12953,27 @@ sd_x = sd(x)
 kurtosis_val = sum(((x - mean_x) / sd_x)**4) / n - 3.0_dp
 end function kurtosis
 
+pure elemental function kurt_dist(dist, df, beta) result(y)
+! excess kurtosis of specified distribution
+character (len=*), intent(in) :: dist ! probability distribution
+real(kind=dp), intent(in), optional :: df   ! degrees-of-freedom of Student t
+real(kind=dp), intent(in), optional :: beta ! shape parameter for generalized error distribution (GED)
+real(kind=dp) :: y
+select case (dist)
+   case (str_normal)   ; y = kurt_normal
+   case (str_sech)     ; y = kurt_sech
+   case (str_logistic) ; y = kurt_logistic
+   case (str_laplace)  ; y = kurt_laplace
+   case (str_student_t)
+      if (.not. present(df)) error stop "need df for t kurtosis in kurt_dist"
+      if (df > 4.0_dp) then 
+         y = 6/(df - 4)
+      else
+         y = nanv()
+      end if
+   case (str_ged)
+      if (.not. present(beta)) error stop "need beta for ged kurtosis in kurt_dist"
+      y = gamma(5/beta)*gamma(1/beta)/(gamma(3/beta)**2) - 3
+end select      
+end function kurt_dist
 end module stats_mod

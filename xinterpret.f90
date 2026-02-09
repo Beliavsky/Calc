@@ -39,6 +39,8 @@ program xinterpret
 
   call set_noplot(no_plot)
   if (have_script) then
+    write_code = .false.
+    echo_code = .true.
     call eval_print("run(" // '"' // trim(script_file) // '"' // ")")
     stop
   end if

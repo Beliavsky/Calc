@@ -1,11 +1,15 @@
 module random_mod
   use kind_mod, only: dp
-  use constants_mod, only: pi
+  use constants_mod, only: pi, one_over_sqrt_two
   use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
   implicit none
   private
-  public :: random_normal, random_gamma, random_student_t, &
-            random_seed_init, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged
+  public :: noise_stdz, random_normal, random_gamma, random_student_t, &
+     random_seed_init, runif, rexp, rgamma, rlnorm, rt, rnct, rmixnorm, &
+     mixnoise, rchisq, rf, rbeta, rlogis, rsech, rlaplace, rcauchy, rged, &
+     str_normal, str_sech, str_logistic, str_laplace, str_student_t, str_ged, &
+     str_beta, str_cauchy, str_chisq, str_exp, str_f, str_gamma, str_hyperb, &
+     str_lognormal
   interface runif
     module procedure runif_scalar, runif_vec, runif_mat
   end interface runif
@@ -19,7 +23,11 @@ module random_mod
   ! For Box-Muller: storage for the second variate.
   logical, save :: have_saved = .false.
   real(kind=dp), save :: saved_value = 0.0_dp
-
+  character (len=*), parameter :: str_normal="normal", str_sech="sech", &
+     str_logistic="logis", str_laplace="laplace", str_student_t="t", &
+     str_ged="ged", str_cauchy="cauchy", str_hyperb="hyperb", str_exp="exp", &
+     str_gamma="gamma", str_chisq="chisq", str_lognormal="lnorm", &
+     str_beta="beta", str_f="f"
 contains
 
   function random_normal_scalar() result(z)
@@ -495,5 +503,31 @@ do i=1,n
   r(i) = loc + scale * sgn * g**(1.0_dp / beta)
 end do
 end function rged
+
+function noise_stdz(n, dist, df, beta) result(z)
+! return n standard variates from specified distribution
+integer, intent(in) :: n ! # of variates
+character (len=*), intent(in) :: dist ! probability distribution
+real(kind=dp), intent(in), optional :: df ! degrees-of-freedom of Student t
+real(kind=dp), intent(in), optional :: beta ! shape parameter for generalized error distribution (GED)
+real(kind=dp) :: z(n)
+select case (dist)
+   case (str_normal)   ; z = random_normal(n)
+   case (str_sech)     ; z = rsech(n)
+   case (str_logistic) ; z = rlogis(n, 0.0_dp, scale=0.55132889542179209_dp) ! constant is sqrt(3.0_dp/(pi**2)
+   case (str_laplace)  ; z = rlaplace(n, 0.0_dp, one_over_sqrt_two)
+   case (str_student_t)
+      if (.not. present(df)) error stop "need df for t variates in noise_stdz"
+      if (df > 2.0_dp) then 
+         z = sqrt((df-2)/df) * rt(n, df)
+      else
+         z = rt(n, df)
+         if (n > 1) z = z/sqrt(sum(z**2)/n)
+      end if
+   case (str_ged)
+      z = rged(n, loc=0.0_dp, scale=sqrt(gamma(1.0_dp/beta)/gamma(3.0_dp/beta)), &
+               beta=beta)      
+end select
+end function noise_stdz
 
 end module random_mod

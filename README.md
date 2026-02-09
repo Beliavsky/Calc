@@ -62,6 +62,10 @@ arfimasim(1000, 0.25, phi=[0.4], theta=[0.2]) ! simulate ARFIMA(1,d,1)
 polyroots([-6, -1, 1])                       ! roots of x^2 - x - 6 -> packed as [Re1, Im1, Re2, Im2]
 armastab([0.6, 0.2], [0.3])                  ! [is_stationary, is_invertible, min_mod_ar, min_mod_ma]
 armastab(ma=[0.3])                           ! MA-only invertibility check
+adf_stat(x, 4)                               ! ADF t-statistic with 4 lagged differences
+adf(x, 4)                                    ! ADF report with p-value and critical values
+phillips_perron_stat(x, 8)                   ! PP tau-statistic with HAC bandwidth 8
+phillips_perron(x, 8)                        ! PP report with p-value and critical values
 
 ! Stats
 sum(x)
@@ -107,9 +111,14 @@ y >= 4
 
 ! Two-vector functions
 cor(x, y)                         ! Pearson correlation between x and y
+cor(x, y, method=spearman)        ! Spearman rank correlation
+cor(x, y, method=kendall)         ! Kendall tau-b correlation
+cor(x, y, method=["pearson", "spearman", "kendall"]) ! all three pairwise in one call
 cov(x, y)                         ! sample covariance between x and y
 cor                               ! labeled correlation matrix for all same-length vectors in workspace
 cor(x, y, z)                      ! labeled correlation matrix for the listed vectors
+cor(x, y, z, method=kendall)      ! labeled matrix with Kendall method
+cor(x, y, z, method=["pearson","kendall"]) ! one labeled matrix per method
 dot(x, y)                         ! dot product of x and y
 min(x, y)                         ! element-wise minimum of x and y
 max(x, 0.5)                       ! element-wise maximum of x and scalar 0.5
@@ -131,6 +140,10 @@ do i=1,5
   i, i^2
 end do
 do i=1,5 i,i^2                     ! one-line do loop
+do                                    ! potentially infinite loop; include an exit condition
+  i = i + 1
+  if (i > 10) exit
+end do
 for z in [0.1, 0.2, 0.3]
   z, sqrt(z)
 end for
@@ -174,6 +187,7 @@ call shift_scale(y=x, shift=1.5)    ! named arguments
 ```
 
 `acf`/`pacf` return lags `1..n` and plotting is optional (`plot=.false.` by default). `acfpacf`/`acfpacfar` can also optionally plot.
+`adf`/`phillips_perron` print unit-root test reports; `adf_stat`/`phillips_perron_stat` return just the test statistic.
 `head`/`tail` accept an optional second argument for the number of elements to return.
 One-line `do`/`for` loop bodies must be a single statement (you can still use `;` within that statement).
 Defaults in function/subroutine headers must be trailing. In subroutines, defaults are allowed only for arguments declared `intent(in)`.
@@ -187,11 +201,26 @@ x = runif(200)
 y = 1.0 + 2.0*x + 0.2*rnorm(200)
 regress(x, y)                     ! with intercept by default
 regress(x, y, intcp=0)            ! no-intercept regression
+huber_regress(y, x)               ! robust simple regression (Huber loss)
+huber_regress(y, x, c=1.345)      ! robust threshold tuning
+bisquare_regress(y, x)            ! robust simple regression (Tukey bisquare)
+bisquare_regress(y, x, c=4.685)   ! robust threshold tuning
+dist_regress(normal, y, x)        ! Gaussian-error regression
+dist_regress(t, y, x)             ! Student-t regression, df estimated if omitted
+dist_regress(t, y, x, df=[4,6,8,12]) ! choose best df from candidate grid
 
 ! Multiple regression
 z = x^2
 regress(y, x, z)                  ! multiple predictors via regress(...)
 poly1reg(y, x, 3)                 ! polynomial regression in one predictor up to degree 3
+dist_regress(normal, y, x, z)     ! Gaussian multiple regression
+dist_regress(t, y, x, z, df=8)    ! t-errors multiple regression with fixed df
+
+! No-predictor mode
+dist_regress(normal, y)           ! intercept-only normal model
+dist_regress(t, y)                ! intercept-only t model (df estimated)
+dist_regress(normal, y, intcp=0)  ! zero-mean normal model
+dist_regress(t, y, intcp=0, df=8) ! zero-mean t model with fixed df
 
 ! AR/MA/ARMA fitting helpers
 arfit(y, 1, 5)                    ! fit AR orders 1..5 and report fit metrics
@@ -208,6 +237,7 @@ fit_mixnorm_aic(y, 1, 5, nstart=5, verbose=.true., plot=.true.) ! choose mixture
 ```
 
 `arfimafit(x, p, q)` prints a fit table including `npar` (number of estimated parameters), RMSE/AIC/BIC, and parameter estimates.
+`dist_regress` prints distribution, sample size, sigma, log-likelihood, AIC/BIC, and estimated coefficients. For `dist=t`, omitted `df` triggers df selection over an internal grid; supplying `df=[...]` uses that candidate set.
 
 ## Resampling
 
@@ -253,7 +283,14 @@ y = rnorm(250)
 trimmean(x)                        ! default 10% trimmed mean
 trimmean(x, 0.2)                   ! 20% trimmed mean
 winsor_mean(x, 0.1)                ! 10% winsorized mean
+huber_mean(x)                      ! robust location (Huber M-estimator)
+huber_mean(x, c=1.345)             ! scalar tuning constant
+huber_mean(x, c=[1.0, 1.345, 2.0]) ! vector c -> vector of estimates
+bisquare_mean(x)                   ! robust location (Tukey bisquare M-estimator)
+bisquare_mean(x, c=4.685)          ! scalar tuning constant
+bisquare_mean(x, c=[3.0, 4.685])   ! vector c -> vector of estimates
 mad(x)                             ! median absolute deviation
+iqr(x)                             ! interquartile range
 iqr_scale(x)                       ! robust scale = IQR/1.349
 
 jb_test(x)                         ! Jarque-Bera normality test -> [JB, p]
@@ -415,6 +452,9 @@ make -f Makefile_tests
     - `call read_vec("spy.csv", x, 2)`
     - `x = log(x)`
 - Supports top-level `acf(..., plot=...)` / `pacf(..., plot=...)` by generating explicit plotting blocks in Fortran.
+- Rewrites `cor(...)` calls into compile-safe Fortran:
+  - pairwise `method=` shorthands (`pearson`/`spearman`/`kendall`) are normalized
+  - matrix-style `cor(x,y,z,...)` is lowered to labeled matrix-print helper calls
 - Supports `for ... in ...` / `end for` and one-line `for`/`do` loop forms.
 - Supports the newer analysis helpers used above (`poly1reg`, `distaicscan`, robust stats, and tests).
 - Rewrites legacy ARFIMA simulation call form when possible:
@@ -440,6 +480,7 @@ Common options:
 - `--exclude-re REGEX_OR_GLOB` exclude matching files.
 - `--files "a.fi b.fi"` or `--files a.fi,b.fi` explicit file list.
 - `--limit N` process only first `N` selected files.
+- `--recent` process selected files from most recently modified to least recent.
 - `--run-script` run `fcalc` on each script before Fortran compile.
 - `--run-exe` run compiled `tests.exe`.
 - `--hide-output` suppress runtime stdout/stderr from interpreter/exe runs.
