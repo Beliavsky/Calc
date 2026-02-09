@@ -140,7 +140,9 @@ do i=1,5
   i, i^2
 end do
 do i=1,5 i,i^2                     ! one-line do loop
-do                                    ! potentially infinite loop; include an exit condition
+
+i = 0
+do                                 ! potentially infinite loop; include an exit condition
   i = i + 1
   if (i > 10) exit
 end do
