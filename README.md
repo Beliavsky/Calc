@@ -13,7 +13,7 @@ Calc is a Fortran-based interactive statistics interpreter with a session-to-For
 
 Some interpreter code examples:
 
-```text
+```fortran
 ! General
 run("code.txt")
 calc code.txt
@@ -136,6 +136,8 @@ if (mean(x) > 0.5) then
 else
   "low"
 end if
+
+! Do loop
 do i=1,5
   i, i^2
 end do
@@ -146,6 +148,8 @@ do                                 ! potentially infinite loop; include an exit 
   i = i + 1
   if (i > 10) exit
 end do
+
+! For loop over collection
 for z in [0.1, 0.2, 0.3]
   z, sqrt(z)
 end for
